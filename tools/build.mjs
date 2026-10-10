@@ -2,7 +2,8 @@
 // 執行期零依賴；開發期只有 esbuild。版本字串＝時間戳加內容雜湊，SW 快取名跟著換。
 import { build as esbuild } from 'esbuild';
 import { createHash } from 'node:crypto';
-import { mkdir, readdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile, rm, copyFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -37,6 +38,13 @@ export async function build({ outDir = dist } = {}) {
   await writeFile(path.join(outDir, 'index.html'), html, 'utf8');
   await writeFile(path.join(outDir, 'sw.js'), sw, 'utf8');
   await writeFile(path.join(outDir, 'manifest.webmanifest'), manifest, 'utf8');
+  // 圖示：src/icons/*.png 原樣複製（來源是 src/icons/icon.html 用 Playwright 截的；沒有就跳過）
+  const iconsDir = path.join(src, 'icons');
+  if (existsSync(iconsDir)) {
+    const pngs = (await readdir(iconsDir)).filter((n) => n.endsWith('.png'));
+    if (pngs.length) await mkdir(path.join(outDir, 'icons'), { recursive: true });
+    for (const n of pngs) await copyFile(path.join(iconsDir, n), path.join(outDir, 'icons', n));
+  }
   return { version, bytes: Buffer.byteLength(html, 'utf8'), outDir };
 }
 

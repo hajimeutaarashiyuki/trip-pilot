@@ -57,3 +57,12 @@ test('仙台 136 筆全部通過 normalize，分佈進 snapshot', { skip: !exist
   // 看不出店型的要列出來，目標是 0；現在有幾筆就是研究要補店型的清單
   t.assert.snapshot({ stats, unknown: unknown.map((w) => w.msg).sort() });
 });
+
+test('代購研究的「品項｜店名」拆開：item 是品項、name_zh 只剩店名、id 不受影響', () => {
+  const p = normalizePoi({ name_zh: '🍏DKNY香水｜PLAZA S-PAL 仙台店', name_local: 'PLAZA エスパル仙台店', category: '代購｜雜貨' }).poi;
+  assert.equal(p.item, 'DKNY香水');
+  assert.equal(p.name_zh, 'PLAZA S-PAL 仙台店');
+  assert.equal(p.id, 'plaza-エスパル仙台店');
+  const q = normalizePoi({ name_zh: 'Utah', name_local: 'Utah', category: '古著店' }).poi;
+  assert.equal(q.item, undefined);
+});

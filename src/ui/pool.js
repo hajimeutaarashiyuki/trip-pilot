@@ -17,7 +17,7 @@ export function renderPool({ state }) {
       el('h2', { text: `${CATEGORY[cat] ?? cat}（${list.length}）` }),
       el('ul', { class: 'plain' }, list.map((p) => {
         const on = plannedOn.get(p.id);
-        return el('li', {}, [el('strong', { text: p.name_zh }), el('span', { class: 'muted small', text: `　${on ? TEXT.plannedOn(dateLabel(on)) : TEXT.notPlanned}` })]);
+        return el('li', {}, [p.item ? el('span', { class: 'cat item', text: p.item }) : null, el('strong', { text: p.name_zh }), el('span', { class: 'muted small', text: `　${on ? TEXT.plannedOn(dateLabel(on)) : TEXT.notPlanned}` })]);
       })),
     ]));
   }

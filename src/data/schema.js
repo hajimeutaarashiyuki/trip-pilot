@@ -57,6 +57,12 @@ export function normalizePoi(raw, { derive = DERIVE } = {}) {
   poi.id = slugId(raw);
   poi.name_zh = raw.name_zh ?? raw.name ?? raw.name_local ?? poi.id;
   poi.name_local = raw.name_local ?? raw.name_zh ?? poi.id;
+  // 代購研究把品項寫在店名前面：「🍏DKNY香水｜PLAZA S-PAL 仙台店」→ item=DKNY香水、name_zh=PLAZA S-PAL 仙台店（畫面不露研究標記）
+  const m = String(poi.name_zh ?? '').match(/^([^｜|]{1,24})[｜|]\s*(.+)$/u);
+  if (m && !raw.item) {
+    poi.item = m[1].replace(/^[^\p{L}\p{N}]+/u, '').trim();
+    poi.name_zh = m[2].trim();
+  }
 
   // 店型
   let category = raw.category;

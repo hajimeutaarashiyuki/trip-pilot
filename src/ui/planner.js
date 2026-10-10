@@ -60,6 +60,7 @@ function stopCard(s, i, plan, d, state, actions) {
     el('div', { class: 'row' }, [
       el('span', { class: 'time', text: `${hm(s.startMin)}–${hm(s.endMin)}` }),
       el('span', { class: 'cat', text: CATEGORY[poi.category] ?? '' }),
+      poi.item ? el('span', { class: 'cat item', text: poi.item }) : null,
     ]),
     el('h3', { text: poi.name_zh }),
     el('p', { class: 'muted small', text: [poi.guide?.intro ?? poi.highlight ?? '', closes ? TEXT.closesAt(closes) : ''].filter(Boolean).join('　') }),
