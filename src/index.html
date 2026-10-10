@@ -13,45 +13,79 @@
 <link rel="manifest" href="./manifest.webmanifest">
 <style>
   :root {
-    --bg: #f7f5f0;
-    --bg-elevated: #ffffff;
-    --fg: #1d1d1b;
-    --muted: #6b6a66;
-    --accent: #2f6f5e;
-    --warn: #b7791f;
-    --line: #e3e0d8;
-    --gutter: 16px;
+    --bg: #f7f5f0; --bg-elevated: #ffffff; --fg: #1d1d1b; --muted: #6b6a66;
+    --accent: #2f6f5e; --accent-fg: #ffffff; --warn: #9a6a12; --warn-bg: #fff4d6; --line: #e3e0d8;
+    --rest: #e9f2ee; --gutter: 16px; --tabs: 56px;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #121416;
-      --bg-elevated: #1c1f22;
-      --fg: #ece9e2;
-      --muted: #9a9890;
-      --accent: #7fc1ad;
-      --warn: #e0a94a;
-      --line: #2a2e32;
+      --bg: #121416; --bg-elevated: #1c1f22; --fg: #ece9e2; --muted: #9a9890;
+      --accent: #7fc1ad; --accent-fg: #0f1a16; --warn: #e0a94a; --warn-bg: #2a2416; --line: #2a2e32; --rest: #182420;
     }
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; min-height: 100%; }
   body {
-    background: var(--bg);
-    color: var(--fg);
+    background: var(--bg); color: var(--fg);
     font: 17px/1.5 -apple-system, "PingFang TC", "Noto Sans TC", system-ui, sans-serif;
-    padding: max(var(--gutter), env(safe-area-inset-top)) max(var(--gutter), env(safe-area-inset-right)) max(var(--gutter), env(safe-area-inset-bottom)) max(var(--gutter), env(safe-area-inset-left));
+    padding: max(var(--gutter), env(safe-area-inset-top)) max(var(--gutter), env(safe-area-inset-right)) calc(var(--tabs) + max(var(--gutter), env(safe-area-inset-bottom))) max(var(--gutter), env(safe-area-inset-left));
     overflow-x: hidden;
   }
   #app { max-width: 640px; margin: 0 auto; }
-  .banner {
-    position: fixed; left: 0; right: 0; bottom: 0;
-    padding: 12px max(var(--gutter), env(safe-area-inset-left)) max(12px, env(safe-area-inset-bottom));
-    background: var(--bg-elevated); border-top: 1px solid var(--line);
-    display: flex; gap: 12px; align-items: center; justify-content: space-between;
-  }
-  .banner button { font: inherit; padding: 8px 14px; border-radius: 10px; border: 1px solid var(--accent); background: transparent; color: var(--accent); }
   h1 { font-size: 22px; margin: 0 0 8px; }
+  h2 { font-size: 19px; margin: 0; }
+  h3 { font-size: 18px; margin: 4px 0; }
+  p { margin: 4px 0; }
   .muted { color: var(--muted); }
+  .small { font-size: 14px; }
+  .version { position: fixed; left: 0; right: 0; bottom: calc(var(--tabs) + env(safe-area-inset-bottom)); text-align: center; font-size: 11px; opacity: .6; pointer-events: none; }
+
+  .btn { font: inherit; font-size: 15px; padding: 8px 14px; border-radius: 10px; border: 1px solid var(--accent); background: transparent; color: var(--accent); }
+  .btn.primary { background: var(--accent); color: var(--accent-fg); }
+  .btn.quiet { border-color: var(--line); color: var(--muted); }
+  .btn.quiet.on { border-color: var(--accent); color: var(--accent); }
+  .btn.alt { display: block; width: 100%; text-align: left; margin-top: 6px; border-color: var(--line); color: var(--fg); background: var(--bg-elevated); }
+  .btn.huge { width: 100%; font-size: 20px; padding: 16px; margin: 12px 0; }
+  .btn.star { padding: 10px 8px; }
+  .actions { display: flex; gap: 8px; margin-top: 6px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .row.top { margin-bottom: 8px; }
+  .row.sim { justify-content: flex-start; margin: 8px 0; flex-wrap: wrap; }
+
+  .day { margin: 18px 0 8px; }
+  .day-head { padding-bottom: 6px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+  .card { background: var(--bg-elevated); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin: 10px 0; }
+  .card.anchor { border-color: var(--accent); }
+  .card.rest { background: var(--rest); }
+  .card.big { padding: 18px 16px; }
+  .card.next h2 { font-size: 26px; margin: 2px 0 6px; }
+  .card.warn { background: var(--warn-bg); border-color: var(--warn); }
+  .warn-line { color: var(--warn); font-weight: 600; }
+  .time { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 14px; }
+  .time.big { font-size: 22px; color: var(--fg); margin-right: 8px; }
+  .big-line { font-size: 19px; font-weight: 600; }
+  .cat { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; }
+  .leg { margin: 6px 0 0; }
+  .warn-list { margin: 6px 0 0; padding-left: 18px; color: var(--warn); font-size: 14px; }
+  .dropped summary { color: var(--muted); font-size: 14px; cursor: pointer; }
+  .swap-list { margin-top: 8px; }
+  .proposal { border-top: 1px solid var(--line); padding: 8px 0; }
+  .resync summary { color: var(--muted); font-size: 14px; cursor: pointer; margin-top: 8px; }
+  .list { margin-top: 6px; }
+  .plain { list-style: none; padding: 0; margin: 4px 0 12px; }
+  .plain li { padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .group { margin: 12px 0; }
+  .field { display: block; margin: 12px 0; }
+  .field span { display: block; color: var(--muted); font-size: 14px; }
+  .field input[type=number], .field input[type=time] { font: inherit; width: 100%; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg-elevated); color: var(--fg); }
+  .field.row input[type=checkbox] { width: 24px; height: 24px; }
+  .sheet { position: fixed; left: 0; right: 0; bottom: 0; background: var(--bg-elevated); border-top: 1px solid var(--line); border-radius: 16px 16px 0 0; padding: 16px max(var(--gutter), env(safe-area-inset-left)) max(16px, env(safe-area-inset-bottom)); box-shadow: 0 -8px 24px rgba(0,0,0,.15); }
+  .stars { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 10px 0; }
+
+  .tabs { position: fixed; left: 0; right: 0; bottom: 0; height: calc(var(--tabs) + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom); display: flex; background: var(--bg-elevated); border-top: 1px solid var(--line); }
+  .tab { flex: 1; display: flex; align-items: center; justify-content: center; text-decoration: none; color: var(--muted); font-size: 15px; }
+  .tab.active { color: var(--accent); font-weight: 600; }
+  .banner { position: fixed; left: 0; right: 0; bottom: calc(var(--tabs) + env(safe-area-inset-bottom)); padding: 12px max(var(--gutter), env(safe-area-inset-left)); background: var(--bg-elevated); border-top: 1px solid var(--line); display: flex; gap: 12px; align-items: center; justify-content: space-between; }
 </style>
 </head>
 <body>

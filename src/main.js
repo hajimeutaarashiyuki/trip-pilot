@@ -1,39 +1,16 @@
-// 進入點：畫出殼、註冊 Service Worker、新版本只出橫幅不自動換（決策樹 Q16）。
+// 進入點：啟動控制器、註冊 Service Worker、新版本只出橫幅不自動換（決策樹 Q16）。
+import { el } from './ui/dom.js';
 import { TEXT } from './ui/text.js';
+import { boot } from './ui/app.js';
 
 // 建置時由 tools/build.mjs 以 define 注入；沒建置（直接開 src）就是 dev。
 const VERSION = typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev';
-
-function el(tag, attrs = {}, children = []) {
-  const node = document.createElement(tag);
-  for (const [k, v] of Object.entries(attrs)) {
-    if (k === 'class') node.className = v;
-    else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2), v);
-    else node.setAttribute(k, v);
-  }
-  for (const c of [].concat(children)) node.append(c instanceof Node ? c : document.createTextNode(String(c)));
-  return node;
-}
-
-function renderShell(root) {
-  root.replaceChildren(
-    el('h1', {}, TEXT.appName),
-    el('p', { class: 'muted' }, TEXT.shellHint),
-    el('p', { class: 'muted' }, TEXT.version(VERSION)),
-  );
-}
 
 function showUpdateBanner(registration) {
   if (document.querySelector('.banner')) return;
   const banner = el('div', { class: 'banner', role: 'status' }, [
     el('span', {}, TEXT.updateBanner),
-    el('button', {
-      type: 'button',
-      onclick: () => {
-        // 使用者按了才換版：叫等待中的 SW 接手，接手後重新載入。
-        registration.waiting?.postMessage({ type: 'SKIP_WAITING' });
-      },
-    }, TEXT.updateButton),
+    el('button', { class: 'btn', type: 'button', onclick: () => registration.waiting?.postMessage({ type: 'SKIP_WAITING' }) }, TEXT.updateButton),
   ]);
   document.body.append(banner);
 }
@@ -50,19 +27,16 @@ async function registerServiceWorker() {
       });
     });
     let reloading = false;
-    navigator.serviceWorker.addEventListener('controllerchange', () => {
-      if (reloading) return;
-      reloading = true;
-      location.reload();
-    });
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (!reloading) { reloading = true; location.reload(); } });
   } catch (err) {
-    // 註冊失敗不影響使用；只是沒有離線快取。
     console.warn('service worker 註冊失敗', err);
   }
+  // iOS 主畫面 PWA：要求持久儲存，避免被 LRU 淘汰（研究報告 §五）
+  try { await navigator.storage?.persist?.(); } catch { /* 不支援就算了 */ }
 }
 
-const root = document.getElementById('app');
-if (root) {
-  renderShell(root);
-  registerServiceWorker();
-}
+document.title = TEXT.appName;
+const footer = el('p', { class: 'muted small version', text: TEXT.version(VERSION) });
+document.body.append(footer);
+boot();
+registerServiceWorker();
