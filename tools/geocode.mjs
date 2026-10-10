@@ -11,9 +11,12 @@ import { normalizePoi } from '../src/data/schema.js';
 const UA = 'trip-pilot/0.0 (personal trip planner; contact: see repo)';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-export async function geocodeOne(query) {
-  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&q=${encodeURIComponent(query)}`;
+// bbox：只收這個範圍內的結果（Nominatim 的 viewbox + bounded），不然「山寺」會查到山西。預設東北地方。
+export async function geocodeOne(query, bbox = { west: 139.5, south: 37.0, east: 142.2, north: 40.5 }) {
+  const viewbox = `${bbox.west},${bbox.north},${bbox.east},${bbox.south}`;
+  const url = `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=1&bounded=1&viewbox=${viewbox}&q=${encodeURIComponent(query)}`;
   const res = await fetch(url, { headers: { 'User-Agent': UA, 'Accept-Language': 'ja,zh-TW,en' } });
+  if (res.status === 429) { await sleep(5000); return geocodeOne(query, bbox); }
   if (!res.ok) throw new Error(`Nominatim ${res.status}`);
   const list = await res.json();
   if (!list.length) return null;
