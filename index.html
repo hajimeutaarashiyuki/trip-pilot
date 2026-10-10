@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f5f0">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#121416">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Trip Pilot">
+<title>Trip Pilot</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<style>
+  :root {
+    --bg: #f7f5f0;
+    --bg-elevated: #ffffff;
+    --fg: #1d1d1b;
+    --muted: #6b6a66;
+    --accent: #2f6f5e;
+    --warn: #b7791f;
+    --line: #e3e0d8;
+    --gutter: 16px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121416;
+      --bg-elevated: #1c1f22;
+      --fg: #ece9e2;
+      --muted: #9a9890;
+      --accent: #7fc1ad;
+      --warn: #e0a94a;
+      --line: #2a2e32;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 17px/1.5 -apple-system, "PingFang TC", "Noto Sans TC", system-ui, sans-serif;
+    padding: max(var(--gutter), env(safe-area-inset-top)) max(var(--gutter), env(safe-area-inset-right)) max(var(--gutter), env(safe-area-inset-bottom)) max(var(--gutter), env(safe-area-inset-left));
+    overflow-x: hidden;
+  }
+  #app { max-width: 640px; margin: 0 auto; }
+  .banner {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    padding: 12px max(var(--gutter), env(safe-area-inset-left)) max(12px, env(safe-area-inset-bottom));
+    background: var(--bg-elevated); border-top: 1px solid var(--line);
+    display: flex; gap: 12px; align-items: center; justify-content: space-between;
+  }
+  .banner button { font: inherit; padding: 8px 14px; border-radius: 10px; border: 1px solid var(--accent); background: transparent; color: var(--accent); }
+  h1 { font-size: 22px; margin: 0 0 8px; }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>(() => {
+  // src/ui/text.js
+  var TEXT = {
+    appName: "Trip Pilot",
+    shellHint: "\u9084\u6C92\u6709\u65C5\u7A0B\u3002\u51FA\u767C\u524D\u5728\u96FB\u8166\u4E0A\u6392\u597D\u3001\u6253\u5305\uFF0C\u624B\u6A5F\u6309\u4E00\u6B21\u300C\u66F4\u65B0\u300D\u5C31\u6703\u51FA\u73FE\u5728\u9019\u88E1\u3002",
+    updateBanner: "\u6709\u65B0\u7248\u672C",
+    updateButton: "\u91CD\u65B0\u8F09\u5165",
+    offlineReady: "\u5DF2\u53EF\u96E2\u7DDA\u4F7F\u7528",
+    version: (v) => `\u7248\u672C ${v}`
+  };
+
+  // src/main.js
+  var VERSION = true ? "202610102031-e9042286" : "dev";
+  function el(tag, attrs = {}, children = []) {
+    const node = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs)) {
+      if (k === "class") node.className = v;
+      else if (k.startsWith("on") && typeof v === "function") node.addEventListener(k.slice(2), v);
+      else node.setAttribute(k, v);
+    }
+    for (const c of [].concat(children)) node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+    return node;
+  }
+  function renderShell(root2) {
+    root2.replaceChildren(
+      el("h1", {}, TEXT.appName),
+      el("p", { class: "muted" }, TEXT.shellHint),
+      el("p", { class: "muted" }, TEXT.version(VERSION))
+    );
+  }
+  function showUpdateBanner(registration) {
+    if (document.querySelector(".banner")) return;
+    const banner = el("div", { class: "banner", role: "status" }, [
+      el("span", {}, TEXT.updateBanner),
+      el("button", {
+        type: "button",
+        onclick: () => {
+          registration.waiting?.postMessage({ type: "SKIP_WAITING" });
+        }
+      }, TEXT.updateButton)
+    ]);
+    document.body.append(banner);
+  }
+  async function registerServiceWorker() {
+    if (!("serviceWorker" in navigator)) return;
+    try {
+      const registration = await navigator.serviceWorker.register("./sw.js");
+      if (registration.waiting) showUpdateBanner(registration);
+      registration.addEventListener("updatefound", () => {
+        const installing = registration.installing;
+        installing?.addEventListener("statechange", () => {
+          if (installing.state === "installed" && navigator.serviceWorker.controller) showUpdateBanner(registration);
+        });
+      });
+      let reloading = false;
+      navigator.serviceWorker.addEventListener("controllerchange", () => {
+        if (reloading) return;
+        reloading = true;
+        location.reload();
+      });
+    } catch (err) {
+      console.warn("service worker \u8A3B\u518A\u5931\u6557", err);
+    }
+  }
+  var root = document.getElementById("app");
+  if (root) {
+    renderShell(root);
+    registerServiceWorker();
+  }
+})();
+</script>
+</body>
+</html>
