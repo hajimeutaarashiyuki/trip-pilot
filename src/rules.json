@@ -1,0 +1,27 @@
+{
+  "_說明": "引擎的數字真相（決策樹 Q5）。profile.md 是給人讀的版本，tools/check-rules.mjs 比對兩邊。settings 是全引擎共用的數字；rules 是各條規則的覆寫，weight 0 = 停用。除了標「原話」的，都是預設。",
+  "settings": {
+    "walkBudgetMin": 150,
+    "maxWalkRunMin": 150,
+    "restResetMin": 30,
+    "maxShopRunCount": 4,
+    "maxShopRunMin": 240,
+    "microRestMin": 10,
+    "deepDigCount": 2,
+    "climbFactor": 1.5,
+    "legSuggestMin": 10,
+    "defaultDwellMin": 60,
+    "sameTypeMaxPerDay": 2,
+    "earlyDayWalkFactor": 0.7,
+    "earlyDayAfterHM": "13:00",
+    "partyWalkFactor": 0.85,
+    "dayTripNextWalkFactor": 0.85,
+    "openSlotMinPerDay": 90,
+    "lateThresholdMin": 15,
+    "walkingMPerMin": 80,
+    "detourFactor": 1.3,
+    "maxStopsPerDay": 8,
+    "_原話": { "maxShopRunMin": "#103（題目寫 240 他答可以）", "walkBudgetMin": "#114（先留）", "sameTypeMaxPerDay": "#123、#143" }
+  },
+  "rules": {}
+}
