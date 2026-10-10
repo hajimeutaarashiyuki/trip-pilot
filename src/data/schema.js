@@ -5,6 +5,7 @@ import categoryTable from '../derive/category.json' with { type: 'json' };
 import walkTable from '../derive/walkFactor.json' with { type: 'json' };
 import recoveryTable from '../derive/recovery.json' with { type: 'json' };
 import dwellTable from '../derive/dwell.json' with { type: 'json' };
+import { parseHoursText } from '../derive/hours.js';
 
 export const DERIVE = { category: categoryTable, walk: walkTable, recovery: recoveryTable, dwell: dwellTable };
 
@@ -97,12 +98,23 @@ export function normalizePoi(raw, { derive = DERIVE } = {}) {
     if (parsed == null && raw.duration) warnings.push({ code: 'duration-unparsed', poiId: poi.id, msg: `停留時間看不懂：${raw.duration}` });
   }
 
-  // 營業時間：結構化的照收；自由文字留 hoursRaw、hours=null（規則對 hours null 的站跳過並警告，§5.12 要附備案）
+  // 營業時間：結構化的照收；自由文字先解析成結構（derive/hours.js），看不出時段才 hours=null（規則跳過並警告，§5.12 要附備案）
   if (raw.hours && typeof raw.hours === 'object') poi.hours = raw.hours;
-  else {
+  else if (typeof (raw.hours ?? raw.hoursRaw) === 'string' && String(raw.hours ?? raw.hoursRaw).trim()) {
+    // 打包檔裡已經規範化過的站 hours 是 null、原文在 hoursRaw：一樣再解析一次（舊打包檔也能用新解析器）
+    const hoursText = typeof raw.hours === 'string' ? raw.hours : raw.hoursRaw;
+    const parsed = parseHoursText(hoursText);
+    poi.hoursRaw = hoursText; poi.hoursNote = parsed.note;
+    if (parsed.hours) {
+      poi.hours = parsed.hours; poi.hoursSource = 'text';
+      if (parsed.partial) warnings.push({ code: 'hours-partial', poiId: poi.id, msg: `營業時間從文字解析：${parsed.note}` });
+    } else {
+      poi.hours = null;
+      warnings.push({ code: 'hours-missing', poiId: poi.id, msg: '營業時間文字看不出時段' });
+    }
+  } else {
     poi.hours = null;
-    if (typeof raw.hours === 'string') poi.hoursRaw = raw.hours;
-    warnings.push({ code: 'hours-missing', poiId: poi.id, msg: '沒有結構化營業時間' });
+    warnings.push({ code: 'hours-missing', poiId: poi.id, msg: '沒有營業時間' });
   }
 
   // 座標

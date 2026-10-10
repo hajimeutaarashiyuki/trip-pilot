@@ -1,4 +1,6 @@
 // 畫面文字集中在這裡。程式鍵值不得直接印到畫面（UX 鐵律）；店型、優先度、狀態都在這裡翻成人話。
+const fmtAt = (at) => (at ? new Date(at).toLocaleString('zh-TW', { hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '不明');
+
 export const TEXT = {
   appName: 'Trip Pilot',
   shellHint: '還沒有旅程。出發前在電腦上排好、打包，手機按一次「更新」就會出現在這裡。',
@@ -52,6 +54,17 @@ export const TEXT = {
   openSlot: '每天留白（分鐘）',
   departHM: '預設幾點出門',
   nightSlot: '每晚排夜間站',
+  packSection: '旅程資料',
+  packUrl: '打包檔網址（桌機）',
+  update: '更新',
+  updating: '更新中…',
+  updated: (name, at) => `更新好了：${name}（${fmtAt(at)}）`,
+  updateFailed: (msg) => `更新失敗：${msg}。沒網路的話，手機裡原本的旅程還在。`,
+  needUrl: '先填桌機的打包檔網址',
+  importFile: '從檔案載入',
+  noPack: '手機裡還沒有旅程',
+  lastPack: (name, at) => `手機裡的旅程：${name}（打包於 ${fmtAt(at)}）`,
+  goUpdate: '去更新',
   saved: '已存',
 
   // 候選

@@ -7,6 +7,8 @@ import rulesJson from '../rules.json' with { type: 'json' };
 import { planTrip } from '../engine/trip.js';
 import { applySwap } from '../engine/swap.js';
 import { makeLegFn } from '../geo/matrix.js';
+import { importPack, loadLatestPack } from '../data/store.js';
+import { readPack } from '../data/pack.js';
 import * as demo from '../demo/sendai.js';
 import { renderPlanner } from './planner.js';
 import { renderNow } from './now.js';
@@ -19,6 +21,7 @@ const FIELD_KEY = 'trip-pilot:field';
 export const state = {
   trip: null, pois: {}, country: null, kb: null, legFn: null,
   rules: null, settings: null, plans: {}, pool: [],
+  packRules: null, packMeta: null, packStatus: '',
   route: '#/plan',
   device: loadJSON(SETTINGS_KEY, {}),
   field: loadJSON(FIELD_KEY, { date: null, index: 0, simulate: false, simNowMin: null, ratings: {} }),
@@ -29,12 +32,13 @@ function saveJSON(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); 
 
 /** 把四個裝置設定套進引擎設定與規則（決策樹 Q17）。 */
 function buildSettings() {
-  const base = { ...rulesJson.settings };
+  const src = state.packRules ?? rulesJson;
+  const base = { ...src.settings };
   const d = state.device;
   if (Number.isFinite(d.walkBudgetMin)) base.walkBudgetMin = d.walkBudgetMin;
   if (Number.isFinite(d.openSlotMinPerDay)) base.openSlotMinPerDay = d.openSlotMinPerDay;
   if (d.departHM) base.dayWindow = [d.departHM, base.dayWindow[1]];
-  const config = { ...rulesJson.rules };
+  const config = { ...src.rules };
   if (d.nightSlotOn === false) config['night-slot'] = { ...(config['night-slot'] ?? {}), weight: 0 };
   state.settings = base;
   state.rules = loadRules(BUILTIN, config);
@@ -57,8 +61,11 @@ export function loadFromPack(packResult) {
   state.trip = pack.trip;
   state.pois = Object.fromEntries(pois.map((p) => [p.id, p]));
   state.country = pack.country;
-  state.kb = { zones: pack.zones ?? {} };
-  state.legFn = makeLegFn({ walk: pack.walk?.pairs ?? {}, settings: state.settings ?? rulesJson.settings, zoneLinks: pack.zones?.links ?? {} });
+  state.kb = { zones: pack.zones?.zones ?? {} };
+  state.packRules = pack.rules ?? null;
+  state.packMeta = { ...(pack.meta ?? {}), tripId: pack.trip.id, tripName: pack.trip.name ?? pack.trip.id, city: pack.city ?? null };
+  buildSettings();
+  state.legFn = makeLegFn({ walk: pack.walk?.pairs ?? {}, settings: state.settings, zoneLinks: pack.zones?.links ?? {} });
   state.pool = pois.map((poi) => ({ poi }));
   if (!state.field.date) state.field.date = state.trip.days[0].date;
   replanAll();
@@ -88,6 +95,32 @@ export function removeStop(date, poiId) {
   replanAll();
 }
 
+/** 收一份打包檔 JSON：格式不對在 readPack 丟；先寫進 IndexedDB（手機是真相）再載入畫面。 */
+export async function applyPackJson(json, { persist = true } = {}) {
+  const result = readPack(json);
+  if (persist) await importPack(json);
+  loadFromPack(result);
+  state.packStatus = TEXT.updated(result.pack.trip.name ?? result.pack.trip.id, result.pack.meta?.generatedAt);
+  render();
+}
+
+export async function updateFromUrl() {
+  const url = state.device.packUrl;
+  if (!url) { state.packStatus = TEXT.needUrl; render(); return; }
+  state.packStatus = TEXT.updating; render();
+  try {
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    await applyPackJson(await res.json());
+  } catch (err) {
+    state.packStatus = TEXT.updateFailed(err.message); render();
+  }
+}
+
+export async function importFile(file) {
+  try { await applyPackJson(JSON.parse(await file.text())); } catch (err) { state.packStatus = TEXT.updateFailed(err.message); render(); }
+}
+
 export function saveDevice(partial) {
   state.device = { ...state.device, ...partial };
   saveJSON(SETTINGS_KEY, state.device);
@@ -106,17 +139,21 @@ export function render() {
   const root = document.getElementById('app');
   if (!root) return;
   clear(root);
-  if (!state.trip) {
-    root.append(
-      el('h1', { text: TEXT.appName }),
-      el('p', { class: 'muted', text: TEXT.shellHint }),
-      el('button', { class: 'btn primary', type: 'button', onclick: loadDemo }, TEXT.loadDemo),
-    );
-    return;
-  }
-  const view = VIEWS[state.route] ?? renderPlanner;
-  root.append(el('main', { class: 'view' }, view({ state, actions: { swapStop, removeStop, saveDevice, setField, replanAll } })));
+  const actions = { swapStop, removeStop, saveDevice, setField, replanAll, updateFromUrl, importFile };
+  const view = !state.trip && state.route !== '#/settings' ? renderEmpty : (VIEWS[state.route] ?? renderPlanner);
+  root.append(el('main', { class: 'view' }, view({ state, actions })));
   root.append(tabBar());
+}
+
+function renderEmpty() {
+  return [
+    el('h1', { text: TEXT.appName }),
+    el('p', { class: 'muted', text: TEXT.shellHint }),
+    el('div', { class: 'actions' }, [
+      el('a', { class: 'btn primary', href: '#/settings' }, TEXT.goUpdate),
+      el('button', { class: 'btn', type: 'button', onclick: loadDemo }, TEXT.loadDemo),
+    ]),
+  ];
 }
 
 function tabBar() {
@@ -126,10 +163,26 @@ function tabBar() {
   }));
 }
 
-export function boot() {
+export async function boot() {
   buildSettings();
   const apply = () => { state.route = location.hash && VIEWS[location.hash] ? location.hash : '#/plan'; render(); };
   window.addEventListener('hashchange', apply);
   if (!state.field.date) state.field.date = todayStr();
+  readPackParam();
   apply();
+  try {
+    const stored = await loadLatestPack();
+    if (stored) { loadFromPack(stored); replanAll(); }
+  } catch (err) {
+    console.warn('讀不到手機裡的旅程', err);
+  }
+}
+
+/** #/settings?pack=<網址>：我給他的連結，點了網址就寫進裝置設定，不用在手機上打字。 */
+function readPackParam() {
+  const m = location.hash.match(/[?&]pack=([^&]+)/);
+  if (!m) return;
+  state.device = { ...state.device, packUrl: decodeURIComponent(m[1]) };
+  saveJSON(SETTINGS_KEY, state.device);
+  location.hash = '#/settings';
 }

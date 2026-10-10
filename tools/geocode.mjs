@@ -2,10 +2,12 @@
 // 每個結果都要「落在該站的區」才收（區靠 zones.json 的 keywords 從 area 文字歸出來）；名字對得上才算 exact；
 // 店本身不在 OSM 的，退而用 area 裡的地址查（confidence: address）。查不到的留 null，不猜。
 // 人工補在 <城>/coords.manual.json（{ "<poiId>": { lat, lng, note } }），人工的優先。
-// 用法：node tools/geocode.mjs <知識庫資料夾> [--city 仙台] [--retry | --force]
-//   預設只查還沒有的；--retry 重查 null 與非 exact 的（exact 但跑出該區的也重查）；--force 全部重查。
+// 用法：node tools/geocode.mjs <知識庫資料夾> [--city 仙台] [--retry | --force | --fill]
+//   預設只查還沒有的；--retry 重查 null 與非 exact 的（exact 但跑出該區的也重查）；--force 全部重查；
+//   --fill 不打網路，只把還是 null 的站填成所屬區的區心（confidence: zone），讓步行矩陣有東西算。
 // 輸出：<城>/coords.json  { "<poiId>": { lat, lng, source, query, display, confidence, zoneId, distM } | null }
-//   confidence：exact（查到的地名含店名）、address（靠地址查到，店不在 OSM）、fuzzy（在該區內但名字對不上）、unzoned（歸不到區，只知道在範圍框內）、manual
+//   confidence：exact（查到的地名含店名）、address（靠地址查到，店不在 OSM）、fuzzy（在該區內但名字對不上）、unzoned（歸不到區，只知道在範圍框內）、
+//              zone（都查不到，先用該區的區心頂著，誤差是半徑；--fill 填的）、manual
 import { readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
@@ -21,7 +23,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const BBOX = { west: 139.5, south: 37.0, east: 142.2, north: 40.5 };
 // 這些店型不是地點（交通、實用資訊），不查
 const SKIP_CATEGORIES = new Set(['logistics']);
-const RANK = { exact: 3, address: 2, fuzzy: 1, unzoned: 0 };
+const RANK = { exact: 3, address: 2, fuzzy: 1, unzoned: 0, zone: -1 };
 
 export async function geocodePhoton(query, bbox = BBOX, limit = 5) {
   // Photon 的 lang 只有 en/de/fr/it 等，日文地名用預設（原文）即可
@@ -99,6 +101,11 @@ export function inZone(hit, zone) {
   return haversineM(hit, zone) <= Math.max((zone.radiusM ?? 800) * 2, 1500);
 }
 
+/** 查不到時的區心頂替：誤差是該區半徑，distM 記 0、query 記 null，讓人一眼看出是頂替的。 */
+export function zoneCenter(zone) {
+  return zone ? { lat: zone.lat, lng: zone.lng, source: 'zone', query: null, display: `區心 ${zone.id}`, confidence: 'zone', zoneId: zone.id, distM: 0 } : null;
+}
+
 export function zoneFor(poi, zones) {
   const id = zoneOfPoi(poi, zones);
   return id && zones[id] ? { id, ...zones[id] } : null;
@@ -128,7 +135,7 @@ function loadPois(kb) {
   return list.map((raw) => normalizePoi(raw).poi).filter((p) => (seen.has(p.id) ? false : (seen.add(p.id), true)));
 }
 
-const MARK = { exact: '○', address: '▢', fuzzy: '△', unzoned: '？' };
+const MARK = { exact: '○', address: '▢', fuzzy: '△', unzoned: '？', zone: '◎' };
 
 async function main() {
   const args = process.argv.slice(2);
@@ -136,7 +143,7 @@ async function main() {
   if (!dir) { console.error('用法：node tools/geocode.mjs <知識庫資料夾> [--city 仙台] [--retry | --force]'); process.exit(2); }
   const cityArg = args.indexOf('--city');
   const city = cityArg >= 0 ? args[cityArg + 1] : '仙台';
-  const mode = args.includes('--force') ? 'force' : args.includes('--retry') ? 'retry' : 'missing';
+  const mode = args.includes('--force') ? 'force' : args.includes('--retry') ? 'retry' : args.includes('--fill') ? 'fill' : 'missing';
   const kb = JSON.parse(await readFile(path.join(dir, 'data.json'), 'utf8'));
   const zonesPath = path.join(dir, 'zones.json');
   const zones = existsSync(zonesPath) ? (JSON.parse(await readFile(zonesPath, 'utf8')).zones ?? {}) : {};
@@ -145,13 +152,20 @@ async function main() {
   const manualPath = path.join(dir, 'coords.manual.json');
   const out = existsSync(outPath) && mode !== 'force' ? JSON.parse(await readFile(outPath, 'utf8')) : {};
   const manual = existsSync(manualPath) ? JSON.parse(await readFile(manualPath, 'utf8')) : {};
-  const counts = { exact: 0, address: 0, fuzzy: 0, unzoned: 0, none: 0, manual: 0, kept: 0, skipped: 0 };
+  const counts = { exact: 0, address: 0, fuzzy: 0, unzoned: 0, zone: 0, none: 0, manual: 0, kept: 0, skipped: 0 };
   for (const poi of pois) {
     if (manual[poi.id]) { out[poi.id] = { ...manual[poi.id], source: 'manual', confidence: 'manual' }; counts.manual++; continue; }
     if (SKIP_CATEGORIES.has(poi.category)) { out[poi.id] = null; counts.skipped++; continue; }
     const zone = zoneFor(poi, zones);
     const cur = out[poi.id];
     if (mode === 'missing' && cur !== undefined) { counts.kept++; continue; }
+    if (mode === 'fill') {
+      if (cur) { counts.kept++; continue; }
+      const z = zoneCenter(zone);
+      out[poi.id] = z; counts[z ? 'zone' : 'none']++;
+      console.log(`${z ? '◎' : '×'} ${poi.name_zh}${zone ? `［${zone.id}］區心頂替` : '［無區］'}`);
+      continue;
+    }
     if (mode === 'retry' && cur && cur.confidence === 'exact' && inZone(cur, zone)) { counts.kept++; continue; }
     const r = await geocodePoi(poi, city, zone);
     out[poi.id] = r;
@@ -159,7 +173,7 @@ async function main() {
     console.log(`${r ? MARK[r.confidence] : '×'} ${poi.name_zh}${zone ? `［${zone.id}］` : '［無區］'}${r ? `　${r.lat.toFixed(5)},${r.lng.toFixed(5)}　${r.display.slice(0, 60)}${r.distM != null ? `　距區心 ${r.distM} m` : ''}` : ''}`);
   }
   await writeFile(outPath, JSON.stringify(out, null, 2) + '\n', 'utf8');
-  console.log(`座標：exact ${counts.exact}、address ${counts.address}、fuzzy ${counts.fuzzy}、unzoned ${counts.unzoned}、沒查到 ${counts.none}、人工 ${counts.manual}、沿用 ${counts.kept}、不查（交通類）${counts.skipped}；共 ${pois.length} 站 → ${outPath}`);
+  console.log(`座標：exact ${counts.exact}、address ${counts.address}、fuzzy ${counts.fuzzy}、unzoned ${counts.unzoned}、區心頂替 ${counts.zone}、沒查到 ${counts.none}、人工 ${counts.manual}、沿用 ${counts.kept}、不查（交通類）${counts.skipped}；共 ${pois.length} 站 → ${outPath}`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

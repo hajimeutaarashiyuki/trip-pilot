@@ -60,7 +60,7 @@ export async function importPack(json) {
   const cityId = pack.city.id;
   await tx('readwrite', ['pois', 'trips'], (poiStore, tripStore) => {
     for (const p of pois) poiStore.put({ ...p, cityId });
-    tripStore.put({ ...pack.trip, cityId, country: pack.country, zones: pack.zones, walk: pack.walk, rules: pack.rules, packMeta: pack.meta });
+    tripStore.put({ ...pack.trip, cityId, country: pack.country, zones: pack.zones, walk: pack.walk, rules: pack.rules, packMeta: pack.meta, city: pack.city });
   });
   announce({ type: 'pack', tripId: pack.trip.id });
   return { tripId: pack.trip.id, poiCount: pois.length, warnings };
@@ -73,4 +73,14 @@ export async function snapshotTrip(tripId) {
   const at = new Date().toISOString();
   await tx('readwrite', 'backups', (s) => s.put({ at, tripId, trip }));
   return { at, trip };
+}
+
+/** 手機裡最新的旅程（打包時間最新那趟）還原成 loadFromPack 要的 { pack, pois }；沒有回 null。 */
+export async function loadLatestPack() {
+  const trips = await listTrips();
+  if (!trips?.length) return null;
+  const t = [...trips].sort((a, b) => String(b.packMeta?.generatedAt ?? '').localeCompare(String(a.packMeta?.generatedAt ?? '')))[0];
+  const pois = await listPoisByCity(t.cityId);
+  const { cityId, city, country, zones, walk, rules, packMeta, ...trip } = t;
+  return { pack: { meta: packMeta, city: city ?? { id: cityId }, country, zones, walk, trip, rules }, pois };
 }
