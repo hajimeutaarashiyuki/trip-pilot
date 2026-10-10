@@ -24,6 +24,11 @@ export const TEXT = {
   openUnknown: '營業時間沒查到，要先確認',
   replan: '重排',
   dayScore: (score, penalty) => (penalty > 0 ? `這天有 ${Math.round(penalty)} 分鐘的勉強` : '這天沒有勉強的地方'),
+  openSlotLine: (left, used) => (used > 0 ? `留白：還剩 ${left} 分（等開門用掉 ${used} 分）` : `留白 ${left} 分`),
+  darkBefore: (hm) => `天黑 ${hm} 前`,
+  mapLink: '地圖',
+  routeLink: '路線',
+  restInserted: '引擎插的休息站，不要就按『不去了』',
 
   // 現場
   nextStop: '下一站',
@@ -32,9 +37,10 @@ export const TEXT = {
   dayDone: '今天走完了',
   late: (min) => `落後 ${min} 分`,
   early: (min) => `不急，還有 ${min} 分`,
-  waitOpen: (min) => `等開門 ${min} 分`,
+  waitOpen: (min) => `等開門 ${min} 分（算留白）`,
   firstLeg: (time, t) => `${time} 出門，${t}`,
   hardLimit: (name, hm) => `${name} ${hm} 關門，這樣走會趕不上`,
+  hardLimitDark: (name, hm) => `${name} ${hm} 天黑，這樣走會趕不上`,
   proposals: '接下來可以這樣走',
   takeThis: '照這個走',
   keepGoing: '照原本的走',
@@ -46,7 +52,8 @@ export const TEXT = {
   rateTitle: (name) => `${name} 怎麼樣？`,
   rateSkip: '略過',
   stars: ['', '踩雷', '留著', '順路才排', '備案', '優先', '必去'],
-  restInserted: '引擎插的休息站，不想休息可以略過',
+  restInsertedNow: '引擎插的休息站，不想休息可以略過',
+  openMaps: 'Google Maps 路線',
 
   // 設定
   settingsTitle: '這四個數字你旅途中會想動',

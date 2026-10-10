@@ -19,7 +19,8 @@ export async function planPackFile(file, options = {}) {
   const rules = loadRules(BUILTIN, src.rules);
   const legFn = makeLegFn({ walk: pack.walk?.pairs ?? {}, settings, zoneLinks: pack.zones?.links ?? {} });
   const poiMap = Object.fromEntries(pois.map((p) => [p.id, p]));
-  const result = planTrip({ trip: pack.trip, pois: poiMap, rules, settings, country: pack.country, kb: { zones: pack.zones?.zones ?? {} }, legFn, options });
+  // restPool 給整個知識庫，跟手機上一樣（引擎插的站在報告行尾標「（引擎插）」）
+  const result = planTrip({ trip: pack.trip, pois: poiMap, rules, settings, country: pack.country, kb: { zones: pack.zones?.zones ?? {} }, legFn, restPool: pois, options });
   return { pack, pois, normalizeWarnings: warnings, result, legFn };
 }
 
@@ -35,12 +36,14 @@ export function formatReport({ pack, result, legFn }) {
     for (const s of plan.sequence) {
       const leg = prev ? legFn(prev.poi, s.poi) : null;
       const legText = leg ? `${leg.rideMin > 0 ? `車 ${leg.rideMin} 分、` : ''}走 ${leg.walkMin} 分${leg.source ? `（${leg.source}）` : ''}` : '';
-      lines.push(`- ${minToHm(s.startMin)}–${minToHm(s.endMin)}　${s.poi.name_zh}　[${s.poi.category}]${s.isAnchor ? ' ★' : ''}${s.designated ? ' 指定' : ''}${s.waitMin > 5 ? `　等開門 ${s.waitMin}` : ''}${legText ? `　← ${legText}` : ''}`);
+      lines.push(`- ${minToHm(s.startMin)}–${minToHm(s.endMin)}　${s.poi.name_zh}　[${s.poi.category}]${s.isAnchor ? ' ★' : ''}${s.designated ? ' 指定' : ''}${s.waitMin > 5 ? `　等開門 ${s.waitMin}` : ''}${legText ? `　← ${legText}` : ''}${s.insertedBy ? '　（引擎插）' : ''}`);
       prev = s;
     }
     if (plan.dropped?.length) lines.push(`排不進：${plan.dropped.map((x) => `${x.poi.name_zh}（${x.reason}）`).join('；')}`);
-    const warns = (plan.warnings ?? []).filter((w) => w.code !== 'skipped-missing');
+    const warns = (plan.warnings ?? []).filter((w) => w.code !== 'skipped-missing' && !w.hint);
     if (warns.length) lines.push(`警告：${warns.map((w) => w.msg).join('；')}`);
+    const hints = (plan.warnings ?? []).filter((w) => w.hint);
+    if (hints.length) lines.push(`提示（拒絕過引擎插的站，不再插）：${hints.map((w) => w.msg).join('；')}`);
     const skipped = (plan.warnings ?? []).filter((w) => w.code === 'skipped-missing');
     if (skipped.length) lines.push(`規則因缺欄位跳過：${skipped.length} 次（${[...new Set(skipped.map((w) => w.ruleId ?? w.rule ?? '?'))].join('、')}）`);
   }

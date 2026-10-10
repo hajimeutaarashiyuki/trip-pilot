@@ -66,3 +66,13 @@ test('代購研究的「品項｜店名」拆開：item 是品項、name_zh 只�
   const q = normalizePoi({ name_zh: 'Utah', name_local: 'Utah', category: '古著店' }).poi;
   assert.equal(q.item, undefined);
 });
+
+test('白天站：沒時段的神社／寺院／一日遊推成 daylightOnly；有時段的、咖啡廳不算；明寫的優先（含 false）', () => {
+  assert.equal(normalizePoi({ name_zh: '青葉神社', category: '神社', hours: '境內自由參拜；授與所受付時間未確認' }).poi.daylightOnly, true);
+  assert.equal(normalizePoi({ name_zh: '御釜神社', category: 'shrine' }).poi.daylightOnly, true);
+  assert.equal(normalizePoi({ name_zh: '藏王御釜', category: '一日遊' }).poi.daylightOnly, true);
+  assert.equal(normalizePoi({ name_zh: '大崎八幡宮', category: 'shrine', hours: { thu: [['09:00', '16:00']] } }).poi.daylightOnly, false);
+  assert.equal(normalizePoi({ name_zh: 'Elbe', category: 'cafe' }).poi.daylightOnly, false);
+  assert.equal(normalizePoi({ name_zh: '夜間點燈的神社', category: 'shrine', daylightOnly: false }).poi.daylightOnly, false);
+  assert.equal(normalizePoi({ name_zh: '只開白天的喫茶', category: 'cafe', daylightOnly: true }).poi.daylightOnly, true);
+});

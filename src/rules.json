@@ -30,6 +30,9 @@
     "compressMinDwell": 20,
     "restSoonMin": 30,
     "walkVsRideMaxWalkMin": 30,
+    "daylightMarginMin": 30,
+    "restPoolMax": 6,
+    "restInsertMaxPerDay": 2,
     "_原話": {
       "maxShopRunMin": "#103（題目寫 240 他答可以）",
       "walkBudgetMin": "#114（先留）",
@@ -75,6 +78,9 @@
       "weight": 1,
       "maxAfternoonStops": 1
     },
+    "daylight": {
+      "weight": 1
+    },
     "walk-budget": {
       "weight": 1,
       "perMinOver": 1
@@ -111,6 +117,12 @@
       "from": "11:30",
       "to": "14:30",
       "penaltyMin": 20
+    },
+    "wait-at-door": {
+      "weight": 1,
+      "freeMin": 15,
+      "perMin": 1,
+      "capMin": 60
     },
     "anchor": {
       "weight": 1

@@ -30,7 +30,8 @@ test('守營業時間、主行程必排、指定站一定在、沒開的進 drop
     { poi: poi('午餐', { category: 'food', walkFactor: 0, recovery: true, hours: { thu: [['11:30', '14:00']] } }), priority: 'want' },
     { poi: poi('古著', { category: 'vintage', walkFactor: 0, hours: { thu: [['12:00', '20:00']] } }), priority: 'must', designated: true },
     { poi: poi('休週四', { hours: { mon: [['09:00', '17:00']] } }), priority: 'want' },
-    { poi: poi('夜間站', { category: 'bar', walkFactor: 0, recovery: true, hours: { thu: [['17:00', '26:00']] } }), priority: 'want' },
+    // 15:00 就開：17:00 才開的話其他站 13:40 就走完，在門口等 200 分會被 wait-at-door 罰到不如不去（#155），那是另一件事
+    { poi: poi('夜間站', { category: 'bar', walkFactor: 0, recovery: true, hours: { thu: [['15:00', '26:00']] } }), priority: 'want' },
   ];
   const r = planDay({ candidates: cands, day: day({ anchorPoiId: '神社', anchorName: '神社', designated: ['古著'] }), home, legFn: flatLeg, rules, settings, country, kb, options: { explain: true } });
   const ids = r.sequence.map((s) => s.poi.id);
@@ -84,4 +85,19 @@ test('折返：先去遠的再走回飯店旁的站會罰，引擎改成先近�
   const r = planDay({ candidates: cands, day: day(), home, legFn, rules, settings, country, kb, options: { explain: true } });
   assert.deepEqual(r.sequence.map((s) => s.poi.id), ['D', 'B']);
   assert.ok(!r.warnings.some((w) => w.code === 'skipped-missing' && /backtrack/.test(w.ruleId ?? w.msg ?? '')), '折返規則有在跑');
+});
+
+test('固定時段的站（花火）前的空檔是卡位不是等開門：不被 wait-at-door 罰掉，照排', () => {
+  const cands = [
+    { poi: poi('神社', { hours: { thu: [['09:00', '12:00']] } }), priority: 'want' },
+    { poi: poi('花火', { category: 'event', walkFactor: 0, hours: null, dwellMin: 60 }), priority: 'want', fixedWindow: { startMin: 19 * 60 + 30, arriveEarlyMin: 30 } },
+  ];
+  const r = planDay({ candidates: cands, day: day(), home, legFn: flatLeg, rules, settings, country, kb });
+  const ids = r.sequence.map((s) => s.poi.id);
+  assert.deepEqual(ids, ['神社', '花火'], ids.join('→'));
+  const fw = r.sequence.find((s) => s.poi.id === '花火');
+  assert.equal(fw.startMin, 19 * 60, '提早 30 分到位');
+  assert.ok(fw.waitMin > 60, `提早到的空檔算在 waitMin：${fw.waitMin}`);
+  assert.ok(!r.warnings.some((w) => w.ruleId === 'wait-at-door'), '固定時段不算等開門');
+  assert.deepEqual(r.dropped, []);
 });

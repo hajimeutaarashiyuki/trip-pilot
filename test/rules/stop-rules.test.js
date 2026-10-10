@@ -74,3 +74,14 @@ test('cafe-adjacent、recovery-run、backtrack、zone-exit、noon-urban', () => 
   assert.equal(run('noon-urban', ctx(noon, { day: { date: '2026-11-13' } })), 0, '十一月不罰');
   assert.equal(run('noon-urban', ctx(stop('Utah', { category: 'vintage', walkFactor: 0, startMin: 12 * 60 }))), 0, '站著逛的店不罰');
 });
+
+test('wait-at-door：等開門超過 15 分的部分每分鐘罰 1、封頂 60；15 分內當留白；固定時段的站提早到是卡位不罰；第一站的等待已在排程改成晚出門（waitMin 0）', () => {
+  assert.equal(run('wait-at-door', ctx({ ...stop('Elbe'), waitMin: 45 })), 30);
+  assert.equal(run('wait-at-door', ctx({ ...stop('Elbe'), waitMin: 10 })), 0);
+  assert.equal(run('wait-at-door', ctx({ ...stop('Elbe'), waitMin: 0 })), 0);
+  assert.equal(run('wait-at-door', ctx({ ...stop('Elbe'), waitMin: 200 })), 60, '等 200 分罰到 capMin 60 封頂');
+  assert.equal(run('wait-at-door', ctx({ ...stop('Elbe'), waitMin: 75 })), 60, '剛好到頂');
+  const fireworks = stop('花火', { category: 'event', walkFactor: 0, startMin: 19 * 60, dwellMin: 60, fixedWindow: { startMin: 19 * 60 + 30, arriveEarlyMin: 30 } });
+  assert.equal(run('wait-at-door', ctx({ ...fireworks, waitMin: 200 })), 0, '固定時段（花火）前的空檔不是等開門');
+  assert.match(warnOf('wait-at-door', ctx({ ...stop('Elbe'), waitMin: 45 })), /^到 Elbe 要在門口等 45 分$/);
+});

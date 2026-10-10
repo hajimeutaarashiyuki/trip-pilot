@@ -5,6 +5,8 @@ import { TEXT } from './text.js';
 import { openIntervals } from '../engine/time.js';
 import { replanDay } from '../strategies/index.js';
 import { resolveHome } from '../engine/trip.js';
+import { routeUrl, legMode, tripCityName } from './maps.js';
+import { darkBeforeMinOf } from './daylight.js';
 
 export function renderNow({ state, actions }) {
   const f = state.field;
@@ -44,20 +46,26 @@ export function renderNow({ state, actions }) {
   const leg = state.legFn(from, next.poi);
   const legText = leg.rideMin > 0 ? TEXT.rideTo(leg.walkMin, leg.rideMin) : TEXT.walkTo(leg.walkMin);
   const closes = closeMin(next.poi, date);
+  const dark = closes == null ? darkBeforeMinOf(next.poi, date, state) : null;   // 白天站沒有幾點關，寫天黑前；天黑也是硬時限（原話 #159）
+  const limitMin = closes ?? dark;
   const lateMin = nowMin + leg.walkMin + leg.rideMin - next.startMin; // 現在出發會比排定晚幾分（負＝有餘裕）
   const arriveMin = nowMin + leg.walkMin + leg.rideMin;
-  const threatened = closes != null && arriveMin + Math.min(next.dwellMin, 30) > closes;
+  const threatened = limitMin != null && arriveMin + Math.min(next.dwellMin, 30) > limitMin;
   const status = lateMin > (state.settings.lateThresholdMin ?? 15) ? TEXT.late(lateMin) : lateMin < -5 ? TEXT.early(-lateMin) : '';
 
   nodes.push(el('section', { class: 'card big next' }, [
     el('p', { class: 'muted small', text: TEXT.nextStop + (status ? `　${status}` : '') }),
     el('h2', { text: next.poi.name_zh }),
-    el('p', { class: 'big-line', text: `${legText}${closes != null ? `　${TEXT.closesAt(hm(closes))}` : ''}` }),
+    el('p', { class: 'big-line', text: `${legText}${closes != null ? `　${TEXT.closesAt(hm(closes))}` : dark != null ? `　${TEXT.darkBefore(hm(dark))}` : ''}` }),
     el('p', { class: 'muted small', text: `${hm(next.startMin)} 到，待 ${next.dwellMin} 分` }),
-    next.insertedBy === 'engine' ? el('p', { class: 'muted small', text: TEXT.restInserted }) : null,
+    next.insertedBy === 'engine' ? el('p', { class: 'muted small', text: TEXT.restInsertedNow }) : null,
+    // 路線深連結：不帶 origin（Google Maps 用現在位置），搭車段 transit、其餘 walking（原話 #157）
+    el('div', { class: 'actions' }, [
+      el('a', { class: 'btn', href: routeUrl({ to: next.poi, mode: legMode(leg), cityName: tripCityName(state) }), target: '_blank', rel: 'noopener' }, TEXT.openMaps),
+    ]),
   ]));
 
-  if (threatened) nodes.push(proposalsBlock({ state, actions, date, planned, seq, idx, nowMin, next, closes }));
+  if (threatened) nodes.push(proposalsBlock({ state, actions, date, planned, seq, idx, nowMin, limitText: closes != null ? TEXT.hardLimit(next.poi.name_zh, hm(closes)) : TEXT.hardLimitDark(next.poi.name_zh, hm(dark)) }));
 
   nodes.push(el('button', { class: 'btn primary huge', type: 'button', onclick: () => leave({ state, actions, seq, idx, prev: next }) }, TEXT.leaveNow));
   nodes.push(el('details', { class: 'resync' }, [
@@ -84,12 +92,13 @@ function leave({ state, actions, seq, idx, prev }) {
   }
 }
 
-function proposalsBlock({ state, actions, date, planned, seq, idx, nowMin, next, closes }) {
-  const remaining = seq.slice(idx).map((s) => ({ poi: s.poi, priority: s.priority ?? 'want', dwellMin: s.dwellMin, designated: s.designated, isAnchor: s.isAnchor, fixedWindow: s.fixedWindow }));
+function proposalsBlock({ state, actions, date, planned, seq, idx, nowMin, limitText }) {
+  // optional 與 insertedBy 要帶著：引擎插的站重排時還是價值 0、排不進不算落選、不算餐段與夜間站（採用改案後才不會變成他排的）
+  const remaining = seq.slice(idx).map((s) => ({ poi: s.poi, priority: s.priority ?? 'want', dwellMin: s.dwellMin, designated: s.designated, isAnchor: s.isAnchor, fixedWindow: s.fixedWindow, optional: Boolean(s.optional), insertedBy: s.insertedBy ?? null }));
   const here = idx > 0 ? seq[idx - 1].poi : resolveHome(state.trip, date);
   const { proposals } = replanDay({ day: planned.day, remaining, here, nowMin, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, legFn: state.legFn, pool: state.pool });
   const block = el('section', { class: 'card warn' }, [
-    el('p', { class: 'warn-line', text: TEXT.hardLimit(next.poi.name_zh, hm(closes)) }),
+    el('p', { class: 'warn-line', text: limitText }),
     el('h3', { text: TEXT.proposals }),
   ]);
   for (const p of proposals) {

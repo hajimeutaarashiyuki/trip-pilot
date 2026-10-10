@@ -74,7 +74,8 @@ export function loadFromPack(packResult) {
 export function replanAll() {
   buildSettings();
   if (!state.trip) return;
-  const r = planTrip({ trip: state.trip, pois: state.pois, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, legFn: state.legFn });
+  // restPool：整個知識庫都給引擎挑恢復站（trip.js 會篩成當日區域內、沒勾、沒拒絕的幾家）；示範資料也一樣
+  const r = planTrip({ trip: state.trip, pois: state.pois, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, legFn: state.legFn, restPool: Object.values(state.pois) });
   state.plans = Object.fromEntries(r.days.map((d) => [d.date, d]));
   render();
 }
@@ -87,11 +88,12 @@ export function swapStop(date, fromPoiId, toPoi) {
   replanAll();
 }
 
-export function removeStop(date, poiId) {
+/** 不去了：他勾的站從 picks 拿掉；引擎插的站（insertedBy 'engine'）不在 picks，記進 removed 就是拒絕，trip.js 看到那天不再插（原話 #126、profile §2.4）。 */
+export function removeStop(date, poiId, insertedBy = null) {
   const day = state.trip.days.find((d) => d.date === date);
   if (!day) return;
   day.picks = (day.picks ?? []).filter((p) => p.poiId !== poiId);
-  day.removed = [...(day.removed ?? []), { poiId, at: new Date().toISOString() }];   // 不算落選（原話 #91）
+  day.removed = [...(day.removed ?? []), { poiId, at: new Date().toISOString(), ...(insertedBy ? { insertedBy } : {}) }];   // 不算落選（原話 #91）
   replanAll();
 }
 

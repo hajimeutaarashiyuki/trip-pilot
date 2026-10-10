@@ -21,3 +21,11 @@ test('真的 profile.md 與 rules.json 對得上', { skip: !existsSync(DEFAULT_P
   assert.deepEqual(r.notFound, [], '句型找不到：profile 改了寫法就更新 CHECKS');
   assert.deepEqual(r.mismatches, []);
 });
+
+test('日照邊界：profile 的「日出+30 到日落−30」兩個數字都要等於 daylightMarginMin', () => {
+  const rules = { settings: { daylightMarginMin: 30 } };
+  const r1 = checkRules('騎乘／駕駛只在日照內（日出+30 到日落−30，查表不接 API）', rules);
+  assert.deepEqual(r1.mismatches, []);
+  const r2 = checkRules('日出+30 到日落−45', rules);
+  assert.deepEqual(r2.mismatches.map((m) => [m.key, m.profile, m.rules]), [['daylightMarginMin', 45, 30]]);
+});

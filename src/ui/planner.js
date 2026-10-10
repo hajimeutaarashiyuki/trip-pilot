@@ -4,6 +4,8 @@ import { TEXT, CATEGORY } from './text.js';
 import { swapCandidates } from '../engine/swap.js';
 import { openIntervals } from '../engine/time.js';
 import { resolveHome } from '../engine/trip.js';
+import { placeUrl, routeUrl, coordQuery, legMode, tripCityName } from './maps.js';
+import { darkBeforeMinOf } from './daylight.js';
 
 export function renderPlanner({ state, actions }) {
   const nodes = [el('h1', { text: state.trip.name ?? TEXT.appName })];
@@ -22,10 +24,13 @@ function dayBlock(d, planned, state, actions) {
   const block = el('section', { class: 'day' }, [
     el('header', { class: 'day-head' }, [el('h2', { text: dateLabel(d.date) }), el('p', { class: 'muted', text: anchorLine })]),
     el('p', { class: 'muted small', text: TEXT.dayScore(plan.score, plan.penaltyMin) }),
+    openSlotLine(plan, state),
     firstLegLine(plan, d, state),
   ]);
-  plan.sequence.forEach((s, i) => block.append(stopCard(s, i, plan, d, state, actions)));
-  if (dayWarnings.length) block.append(el('ul', { class: 'warn-list' }, dayWarnings.map((w) => el('li', { text: w.msg }))));
+  // 累積型警告（今天走路會到 N 分、連跑）每站都會再響一次，只在第一次超過的那站寫
+  const seenCumulative = new Set();
+  plan.sequence.forEach((s, i) => block.append(stopCard(s, i, plan, d, state, actions, seenCumulative)));
+  if (dayWarnings.length) block.append(warnList(dayWarnings));
   if (plan.dropped.length) {
     block.append(el('details', { class: 'dropped' }, [
       el('summary', { text: `${TEXT.dropped}：${plan.dropped.length}` }),
@@ -35,27 +40,58 @@ function dayBlock(d, planned, state, actions) {
   return block;
 }
 
-/** 出門那一段：幾點出門、從住宿到第一站走幾分（原本只畫站與站之間，第一段看不到）。 */
+/** 留白：每天留的 openSlotMinPerDay 扣掉站與站之間等開門的分鐘（原話 #155「當成留白 但也要罰」；DESIGN §8）。 */
+function openSlotLine(plan, state) {
+  const used = Math.max(0, Math.round(plan.sequence.reduce((s, x) => s + (x.waitMin ?? 0), 0)));
+  const left = Math.max(0, (state.settings.openSlotMinPerDay ?? 90) - used);
+  return el('p', { class: 'muted small', text: TEXT.openSlotLine(left, used) });
+}
+
+/** 出門那一段：幾點出門、從住宿到第一站走幾分（原本只畫站與站之間，第一段看不到）；路線從住宿出發，住宿沒座標就不帶起點。 */
 function firstLegLine(plan, d, state) {
   const first = plan.sequence[0];
   if (!first) return null;
-  const leg = state.legFn(resolveHome(state.trip, d.date), first.poi);
+  const home = resolveHome(state.trip, d.date);
+  const leg = state.legFn(home, first.poi);
   const legText = leg.rideMin > 0 ? TEXT.rideTo(leg.walkMin, leg.rideMin) : TEXT.walkTo(leg.walkMin);
   const travel = (leg.walkMin ?? 0) + (leg.rideMin ?? 0) + (leg.waitMin ?? 0);
-  return el('p', { class: 'leg muted small', text: `↓ ${TEXT.firstLeg(hm(first.arriveMin - travel), legText)}${waitText(first)}` });
+  return el('p', { class: 'leg muted small' }, [
+    `↓ ${TEXT.firstLeg(hm(first.arriveMin - travel), legText)}${waitText(first)}`,
+    routeLink({ from: coordQuery(home) ? home : null, to: first.poi, leg, state }),
+  ]);
 }
 
 /** 到了還沒開門要等的分鐘：超過 5 分才寫，讓他看得出中間那段空白是等開門、不是漏排。 */
 function waitText(stop) {
-  return stop?.waitMin > 5 ? `，${TEXT.waitOpen(stop.waitMin)}` : '';
+  return stop?.waitMin > 5 ? `，${TEXT.waitOpen(Math.round(stop.waitMin))}` : '';
 }
 
-function stopCard(s, i, plan, d, state, actions) {
+/** 黃字清單；hint 的（他拒絕過引擎插的站之後，連跑與等開門只提醒不催）用提示樣式。 */
+function warnList(warns) {
+  return el('ul', { class: 'warn-list' }, warns.map((w) => el('li', { class: w.hint ? 'hint' : null, text: w.msg })));
+}
+
+/** 這一段的 Google Maps 路線（新分頁）；from 不給就從現在位置出發。 */
+function routeLink({ from, to, leg, state }) {
+  return el('a', { href: routeUrl({ from, to, mode: legMode(leg), cityName: tripCityName(state) }), target: '_blank', rel: 'noopener' }, TEXT.routeLink);
+}
+
+const CUMULATIVE_RULES = new Set(['walk-budget', 'walk-run', 'shop-run']);
+
+function stopCard(s, i, plan, d, state, actions, seenCumulative = new Set()) {
   const poi = s.poi;
   const next = plan.sequence[i + 1];
   const legNext = next ? state.legFn(poi, next.poi) : null;
   const closes = closeHm(poi, d.date);
-  const warns = plan.warnings.filter((w) => w.poiId === poi.id && w.code !== 'skipped-missing');
+  // 白天站沒有幾點關：在同一個位置寫「天黑 HH:MM 前」（原話 #159）；位置不明就不寫
+  const dark = closes ? null : darkBeforeMinOf(poi, d.date, state);
+  const limitText = closes ? TEXT.closesAt(closes) : dark != null ? TEXT.darkBefore(hm(dark)) : '';
+  // 等開門那段已在站間那行寫「等開門 N 分（算留白）」，wait-at-door 的黃字不再寫一次
+  const warns = plan.warnings.filter((w) => {
+    if (w.poiId !== poi.id || w.code === 'skipped-missing' || w.ruleId === 'wait-at-door') return false;
+    if (CUMULATIVE_RULES.has(w.ruleId)) { if (seenCumulative.has(w.ruleId)) return false; seenCumulative.add(w.ruleId); }
+    return true;
+  });
   const card = el('article', { class: `card${s.isAnchor ? ' anchor' : ''}${poi.recovery ? ' rest' : ''}` }, [
     el('div', { class: 'row' }, [
       el('span', { class: 'time', text: `${hm(s.startMin)}–${hm(s.endMin)}` }),
@@ -63,16 +99,20 @@ function stopCard(s, i, plan, d, state, actions) {
       poi.item ? el('span', { class: 'cat item', text: poi.item }) : null,
     ]),
     el('h3', { text: poi.name_zh }),
-    el('p', { class: 'muted small', text: [poi.guide?.intro ?? poi.highlight ?? '', closes ? TEXT.closesAt(closes) : ''].filter(Boolean).join('　') }),
-    warns.length ? el('ul', { class: 'warn-list' }, warns.map((w) => el('li', { text: w.msg }))) : null,
+    el('p', { class: 'muted small', text: [poi.guide?.intro ?? poi.highlight ?? '', limitText].filter(Boolean).join('　') }),
+    warns.length ? warnList(warns) : null,
+    s.insertedBy === 'engine' ? el('p', { class: 'muted small', text: TEXT.restInserted }) : null,
     el('div', { class: 'actions' }, [
-      el('button', { class: 'btn', type: 'button', onclick: () => toggleSwap(card, s, plan, d, state, actions) }, TEXT.swap),
-      s.designated || s.isAnchor ? null : el('button', { class: 'btn quiet', type: 'button', onclick: () => actions.removeStop(d.date, poi.id) }, TEXT.remove),
+      // 引擎插的站不在 picks 裡，「換一家」接不上；「不去了」會記進 day.removed，下次重排就不再插＝拒絕（原話 #126）
+      // 引擎插的站不是 designated 也不是 anchor（core 只從候選帶這兩個旗標），所以「不去了」照這個條件一定會出現
+      s.insertedBy === 'engine' ? null : el('button', { class: 'btn', type: 'button', onclick: () => toggleSwap(card, s, plan, d, state, actions) }, TEXT.swap),
+      s.designated || s.isAnchor ? null : el('button', { class: 'btn quiet', type: 'button', onclick: () => actions.removeStop(d.date, poi.id, s.insertedBy) }, TEXT.remove),
+      el('a', { class: 'btn quiet', href: placeUrl(poi, tripCityName(state)), target: '_blank', rel: 'noopener' }, TEXT.mapLink),
     ]),
   ]);
   if (legNext) {
     const legText = legNext.rideMin > 0 ? TEXT.rideTo(legNext.walkMin, legNext.rideMin) : TEXT.walkTo(legNext.walkMin);
-    card.append(el('p', { class: 'leg muted small', text: `↓ ${legText}${waitText(next)}` }));
+    card.append(el('p', { class: 'leg muted small' }, [`↓ ${legText}${waitText(next)}`, routeLink({ from: poi, to: next.poi, leg: legNext, state })]));
   }
   return card;
 }

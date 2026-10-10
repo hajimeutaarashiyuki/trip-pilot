@@ -5,9 +5,10 @@ import categoryTable from '../derive/category.json' with { type: 'json' };
 import walkTable from '../derive/walkFactor.json' with { type: 'json' };
 import recoveryTable from '../derive/recovery.json' with { type: 'json' };
 import dwellTable from '../derive/dwell.json' with { type: 'json' };
+import daylightTable from '../derive/daylight.json' with { type: 'json' };
 import { parseHoursText } from '../derive/hours.js';
 
-export const DERIVE = { category: categoryTable, walk: walkTable, recovery: recoveryTable, dwell: dwellTable };
+export const DERIVE = { category: categoryTable, walk: walkTable, recovery: recoveryTable, dwell: dwellTable, daylight: daylightTable };
 
 export const CATEGORIES = Object.freeze([
   'shrine', 'temple', 'mausoleum', 'museum', 'garden', 'arcade', 'market', 'event', 'experience', 'daytrip',
@@ -122,6 +123,9 @@ export function normalizePoi(raw, { derive = DERIVE } = {}) {
     poi.hours = null;
     warnings.push({ code: 'hours-missing', poiId: poi.id, msg: '沒有營業時間' });
   }
+
+  // 白天站：沒有時段又是戶外參拜型的店型（derive/daylight.json）→ 只能白天去，rules/daylight.js 擋（原話 #159）；明寫的 daylightOnly 優先，含明寫 false
+  poi.daylightOnly = typeof raw.daylightOnly === 'boolean' ? raw.daylightOnly : (poi.hours === null && (derive.daylight?.categories ?? []).includes(category));
 
   // 座標
   if (!(Number.isFinite(raw.lat) && Number.isFinite(raw.lng))) {

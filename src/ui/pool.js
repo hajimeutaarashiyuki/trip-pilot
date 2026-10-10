@@ -4,7 +4,8 @@ import { TEXT, CATEGORY } from './text.js';
 
 export function renderPool({ state }) {
   const plannedOn = new Map();
-  for (const [date, d] of Object.entries(state.plans)) for (const s of d.plan.sequence) plannedOn.set(s.poi.id, date);
+  // 引擎插的站（insertedBy）不算他排的：候選池只標他自己勾進哪天
+  for (const [date, d] of Object.entries(state.plans)) for (const s of d.plan.sequence) if (!s.insertedBy) plannedOn.set(s.poi.id, date);
   const groups = new Map();
   for (const c of state.pool) {
     const cat = c.poi.category;

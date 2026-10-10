@@ -30,7 +30,7 @@ export const RAW_POIS = [
 export const POIS = Object.fromEntries(RAW_POIS.map((r) => { const { poi } = normalizePoi(r); return [poi.name_zh, poi]; }));
 export const HOME = { id: 'home', name_zh: 'Comfort Hotel 仙台西口', zoneId: 'station' };
 export const KB = { zones: { station: { environment: 'urban' }, ichibancho: { environment: 'urban' }, honcho: { environment: 'urban' }, kokubuncho: { environment: 'urban' }, 'aoba-castle': { environment: 'urban' }, hachiman: { environment: 'urban' } } };
-export const COUNTRY = { mealSlots: { lunch: ['11:30', '13:30'], dinner: ['18:00', '20:30'] }, nightSlot: ['20:00', '24:00'], climate: { summerMonths: [6, 7, 8, 9] } };
+export const COUNTRY = { mealSlots: { lunch: ['11:30', '13:30'], dinner: ['18:00', '20:30'] }, nightSlot: ['20:00', '24:00'], climate: { summerMonths: [6, 7, 8, 9] }, utcOffsetMin: 540 };
 
 const WALK = { station: { ichibancho: 12, honcho: 15, kokubuncho: 15 }, ichibancho: { honcho: 8, kokubuncho: 6 }, honcho: { kokubuncho: 10 } };
 const RIDE = { station: { 'aoba-castle': { ride: 25, walk: 8 }, hachiman: { ride: 30, walk: 5 } }, 'aoba-castle': { hachiman: { ride: 15, walk: 5 }, ichibancho: { ride: 20, walk: 5 } }, hachiman: { ichibancho: { ride: 20, walk: 5 }, kokubuncho: { ride: 20, walk: 5 } } };
@@ -75,7 +75,7 @@ export const CANDS_0817 = [
 export function demoTrip() {
   const pick = (c) => ({ poiId: c.poi.id, priority: c.priority });
   return {
-    id: 'demo-sendai-2026-08', cityId: 'sendai', name: '仙台示範（8/13、8/17）', party: 1,
+    id: 'demo-sendai-2026-08', cityId: 'sendai', cityName: '仙台', name: '仙台示範（8/13、8/17）', party: 1,
     homeBases: [{ poi: HOME }],
     days: [
       { date: '2026-08-13', type: 'normal', anchor: { poiId: POIS['大崎八幡宮'].id }, designated: [POIS['宮城縣護國神社'].id], picks: CANDS_0813.map(pick) },
