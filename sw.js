@@ -1,6 +1,6 @@
 // Service Worker：同源 cache-first、版本化快取名、新版只在使用者按了橫幅後接手（決策樹 Q16）。
 // __APP_VERSION__ 由 tools/build.mjs 注入；每次建置換一個快取名。
-const VERSION = "202610102031-e9042286";
+const VERSION = "202610110044-259e20b4";
 const CACHE = `trip-pilot-${VERSION}`;
 const PRECACHE = ['./', './index.html', './manifest.webmanifest'];
 

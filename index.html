@@ -6,96 +6,2712 @@
 <meta name="color-scheme" content="light dark">
 <meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f5f0">
 <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#121416">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Trip Pilot">
 <title>Trip Pilot</title>
 <link rel="manifest" href="./manifest.webmanifest">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
 <style>
   :root {
-    --bg: #f7f5f0;
-    --bg-elevated: #ffffff;
-    --fg: #1d1d1b;
-    --muted: #6b6a66;
-    --accent: #2f6f5e;
-    --warn: #b7791f;
-    --line: #e3e0d8;
-    --gutter: 16px;
+    --bg: #f7f5f0; --bg-elevated: #ffffff; --fg: #1d1d1b; --muted: #6b6a66;
+    --accent: #2f6f5e; --accent-fg: #ffffff; --warn: #9a6a12; --warn-bg: #fff4d6; --line: #e3e0d8;
+    --rest: #e9f2ee; --gutter: 16px; --tabs: 56px;
   }
   @media (prefers-color-scheme: dark) {
     :root {
-      --bg: #121416;
-      --bg-elevated: #1c1f22;
-      --fg: #ece9e2;
-      --muted: #9a9890;
-      --accent: #7fc1ad;
-      --warn: #e0a94a;
-      --line: #2a2e32;
+      --bg: #121416; --bg-elevated: #1c1f22; --fg: #ece9e2; --muted: #9a9890;
+      --accent: #7fc1ad; --accent-fg: #0f1a16; --warn: #e0a94a; --warn-bg: #2a2416; --line: #2a2e32; --rest: #182420;
     }
   }
   * { box-sizing: border-box; }
   html, body { margin: 0; min-height: 100%; }
   body {
-    background: var(--bg);
-    color: var(--fg);
+    background: var(--bg); color: var(--fg);
     font: 17px/1.5 -apple-system, "PingFang TC", "Noto Sans TC", system-ui, sans-serif;
-    padding: max(var(--gutter), env(safe-area-inset-top)) max(var(--gutter), env(safe-area-inset-right)) max(var(--gutter), env(safe-area-inset-bottom)) max(var(--gutter), env(safe-area-inset-left));
+    padding: max(var(--gutter), env(safe-area-inset-top)) max(var(--gutter), env(safe-area-inset-right)) calc(var(--tabs) + max(var(--gutter), env(safe-area-inset-bottom))) max(var(--gutter), env(safe-area-inset-left));
     overflow-x: hidden;
   }
   #app { max-width: 640px; margin: 0 auto; }
-  .banner {
-    position: fixed; left: 0; right: 0; bottom: 0;
-    padding: 12px max(var(--gutter), env(safe-area-inset-left)) max(12px, env(safe-area-inset-bottom));
-    background: var(--bg-elevated); border-top: 1px solid var(--line);
-    display: flex; gap: 12px; align-items: center; justify-content: space-between;
-  }
-  .banner button { font: inherit; padding: 8px 14px; border-radius: 10px; border: 1px solid var(--accent); background: transparent; color: var(--accent); }
   h1 { font-size: 22px; margin: 0 0 8px; }
+  h2 { font-size: 19px; margin: 0; }
+  h3 { font-size: 18px; margin: 4px 0; }
+  p { margin: 4px 0; }
   .muted { color: var(--muted); }
+  .small { font-size: 14px; }
+  .version { position: fixed; left: 0; right: 0; bottom: calc(var(--tabs) + env(safe-area-inset-bottom)); text-align: center; font-size: 11px; opacity: .6; pointer-events: none; }
+
+  .btn { font: inherit; font-size: 15px; padding: 8px 14px; border-radius: 10px; border: 1px solid var(--accent); background: transparent; color: var(--accent); }
+  .btn.primary { background: var(--accent); color: var(--accent-fg); }
+  .btn.quiet { border-color: var(--line); color: var(--muted); }
+  .btn.quiet.on { border-color: var(--accent); color: var(--accent); }
+  .btn.alt { display: block; width: 100%; text-align: left; margin-top: 6px; border-color: var(--line); color: var(--fg); background: var(--bg-elevated); }
+  .btn.huge { width: 100%; font-size: 20px; padding: 16px; margin: 12px 0; }
+  .btn.star { padding: 10px 8px; }
+  a.btn { display: inline-block; text-decoration: none; }
+  .hidden-input { display: none; }
+  .status { margin-top: 8px; }
+  .actions { display: flex; gap: 8px; margin-top: 6px; }
+  .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .row.top { margin-bottom: 8px; }
+  .row.sim { justify-content: flex-start; margin: 8px 0; flex-wrap: wrap; }
+
+  .day { margin: 18px 0 8px; }
+  .day-head { padding-bottom: 6px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+  .card { background: var(--bg-elevated); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin: 10px 0; }
+  .card.anchor { border-color: var(--accent); }
+  .card.rest { background: var(--rest); }
+  .card.big { padding: 18px 16px; }
+  .card.next h2 { font-size: 26px; margin: 2px 0 6px; }
+  .card.warn { background: var(--warn-bg); border-color: var(--warn); }
+  .warn-line { color: var(--warn); font-weight: 600; }
+  .time { font-variant-numeric: tabular-nums; color: var(--muted); font-size: 14px; }
+  .time.big { font-size: 22px; color: var(--fg); margin-right: 8px; }
+  .big-line { font-size: 19px; font-weight: 600; }
+  .cat { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; }
+  .cat.item { color: var(--accent); border-color: var(--accent); margin-right: 6px; }
+  .leg { margin: 6px 0 0; }
+  .warn-list { margin: 6px 0 0; padding-left: 18px; color: var(--warn); font-size: 14px; }
+  .dropped summary { color: var(--muted); font-size: 14px; cursor: pointer; }
+  .swap-list { margin-top: 8px; }
+  .proposal { border-top: 1px solid var(--line); padding: 8px 0; }
+  .resync summary { color: var(--muted); font-size: 14px; cursor: pointer; margin-top: 8px; }
+  .list { margin-top: 6px; }
+  .plain { list-style: none; padding: 0; margin: 4px 0 12px; }
+  .plain li { padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .group { margin: 12px 0; }
+  .field { display: block; margin: 12px 0; }
+  .field span { display: block; color: var(--muted); font-size: 14px; }
+  .field input[type=number], .field input[type=time] { font: inherit; width: 100%; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg-elevated); color: var(--fg); }
+  .field.row input[type=checkbox] { width: 24px; height: 24px; }
+  .sheet { position: fixed; left: 0; right: 0; bottom: 0; background: var(--bg-elevated); border-top: 1px solid var(--line); border-radius: 16px 16px 0 0; padding: 16px max(var(--gutter), env(safe-area-inset-left)) max(16px, env(safe-area-inset-bottom)); box-shadow: 0 -8px 24px rgba(0,0,0,.15); }
+  .stars { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 10px 0; }
+
+  .tabs { position: fixed; left: 0; right: 0; bottom: 0; height: calc(var(--tabs) + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom); display: flex; background: var(--bg-elevated); border-top: 1px solid var(--line); }
+  .tab { flex: 1; display: flex; align-items: center; justify-content: center; text-decoration: none; color: var(--muted); font-size: 15px; }
+  .tab.active { color: var(--accent); font-weight: 600; }
+  .banner { position: fixed; left: 0; right: 0; bottom: calc(var(--tabs) + env(safe-area-inset-bottom)); padding: 12px max(var(--gutter), env(safe-area-inset-left)); background: var(--bg-elevated); border-top: 1px solid var(--line); display: flex; gap: 12px; align-items: center; justify-content: space-between; }
 </style>
 </head>
 <body>
 <div id="app"></div>
 <script>(() => {
-  // src/ui/text.js
-  var TEXT = {
-    appName: "Trip Pilot",
-    shellHint: "\u9084\u6C92\u6709\u65C5\u7A0B\u3002\u51FA\u767C\u524D\u5728\u96FB\u8166\u4E0A\u6392\u597D\u3001\u6253\u5305\uFF0C\u624B\u6A5F\u6309\u4E00\u6B21\u300C\u66F4\u65B0\u300D\u5C31\u6703\u51FA\u73FE\u5728\u9019\u88E1\u3002",
-    updateBanner: "\u6709\u65B0\u7248\u672C",
-    updateButton: "\u91CD\u65B0\u8F09\u5165",
-    offlineReady: "\u5DF2\u53EF\u96E2\u7DDA\u4F7F\u7528",
-    version: (v) => `\u7248\u672C ${v}`
-  };
-
-  // src/main.js
-  var VERSION = true ? "202610102031-e9042286" : "dev";
+  // src/ui/dom.js
   function el(tag, attrs = {}, children = []) {
     const node = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs)) {
+      if (v == null || v === false) continue;
       if (k === "class") node.className = v;
+      else if (k === "text") node.textContent = String(v);
       else if (k.startsWith("on") && typeof v === "function") node.addEventListener(k.slice(2), v);
-      else node.setAttribute(k, v);
+      else node.setAttribute(k, v === true ? "" : String(v));
     }
-    for (const c of [].concat(children)) node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+    for (const c of [].concat(children)) {
+      if (c == null || c === false) continue;
+      node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+    }
     return node;
   }
-  function renderShell(root2) {
-    root2.replaceChildren(
-      el("h1", {}, TEXT.appName),
-      el("p", { class: "muted" }, TEXT.shellHint),
-      el("p", { class: "muted" }, TEXT.version(VERSION))
-    );
+  function clear(node) {
+    node.replaceChildren();
+    return node;
   }
+  function hm(min) {
+    if (min == null) return "";
+    const h = Math.floor(min / 60);
+    const m = Math.round(min % 60);
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  }
+  var DOW = ["\u65E5", "\u4E00", "\u4E8C", "\u4E09", "\u56DB", "\u4E94", "\u516D"];
+  function dateLabel(dateStr) {
+    const [y, m, d] = String(dateStr).split("-").map(Number);
+    const dow = DOW[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+    return `${m}/${d}\uFF08${dow}\uFF09`;
+  }
+  function todayStr() {
+    const d = /* @__PURE__ */ new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  }
+  function nowMinutes() {
+    const d = /* @__PURE__ */ new Date();
+    return d.getHours() * 60 + d.getMinutes();
+  }
+
+  // src/ui/text.js
+  var fmtAt = (at) => at ? new Date(at).toLocaleString("zh-TW", { hour12: false, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }) : "\u4E0D\u660E";
+  var TEXT = {
+    appName: "Trip Pilot",
+    shellHint: "\u9084\u6C92\u6709\u65C5\u7A0B\u3002\u51FA\u767C\u524D\u5728\u96FB\u8166\u4E0A\u6392\u597D\u3001\u6253\u5305\uFF0C\u624B\u6A5F\u6309\u4E00\u6B21\u300C\u66F4\u65B0\u300D\u5C31\u6703\u51FA\u73FE\u5728\u9019\u88E1\u3002",
+    loadDemo: "\u8F09\u5165\u4ED9\u53F0\u793A\u7BC4",
+    updateBanner: "\u6709\u65B0\u7248\u672C",
+    updateButton: "\u91CD\u65B0\u8F09\u5165",
+    version: (v) => `\u7248\u672C ${v}`,
+    tabs: { plan: "\u6574\u8D9F", now: "\u73FE\u5834", pool: "\u5019\u9078", settings: "\u8A2D\u5B9A" },
+    // 規劃頁
+    anchorOf: (name) => name ? `\u4E3B\u884C\u7A0B\uFF1A${name}` : "\u4E3B\u884C\u7A0B\uFF1A\u9084\u6C92\u9078",
+    themeOf: (cat) => `${CATEGORY[cat] ?? cat}\u4E3B\u984C\u65E5`,
+    walkTo: (min) => `\u8D70 ${min} \u5206`,
+    rideTo: (walk, ride) => `\u8ECA ${ride} \u5206\u3001\u8D70 ${walk} \u5206`,
+    closesAt: (hm3) => `${hm3} \u95DC`,
+    dropped: "\u4ECA\u5929\u6392\u4E0D\u9032",
+    swap: "\u63DB\u4E00\u5BB6",
+    remove: "\u4E0D\u53BB\u4E86",
+    noSwap: "\u9644\u8FD1\u6C92\u6709\u540C\u985E\u578B\u3001\u9806\u8DEF\u53C8\u958B\u8457\u7684\u5E97",
+    swapNote: (d) => d > 0 ? `\u591A\u7E5E ${d} \u5206` : "\u9806\u8DEF",
+    openUnknown: "\u71DF\u696D\u6642\u9593\u6C92\u67E5\u5230\uFF0C\u8981\u5148\u78BA\u8A8D",
+    replan: "\u91CD\u6392",
+    dayScore: (score, penalty) => penalty > 0 ? `\u9019\u5929\u6709 ${Math.round(penalty)} \u5206\u9418\u7684\u52C9\u5F37` : "\u9019\u5929\u6C92\u6709\u52C9\u5F37\u7684\u5730\u65B9",
+    // 現場
+    nextStop: "\u4E0B\u4E00\u7AD9",
+    leaveNow: "\u51FA\u767C\u53BB\u4E0B\u4E00\u7AD9",
+    arrivedHere: "\u6211\u73FE\u5728\u5728\u9019\u7AD9",
+    dayDone: "\u4ECA\u5929\u8D70\u5B8C\u4E86",
+    late: (min) => `\u843D\u5F8C ${min} \u5206`,
+    early: (min) => `\u4E0D\u6025\uFF0C\u9084\u6709 ${min} \u5206`,
+    waitOpen: (min) => `\u7B49\u958B\u9580 ${min} \u5206`,
+    firstLeg: (time, t) => `${time} \u51FA\u9580\uFF0C${t}`,
+    hardLimit: (name, hm3) => `${name} ${hm3} \u95DC\u9580\uFF0C\u9019\u6A23\u8D70\u6703\u8D95\u4E0D\u4E0A`,
+    proposals: "\u63A5\u4E0B\u4F86\u53EF\u4EE5\u9019\u6A23\u8D70",
+    takeThis: "\u7167\u9019\u500B\u8D70",
+    keepGoing: "\u7167\u539F\u672C\u7684\u8D70",
+    simulate: "\u8A66\u8D70\u6A21\u5F0F",
+    simOff: "\u7528\u771F\u7684\u6642\u9593",
+    simPlus: (m) => `\uFF0B${m} \u5206`,
+    simReset: "\u56DE\u5230\u51FA\u9580",
+    pickDay: "\u54EA\u4E00\u5929",
+    rateTitle: (name) => `${name} \u600E\u9EBC\u6A23\uFF1F`,
+    rateSkip: "\u7565\u904E",
+    stars: ["", "\u8E29\u96F7", "\u7559\u8457", "\u9806\u8DEF\u624D\u6392", "\u5099\u6848", "\u512A\u5148", "\u5FC5\u53BB"],
+    restInserted: "\u5F15\u64CE\u63D2\u7684\u4F11\u606F\u7AD9\uFF0C\u4E0D\u60F3\u4F11\u606F\u53EF\u4EE5\u7565\u904E",
+    // 設定
+    settingsTitle: "\u9019\u56DB\u500B\u6578\u5B57\u4F60\u65C5\u9014\u4E2D\u6703\u60F3\u52D5",
+    walkBudget: "\u4E00\u5929\u8D70\u8DEF\u4E0A\u9650\uFF08\u5206\u9418\uFF09",
+    openSlot: "\u6BCF\u5929\u7559\u767D\uFF08\u5206\u9418\uFF09",
+    departHM: "\u9810\u8A2D\u5E7E\u9EDE\u51FA\u9580",
+    nightSlot: "\u6BCF\u665A\u6392\u591C\u9593\u7AD9",
+    packSection: "\u65C5\u7A0B\u8CC7\u6599",
+    packUrl: "\u6253\u5305\u6A94\u7DB2\u5740\uFF08\u684C\u6A5F\uFF09",
+    update: "\u66F4\u65B0",
+    updating: "\u66F4\u65B0\u4E2D\u2026",
+    updated: (name, at) => `\u66F4\u65B0\u597D\u4E86\uFF1A${name}\uFF08${fmtAt(at)}\uFF09`,
+    updateFailed: (msg) => `\u66F4\u65B0\u5931\u6557\uFF1A${msg}\u3002\u6C92\u7DB2\u8DEF\u7684\u8A71\uFF0C\u624B\u6A5F\u88E1\u539F\u672C\u7684\u65C5\u7A0B\u9084\u5728\u3002`,
+    needUrl: "\u5148\u586B\u684C\u6A5F\u7684\u6253\u5305\u6A94\u7DB2\u5740",
+    importFile: "\u5F9E\u6A94\u6848\u8F09\u5165",
+    noPack: "\u624B\u6A5F\u88E1\u9084\u6C92\u6709\u65C5\u7A0B",
+    lastPack: (name, at) => `\u624B\u6A5F\u88E1\u7684\u65C5\u7A0B\uFF1A${name}\uFF08\u6253\u5305\u65BC ${fmtAt(at)}\uFF09`,
+    goUpdate: "\u53BB\u66F4\u65B0",
+    saved: "\u5DF2\u5B58",
+    // 候選
+    poolTitle: "\u5019\u9078",
+    plannedOn: (label) => `\u5DF2\u6392 ${label}`,
+    notPlanned: "\u6C92\u6392\u9032",
+    // 警告（規則的 warn 已是人話；這裡只給分類標題）
+    warnTitle: "\u6CE8\u610F"
+  };
+  var CATEGORY = {
+    shrine: "\u795E\u793E",
+    temple: "\u5BFA\u9662",
+    mausoleum: "\u9748\u5EDF",
+    museum: "\u535A\u7269\u9928",
+    garden: "\u5EAD\u5712",
+    arcade: "\u5546\u5E97\u8857",
+    market: "\u5E02\u5834",
+    event: "\u6D3B\u52D5",
+    experience: "\u9AD4\u9A57",
+    daytrip: "\u4E00\u65E5\u904A",
+    vintage: "\u53E4\u8457\u5E97",
+    record: "\u5531\u7247\u884C",
+    store: "\u5E97",
+    bookstore: "\u66F8\u5E97",
+    drugstore: "\u85E5\u599D",
+    gift: "\u4F34\u624B\u79AE",
+    department: "\u767E\u8CA8",
+    electronics: "\u96FB\u5668",
+    outlet: "Outlet",
+    street: "\u8857\u5340",
+    food: "\u5403\u7684",
+    cafe: "\u5496\u5561\u5EF3",
+    bar: "\u9152\u5427",
+    brewery: "\u9152\u85CF",
+    onsen: "\u6EAB\u6CC9",
+    cruise: "\u904A\u89BD\u8239",
+    logistics: "\u4EA4\u901A",
+    other: "\u5176\u4ED6"
+  };
+
+  // src/rules/index.js
+  var KINDS = Object.freeze(["hard", "soft", "dimension"]);
+  var SCOPES = Object.freeze(["stop", "day"]);
+  function validateRule(rule) {
+    if (!rule || typeof rule !== "object") throw new Error("\u898F\u5247\u4E0D\u662F\u7269\u4EF6");
+    if (typeof rule.id !== "string" || !/^[a-z0-9-]+$/.test(rule.id)) throw new Error(`\u898F\u5247 id \u8981\u662F\u5C0F\u5BEB\u82F1\u6578\u8207\u9023\u5B57\u865F\uFF1A${rule?.id}`);
+    if (!KINDS.includes(rule.kind)) throw new Error(`\u898F\u5247 ${rule.id} \u7684 kind \u53EA\u80FD\u662F ${KINDS.join("\uFF0F")}\uFF1A${rule.kind}`);
+    const scope = rule.scope ?? "stop";
+    if (!SCOPES.includes(scope)) throw new Error(`\u898F\u5247 ${rule.id} \u7684 scope \u53EA\u80FD\u662F ${SCOPES.join("\uFF0F")}\uFF1A${scope}`);
+    if (!Array.isArray(rule.reads)) throw new Error(`\u898F\u5247 ${rule.id} \u8981\u5BA3\u544A reads\uFF08\u8B80\u54EA\u4E9B\u6B04\u4F4D\uFF09`);
+    if (typeof rule.apply !== "function") throw new Error(`\u898F\u5247 ${rule.id} \u7F3A apply()`);
+    if (rule.defaults != null && typeof rule.defaults !== "object") throw new Error(`\u898F\u5247 ${rule.id} \u7684 defaults \u8981\u662F\u7269\u4EF6`);
+    if (rule.kind === "dimension" && scope !== "stop") throw new Error(`\u898F\u5247 ${rule.id}\uFF1Adimension \u53EA\u80FD\u662F stop scope`);
+    return { ...rule, scope };
+  }
+  function loadRules(registry, config = {}) {
+    const hard = [];
+    const soft = [];
+    const dims = [];
+    const byId = /* @__PURE__ */ new Map();
+    const disabled = [];
+    for (const raw of registry) {
+      const rule = validateRule(raw);
+      if (byId.has(rule.id)) throw new Error(`\u898F\u5247 id \u91CD\u8907\uFF1A${rule.id}`);
+      const override = config[rule.id] ?? {};
+      const { weight = 1, ...params } = override;
+      if (weight === 0) {
+        disabled.push(rule.id);
+        continue;
+      }
+      const loaded = { ...rule, weight, params: { ...rule.defaults ?? {}, ...params } };
+      byId.set(rule.id, loaded);
+      ({ hard, soft, dimension: dims })[rule.kind].push(loaded);
+    }
+    return { hard, soft, dims, byId, disabled };
+  }
+  function missingReads(rule, ctx) {
+    const missing2 = [];
+    for (const path of rule.reads) {
+      const v = getPath(ctx, path);
+      if (v === void 0 || v === null) missing2.push(path);
+    }
+    return missing2;
+  }
+  function getPath(obj, path) {
+    let cur = obj;
+    for (const key of String(path).split(".")) {
+      if (cur == null) return void 0;
+      cur = cur[key];
+    }
+    return cur;
+  }
+  function warnText(rule, ctx) {
+    try {
+      return typeof rule.warn === "function" ? rule.warn({ ...ctx, params: rule.params, ruleId: rule.id }) : rule.id;
+    } catch {
+      return rule.id;
+    }
+  }
+
+  // src/engine/time.js
+  function hmToMin(hm3) {
+    if (typeof hm3 === "number") return hm3;
+    const m = String(hm3).match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) throw new Error(`\u6642\u9593\u683C\u5F0F\u8981\u662F HH:MM\uFF1A${hm3}`);
+    return Number(m[1]) * 60 + Number(m[2]);
+  }
+  function minToHm(min) {
+    const h = Math.floor(min / 60);
+    const m = Math.round(min % 60);
+    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  }
+  function overlapMin(a1, a2, b1, b2) {
+    return Math.max(0, Math.min(a2, b2) - Math.max(a1, b1));
+  }
+  var DOW2 = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"];
+  function dowOf(dateStr) {
+    const [y, m, d] = String(dateStr).split("-").map(Number);
+    return DOW2[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+  }
+  function openIntervals(poi, dateStr) {
+    if (!poi?.hours || typeof poi.hours !== "object") return null;
+    if (Array.isArray(poi.closedDates) && poi.closedDates.includes(dateStr)) return [];
+    const list = poi.hours[dowOf(dateStr)];
+    if (!Array.isArray(list)) return [];
+    return list.map(([open, close]) => [hmToMin(open), hmToMin(close)]);
+  }
+
+  // src/rules/_helpers.js
+  var SHOP_CATEGORIES = Object.freeze(["vintage", "record", "store", "bookstore"]);
+  var SAME_TYPE_CATEGORIES = Object.freeze(["vintage", "record", "cafe"]);
+  function isRecovery(stop, minMin = 0) {
+    return Boolean(stop?.poi?.recovery) && (stop.dwellMin ?? 0) >= minMin;
+  }
+  function rideRest(leg, minMin) {
+    return (leg?.rideMin ?? 0) >= minMin;
+  }
+  function stopLoad(stop, climbFactor) {
+    const wf = stop?.poi?.walkFactor ?? 0;
+    const dwell = stop?.dwellMin ?? 0;
+    const climb = Math.min(stop?.poi?.climbMin ?? 0, dwell);
+    return (dwell - climb) * wf + climb * climbFactor;
+  }
+  function legLoad(leg, climbFactor) {
+    const walk = leg?.walkMin ?? 0;
+    const climb = Math.min(leg?.climbMin ?? 0, walk);
+    return walk + climb * (climbFactor - 1);
+  }
+  function budgetMultiplier(day, settings) {
+    const m = [1];
+    if (day?.earlyDay) m.push(settings.earlyDayWalkFactor ?? 0.7);
+    if ((day?.party ?? 1) >= 2) m.push(settings.partyWalkFactor ?? 0.85);
+    if (day?.dayTripNext) m.push(settings.dayTripNextWalkFactor ?? 0.85);
+    return Math.min(...m);
+  }
+  var toMin = (v) => v == null ? null : hmToMin(v);
+
+  // src/rules/dim-walk.js
+  var dim_walk_default = {
+    id: "dim-walk",
+    kind: "dimension",
+    reads: ["stop.poi.walkFactor", "stop.dwellMin", "leg.walkMin"],
+    defaults: { initial: 0 },
+    apply(ctx) {
+      const cf = ctx.settings.climbFactor ?? 1.5;
+      return ctx.acc["dim-walk"] + legLoad(ctx.leg, cf) + stopLoad(ctx.stop, cf);
+    }
+  };
+
+  // src/rules/dim-walk-run.js
+  var dim_walk_run_default = {
+    id: "dim-walk-run",
+    kind: "dimension",
+    reads: ["stop.poi.walkFactor", "stop.poi.recovery", "stop.dwellMin", "leg.walkMin"],
+    defaults: { initial: 0 },
+    apply(ctx) {
+      const reset = ctx.settings.restResetMin ?? 30;
+      const cf = ctx.settings.climbFactor ?? 1.5;
+      if (rideRest(ctx.leg, reset)) {
+        return stopLoad(ctx.stop, cf);
+      }
+      const run = ctx.acc["dim-walk-run"] + legLoad(ctx.leg, cf) + stopLoad(ctx.stop, cf);
+      return isRecovery(ctx.stop, reset) ? 0 : run;
+    }
+  };
+
+  // src/rules/dim-shop-run.js
+  var dim_shop_run_default = {
+    id: "dim-shop-run",
+    kind: "dimension",
+    reads: ["stop.poi.category", "stop.poi.recovery", "stop.dwellMin"],
+    defaults: { initial: { count: 0, min: 0 } },
+    apply(ctx) {
+      const micro = ctx.settings.microRestMin ?? 10;
+      const cur = ctx.acc["dim-shop-run"];
+      if (isRecovery(ctx.stop, micro) || rideRest(ctx.leg, micro)) return { count: 0, min: 0 };
+      const poi = ctx.stop.poi;
+      if (!SHOP_CATEGORIES.includes(poi.category) || poi.walkFactor > 0) return cur;
+      const units = poi.deepDig ? ctx.settings.deepDigCount ?? 2 : 1;
+      return { count: cur.count + units, min: cur.min + (ctx.stop.dwellMin ?? 0) };
+    }
+  };
+
+  // src/rules/dim-cat-count.js
+  var dim_cat_count_default = {
+    id: "dim-cat-count",
+    kind: "dimension",
+    reads: ["stop.poi.category"],
+    defaults: { initial: {} },
+    apply(ctx) {
+      const cur = ctx.acc["dim-cat-count"];
+      const cat = ctx.stop.poi.category;
+      return { ...cur, [cat]: (cur[cat] ?? 0) + 1 };
+    }
+  };
+
+  // src/rules/dim-rec-run.js
+  var dim_rec_run_default = {
+    id: "dim-rec-run",
+    kind: "dimension",
+    reads: ["stop.poi.recovery"],
+    defaults: { initial: 0 },
+    apply(ctx) {
+      return isRecovery(ctx.stop) ? ctx.acc["dim-rec-run"] + 1 : 0;
+    }
+  };
+
+  // src/rules/dim-afternoon.js
+  var dim_afternoon_default = {
+    id: "dim-afternoon",
+    kind: "dimension",
+    reads: ["stop.startMin", "stop.poi.recovery"],
+    defaults: { initial: 0 },
+    apply(ctx) {
+      const after = toMin(ctx.settings.earlyDayAfterHM ?? "13:00");
+      const cur = ctx.acc["dim-afternoon"];
+      if (ctx.stop.startMin < after || isRecovery(ctx.stop)) return cur;
+      return cur + 1;
+    }
+  };
+
+  // src/rules/hours.js
+  var hours_default = {
+    id: "hours",
+    kind: "hard",
+    reads: ["stop.poi.hours", "stop.startMin", "stop.endMin", "day.date"],
+    defaults: { lastEntryMin: 0 },
+    apply(ctx) {
+      const intervals = openIntervals(ctx.stop.poi, ctx.day.date);
+      if (intervals === null) return "ok";
+      if (intervals.length === 0) return "never";
+      const { startMin, endMin } = ctx.stop;
+      const lastEntry = ctx.params.lastEntryMin ?? 0;
+      for (const [open, close] of intervals) {
+        if (startMin >= open && startMin <= close - lastEntry && endMin <= close) return "ok";
+      }
+      const lastClose = Math.max(...intervals.map(([, c]) => c));
+      return startMin >= lastClose ? "never" : "no";
+    },
+    warn(ctx) {
+      const intervals = openIntervals(ctx.stop.poi, ctx.day.date) ?? [];
+      if (intervals.length === 0) return `${ctx.stop.poi.name_zh} \u4ECA\u5929\u6C92\u958B`;
+      return `${ctx.stop.poi.name_zh} ${minToHm(ctx.stop.startMin)} \u5230\u7684\u6642\u5019\u4E0D\u5728\u71DF\u696D\u6642\u9593\u5167\uFF08${intervals.map(([o, c]) => `${minToHm(o)}\u2013${minToHm(c)}`).join("\u3001")}\uFF09`;
+    }
+  };
+
+  // src/rules/fixed-window.js
+  var fixed_window_default = {
+    id: "fixed-window",
+    kind: "hard",
+    reads: ["stop.startMin"],
+    defaults: {},
+    apply(ctx) {
+      const w = ctx.stop.fixedWindow;
+      if (!w) return "ok";
+      const arriveBy = w.startMin - (w.arriveEarlyMin ?? 0);
+      return ctx.stop.startMin <= arriveBy ? "ok" : "never";
+    },
+    warn(ctx) {
+      const w = ctx.stop.fixedWindow;
+      return w ? `${ctx.stop.poi.name_zh} \u8981\u5728 ${minToHm(w.startMin - (w.arriveEarlyMin ?? 0))} \u524D\u5230\uFF0C\u73FE\u5728\u6392\u5230 ${minToHm(ctx.stop.startMin)}` : "";
+    }
+  };
+
+  // src/rules/window.js
+  var window_default = {
+    id: "window",
+    kind: "hard",
+    reads: ["stop.endMin", "day.window.endMin"],
+    defaults: {},
+    apply(ctx) {
+      return ctx.stop.endMin <= ctx.day.window.endMin ? "ok" : "never";
+    },
+    warn(ctx) {
+      return `${ctx.stop.poi.name_zh} \u6703\u5230 ${minToHm(ctx.stop.endMin)}\uFF0C\u8D85\u904E\u4ECA\u5929\u6536\u5DE5\u6642\u9593 ${minToHm(ctx.day.window.endMin)}`;
+    }
+  };
+
+  // src/rules/max-stops.js
+  var max_stops_default = {
+    id: "max-stops",
+    kind: "hard",
+    reads: ["sequence"],
+    defaults: {},
+    apply(ctx) {
+      const max = ctx.settings.maxStopsPerDay ?? 8;
+      return ctx.sequence.length + 1 <= max ? "ok" : "never";
+    },
+    warn(ctx) {
+      return `\u4ECA\u5929\u5DF2\u7D93 ${ctx.sequence.length} \u7AD9\uFF0C\u4E0A\u9650 ${ctx.settings.maxStopsPerDay ?? 8}`;
+    }
+  };
+
+  // src/rules/same-type-day.js
+  var same_type_day_default = {
+    id: "same-type-day",
+    kind: "hard",
+    reads: ["stop.poi.category", "acc.dim-cat-count"],
+    defaults: {},
+    apply(ctx) {
+      const cat = ctx.stop.poi.category;
+      if (!SAME_TYPE_CATEGORIES.includes(cat)) return "ok";
+      if (ctx.day.themeCategory === cat) return "ok";
+      const max = ctx.settings.sameTypeMaxPerDay ?? 2;
+      return (ctx.acc["dim-cat-count"][cat] ?? 0) <= max ? "ok" : "no";
+    },
+    warn(ctx) {
+      const names = { vintage: "\u53E4\u8457\u5E97", record: "\u5531\u7247\u884C", cafe: "\u5496\u5561\u5EF3" };
+      return `\u4ECA\u5929${names[ctx.stop.poi.category] ?? ctx.stop.poi.category}\u5DF2\u7D93 ${ctx.settings.sameTypeMaxPerDay ?? 2} \u5BB6\uFF0C\u4E0D\u662F\u4E3B\u984C\u65E5\u4E0D\u518D\u6392`;
+    }
+  };
+
+  // src/rules/early-day.js
+  var early_day_default = {
+    id: "early-day",
+    kind: "hard",
+    reads: ["day.earlyDay", "stop.startMin", "stop.poi.recovery", "acc.dim-afternoon"],
+    defaults: { maxAfternoonStops: 1 },
+    apply(ctx) {
+      if (!ctx.day.earlyDay) return "ok";
+      const after = toMin(ctx.settings.earlyDayAfterHM ?? "13:00");
+      if (ctx.stop.startMin < after || isRecovery(ctx.stop)) return "ok";
+      return ctx.acc["dim-afternoon"] <= ctx.params.maxAfternoonStops ? "ok" : "no";
+    },
+    warn(ctx) {
+      return `\u4ECA\u5929\u65E9\u8D77\uFF0C\u4E0B\u5348\u53EA\u6392\u4E00\u500B\u8981\u8D70\u7684\u7AD9\uFF0C${ctx.stop.poi.name_zh} \u6392\u4E0D\u9032`;
+    }
+  };
+
+  // src/rules/walk-budget.js
+  var walk_budget_default = {
+    id: "walk-budget",
+    kind: "soft",
+    reads: ["acc.dim-walk"],
+    defaults: { perMinOver: 1 },
+    apply(ctx) {
+      const budget = (ctx.settings.walkBudgetMin ?? 150) * budgetMultiplier(ctx.day, ctx.settings);
+      const over = ctx.acc["dim-walk"] - budget;
+      return over > 0 ? over * ctx.params.perMinOver : 0;
+    },
+    warn(ctx) {
+      const budget = Math.round((ctx.settings.walkBudgetMin ?? 150) * budgetMultiplier(ctx.day, ctx.settings));
+      return `\u4ECA\u5929\u8D70\u8DEF\u6703\u5230 ${Math.round(ctx.acc["dim-walk"])} \u5206\uFF0C\u8D85\u904E\u4E0A\u9650 ${budget}`;
+    }
+  };
+
+  // src/rules/walk-run.js
+  var walk_run_default = {
+    id: "walk-run",
+    kind: "soft",
+    reads: ["acc.dim-walk-run"],
+    defaults: { perMinOver: 1 },
+    apply(ctx) {
+      const over = ctx.acc["dim-walk-run"] - (ctx.settings.maxWalkRunMin ?? 150);
+      return over > 0 ? over * ctx.params.perMinOver : 0;
+    },
+    warn(ctx) {
+      return `\u9023\u7E8C\u8D70\u8DEF\u5DF2\u7D93 ${Math.round(ctx.acc["dim-walk-run"])} \u5206\uFF0C\u8D85\u904E ${ctx.settings.maxWalkRunMin ?? 150}\uFF0C\u8A72\u5750\u4E00\u4E0B`;
+    }
+  };
+
+  // src/rules/shop-run.js
+  var shop_run_default = {
+    id: "shop-run",
+    kind: "soft",
+    reads: ["acc.dim-shop-run"],
+    defaults: { shopOverMin: 60, perMinOver: 1 },
+    apply(ctx) {
+      const { count, min } = ctx.acc["dim-shop-run"];
+      const overCount = Math.max(0, count - (ctx.settings.maxShopRunCount ?? 4));
+      const overMin = Math.max(0, min - (ctx.settings.maxShopRunMin ?? 240));
+      return overCount * ctx.params.shopOverMin + overMin * ctx.params.perMinOver;
+    },
+    warn(ctx) {
+      const { count, min } = ctx.acc["dim-shop-run"];
+      return `\u9023\u8457\u901B\u4E86 ${count} \u5BB6\u5E97\u3001${min} \u5206\uFF0C\u4E2D\u9593\u6C92\u5403\u9EDE\u6771\u897F`;
+    }
+  };
+
+  // src/rules/cafe-adjacent.js
+  var cafe_adjacent_default = {
+    id: "cafe-adjacent",
+    kind: "soft",
+    reads: ["stop.poi.cafeLike"],
+    defaults: { sameTypeMin: 40 },
+    apply(ctx) {
+      const prev = ctx.prev;
+      if (!prev || !prev.poi?.cafeLike || !ctx.stop.poi.cafeLike) return 0;
+      return ctx.params.sameTypeMin;
+    },
+    warn(ctx) {
+      return `${ctx.prev?.poi?.name_zh ?? "\u4E0A\u4E00\u7AD9"}\u63A5\u8457${ctx.stop.poi.name_zh}\uFF0C\u5169\u5BB6\u5496\u5561\u5EF3\u9023\u8457`;
+    }
+  };
+
+  // src/rules/recovery-run.js
+  var NIGHT = /* @__PURE__ */ new Set(["bar"]);
+  var FOOD = /* @__PURE__ */ new Set(["food"]);
+  var recovery_run_default = {
+    id: "recovery-run",
+    kind: "soft",
+    reads: ["stop.poi.recovery", "acc.dim-rec-run"],
+    defaults: { pairMin: 10, runMin: 40, runFrom: 3 },
+    apply(ctx) {
+      if (!isRecovery(ctx.stop) || !ctx.prev || !isRecovery(ctx.prev)) return 0;
+      const a = ctx.prev.poi.category;
+      const b = ctx.stop.poi.category;
+      if (NIGHT.has(a) && NIGHT.has(b)) return 0;
+      if (FOOD.has(a) && NIGHT.has(b)) return 0;
+      let p = ctx.params.pairMin;
+      if (ctx.acc["dim-rec-run"] >= ctx.params.runFrom) p += ctx.params.runMin;
+      return p;
+    },
+    warn(ctx) {
+      const n = ctx.acc["dim-rec-run"];
+      return n >= ctx.params.runFrom ? `\u9023\u7E8C ${n} \u500B\u5750\u4E0B\u4F86\u7684\u7AD9\uFF0C\u6574\u500B\u4E0B\u5348\u90FD\u5750\u8457` : `${ctx.prev?.poi?.name_zh ?? "\u4E0A\u4E00\u7AD9"}\u63A5\u8457${ctx.stop.poi.name_zh}\uFF0C\u5169\u500B\u5750\u4E0B\u4F86\u7684\u7AD9\u9023\u8457`;
+    }
+  };
+
+  // src/rules/backtrack.js
+  var backtrack_default = {
+    id: "backtrack",
+    kind: "soft",
+    reads: ["leg.backtrackMin"],
+    defaults: { perMin: 2 },
+    apply(ctx) {
+      return Math.max(0, ctx.leg.backtrackMin) * ctx.params.perMin;
+    },
+    warn(ctx) {
+      return `\u5230 ${ctx.stop.poi.name_zh} \u9019\u6BB5\u8D70\u56DE\u982D\u8DEF ${Math.round(ctx.leg.backtrackMin)} \u5206`;
+    }
+  };
+
+  // src/rules/zone-exit.js
+  var zone_exit_default = {
+    id: "zone-exit",
+    kind: "soft",
+    reads: ["stop.poi.zoneId", "day.regionZones"],
+    defaults: { exitMin: 60 },
+    apply(ctx) {
+      return ctx.day.regionZones.includes(ctx.stop.poi.zoneId) ? 0 : ctx.params.exitMin;
+    },
+    warn(ctx) {
+      return `${ctx.stop.poi.name_zh} \u5728\u4ECA\u5929\u7684\u5340\u57DF\u5916\uFF0C\u53BB\u4E86\u8981\u518D\u7E5E\u56DE\u4F86`;
+    }
+  };
+
+  // src/rules/noon-urban.js
+  var noon_urban_default = {
+    id: "noon-urban",
+    kind: "soft",
+    reads: ["stop.poi.walkFactor", "stop.poi.zoneId", "stop.startMin", "stop.endMin", "day.date", "country.climate.summerMonths", "kb.zones"],
+    defaults: { from: "11:30", to: "14:30", penaltyMin: 20 },
+    apply(ctx) {
+      const month = Number(String(ctx.day.date).split("-")[1]);
+      if (!ctx.country.climate.summerMonths.includes(month)) return 0;
+      if ((ctx.stop.poi.walkFactor ?? 0) < 0.5) return 0;
+      const zone = ctx.kb.zones[ctx.stop.poi.zoneId];
+      if (!zone || zone.environment !== "urban") return 0;
+      const ov = overlapMin(ctx.stop.startMin, ctx.stop.endMin, hmToMin(ctx.params.from), hmToMin(ctx.params.to));
+      return ov > 0 ? ctx.params.penaltyMin : 0;
+    },
+    warn(ctx) {
+      return `${ctx.stop.poi.name_zh} \u6392\u5728\u590F\u5929\u4E2D\u5348\u7684\u5E02\u5340\uFF0C\u6703\u66EC`;
+    }
+  };
+
+  // src/rules/anchor.js
+  var anchor_default = {
+    id: "anchor",
+    kind: "hard",
+    scope: "day",
+    reads: ["sequence"],
+    defaults: {},
+    apply(ctx) {
+      const id = ctx.day?.anchorPoiId;
+      if (!id) return "ok";
+      return ctx.sequence.some((s) => s.poi.id === id) ? "ok" : "no";
+    },
+    warn(ctx) {
+      return `\u4ECA\u5929\u7684\u4E3B\u884C\u7A0B\u6C92\u6392\u9032\u53BB\uFF08${ctx.day?.anchorName ?? ctx.day?.anchorPoiId}\uFF09`;
+    }
+  };
+
+  // src/rules/designated.js
+  var designated_default = {
+    id: "designated",
+    kind: "soft",
+    scope: "day",
+    reads: ["sequence", "day.designated"],
+    defaults: { missMin: 120 },
+    apply(ctx) {
+      const placed = new Set(ctx.sequence.map((s) => s.poi.id));
+      const missing2 = ctx.day.designated.filter((id) => !placed.has(id));
+      return missing2.length * ctx.params.missMin;
+    },
+    warn(ctx) {
+      const placed = new Set(ctx.sequence.map((s) => s.poi.id));
+      const missing2 = ctx.day.designated.filter((id) => !placed.has(id));
+      return `\u6307\u5B9A\u7684 ${missing2.length} \u7AD9\u4ECA\u5929\u6392\u4E0D\u9032\uFF1A${missing2.join("\u3001")}`;
+    }
+  };
+
+  // src/rules/item-gap.js
+  var item_gap_default = {
+    id: "item-gap",
+    kind: "hard",
+    scope: "day",
+    reads: [],
+    // themeCategory 沒有（非主題日）是正常狀態，不算缺欄位；apply 自己處理 null
+    defaults: {},
+    apply(ctx) {
+      const t = ctx.day.themeCategory;
+      if (!t) return "ok";
+      return ctx.day.prevThemeCategory === t ? "no" : "ok";
+    },
+    warn(ctx) {
+      return `\u6628\u5929\u5DF2\u7D93\u662F\u4E00\u6574\u5929\u7684${ctx.day.themeCategory}\uFF0C\u4ECA\u5929\u53C8\u662F\uFF0C\u6703\u81A9`;
+    }
+  };
+
+  // src/rules/meal-slots.js
+  var EATING = /* @__PURE__ */ new Set(["food", "bar", "cafe"]);
+  var meal_slots_default = {
+    id: "meal-slots",
+    kind: "soft",
+    scope: "day",
+    reads: ["sequence", "country.mealSlots"],
+    defaults: { missMin: 20 },
+    apply(ctx) {
+      return missing(ctx).length * ctx.params.missMin;
+    },
+    warn(ctx) {
+      const names = { lunch: "\u5348\u9910", dinner: "\u665A\u9910" };
+      return `\u4ECA\u5929\u6C92\u6392${missing(ctx).map((k) => names[k] ?? k).join("\u3001")}`;
+    }
+  };
+  function missing(ctx) {
+    const out = [];
+    for (const [slot, [from, to]] of Object.entries(ctx.country.mealSlots)) {
+      const a = hmToMin(from);
+      const b = hmToMin(to);
+      const hit = ctx.sequence.some((s) => s.poi.recovery && EATING.has(s.poi.category) && overlapMin(s.startMin, s.endMin, a, b) > 0);
+      if (!hit) out.push(slot);
+    }
+    return out;
+  }
+
+  // src/rules/night-slot.js
+  var NIGHT2 = /* @__PURE__ */ new Set(["bar", "food"]);
+  var night_slot_default = {
+    id: "night-slot",
+    kind: "soft",
+    scope: "day",
+    reads: ["sequence", "country.nightSlot", "day.type"],
+    defaults: { missMin: 10 },
+    apply(ctx) {
+      if (ctx.day.type !== "normal" || ctx.day.nightSlotOff) return 0;
+      const [from, to] = ctx.country.nightSlot.map(hmToMin);
+      const hit = ctx.sequence.some((s) => NIGHT2.has(s.poi.category) && overlapMin(s.startMin, s.endMin, from, to) > 0);
+      return hit ? 0 : ctx.params.missMin;
+    },
+    warn() {
+      return "\u4ECA\u665A\u6C92\u6392\u591C\u9593\u7AD9";
+    }
+  };
+
+  // src/rules/builtin.js
+  var BUILTIN = Object.freeze([
+    // 累積量
+    dim_walk_default,
+    dim_walk_run_default,
+    dim_shop_run_default,
+    dim_cat_count_default,
+    dim_rec_run_default,
+    dim_afternoon_default,
+    // 硬約束（站）
+    hours_default,
+    fixed_window_default,
+    window_default,
+    max_stops_default,
+    same_type_day_default,
+    early_day_default,
+    // 軟約束（站）
+    walk_budget_default,
+    walk_run_default,
+    shop_run_default,
+    cafe_adjacent_default,
+    recovery_run_default,
+    backtrack_default,
+    zone_exit_default,
+    noon_urban_default,
+    // 整天
+    anchor_default,
+    designated_default,
+    item_gap_default,
+    meal_slots_default,
+    night_slot_default
+  ]);
+
+  // src/rules.json
+  var rules_default = {
+    _\u8AAA\u660E: "\u5F15\u64CE\u7684\u6578\u5B57\u771F\u76F8\uFF08\u6C7A\u7B56\u6A39 Q5\uFF09\u3002profile.md \u662F\u7D66\u4EBA\u8B80\u7684\u7248\u672C\uFF0Ctools/check-rules.mjs \u6BD4\u5C0D\u5169\u908A\u3002settings \u662F\u5168\u5F15\u64CE\u5171\u7528\u7684\u6578\u5B57\uFF1Brules \u662F\u5404\u689D\u898F\u5247\u7684\u8986\u5BEB\uFF0Cweight 0 = \u505C\u7528\u3002\u9664\u4E86\u6A19\u300C\u539F\u8A71\u300D\u7684\uFF0C\u90FD\u662F\u9810\u8A2D\u3002",
+    settings: {
+      walkBudgetMin: 150,
+      maxWalkRunMin: 150,
+      restResetMin: 30,
+      maxShopRunCount: 4,
+      maxShopRunMin: 240,
+      microRestMin: 10,
+      deepDigCount: 2,
+      climbFactor: 1.5,
+      legSuggestMin: 10,
+      defaultDwellMin: 60,
+      sameTypeMaxPerDay: 2,
+      earlyDayWalkFactor: 0.7,
+      earlyDayAfterHM: "13:00",
+      partyWalkFactor: 0.85,
+      dayTripNextWalkFactor: 0.85,
+      openSlotMinPerDay: 90,
+      lateThresholdMin: 15,
+      walkingMPerMin: 80,
+      detourFactor: 1.3,
+      maxStopsPerDay: 8,
+      dayWindow: ["09:00", "24:00"],
+      lateStartFromDay: 3,
+      lateStartHM: "11:00",
+      arrivalBufferMin: 60,
+      departureBufferMin: 180,
+      compressFactor: 0.75,
+      compressMinDwell: 20,
+      restSoonMin: 30,
+      walkVsRideMaxWalkMin: 30,
+      _\u539F\u8A71: {
+        maxShopRunMin: "#103\uFF08\u984C\u76EE\u5BEB 240 \u4ED6\u7B54\u53EF\u4EE5\uFF09",
+        walkBudgetMin: "#114\uFF08\u5148\u7559\uFF09",
+        sameTypeMaxPerDay: "#123\u3001#143"
+      }
+    },
+    rules: {
+      "dim-walk": {
+        weight: 1
+      },
+      "dim-walk-run": {
+        weight: 1
+      },
+      "dim-shop-run": {
+        weight: 1
+      },
+      "dim-cat-count": {
+        weight: 1
+      },
+      "dim-rec-run": {
+        weight: 1
+      },
+      "dim-afternoon": {
+        weight: 1
+      },
+      hours: {
+        weight: 1,
+        lastEntryMin: 0
+      },
+      "fixed-window": {
+        weight: 1
+      },
+      window: {
+        weight: 1
+      },
+      "max-stops": {
+        weight: 1
+      },
+      "same-type-day": {
+        weight: 1
+      },
+      "early-day": {
+        weight: 1,
+        maxAfternoonStops: 1
+      },
+      "walk-budget": {
+        weight: 1,
+        perMinOver: 1
+      },
+      "walk-run": {
+        weight: 1,
+        perMinOver: 1
+      },
+      "shop-run": {
+        weight: 1,
+        shopOverMin: 60,
+        perMinOver: 1
+      },
+      "cafe-adjacent": {
+        weight: 1,
+        sameTypeMin: 40
+      },
+      "recovery-run": {
+        weight: 1,
+        pairMin: 10,
+        runMin: 40,
+        runFrom: 3
+      },
+      backtrack: {
+        weight: 1,
+        perMin: 2
+      },
+      "zone-exit": {
+        weight: 1,
+        exitMin: 60
+      },
+      "noon-urban": {
+        weight: 1,
+        from: "11:30",
+        to: "14:30",
+        penaltyMin: 20
+      },
+      anchor: {
+        weight: 1
+      },
+      designated: {
+        weight: 1,
+        missMin: 120
+      },
+      "item-gap": {
+        weight: 1
+      },
+      "meal-slots": {
+        weight: 1,
+        missMin: 20
+      },
+      "night-slot": {
+        weight: 1,
+        missMin: 10
+      }
+    },
+    _\u898F\u5247\u8AAA\u660E: "\u6BCF\u689D\u898F\u5247\uFF1Aweight 0 = \u505C\u7528\uFF1B\u5176\u9918\u9375\u662F\u90A3\u689D\u898F\u5247\u7684\u9580\u6ABB\u6216\u7F70\u5206\uFF08\u5206\u9418\uFF09\u3002\u9810\u8A2D\u503C\u662F 10-10 \u5F9E DESIGN \xA75.2 \u63DB\u7B97\u7684\uFF0C\u90FD\u662F\u9810\u8A2D\u7B49\u7D1A\u3002"
+  };
+
+  // src/engine/dims.js
+  function emptyAcc(dims) {
+    const acc = {};
+    for (const d of dims) acc[d.id] = d.params?.initial ?? 0;
+    return acc;
+  }
+  function stepAcc(dims, ctx) {
+    const next = { ...ctx.acc };
+    const warnings = [];
+    for (const d of dims) {
+      const missing2 = missingReads(d, ctx);
+      if (missing2.length) {
+        warnings.push({ ruleId: d.id, code: "skipped-missing", poiId: ctx.stop?.poi?.id, msg: `${d.id} \u8DF3\u904E\uFF1A\u7F3A ${missing2.join("\u3001")}` });
+        continue;
+      }
+      next[d.id] = d.apply({ ...ctx, params: d.params, ruleId: d.id });
+    }
+    return { acc: next, warnings };
+  }
+
+  // src/engine/evaluate.js
+  var WORST = { ok: 0, no: 1, never: 2 };
+  function runRule(rule, ctx, warnings) {
+    const missing2 = missingReads(rule, ctx);
+    if (missing2.length) {
+      warnings.push({ ruleId: rule.id, code: "skipped-missing", poiId: ctx.stop?.poi?.id, msg: `${rule.id} \u8DF3\u904E\uFF1A\u7F3A ${missing2.join("\u3001")}` });
+      return void 0;
+    }
+    try {
+      return rule.apply({ ...ctx, params: rule.params, ruleId: rule.id });
+    } catch (err) {
+      warnings.push({ ruleId: rule.id, code: "rule-error", poiId: ctx.stop?.poi?.id, msg: `${rule.id} \u51FA\u932F\uFF0C\u7576\u4F5C\u8DF3\u904E\uFF1A${err?.message ?? err}` });
+      return void 0;
+    }
+  }
+  function applyHardSoft({ hard, soft }, ctx, scope) {
+    const warnings = [];
+    let verdict = "ok";
+    const breakdown = [];
+    for (const rule of hard) {
+      if (rule.scope !== scope) continue;
+      const v = runRule(rule, ctx, warnings);
+      if (v === void 0 || v === "ok") continue;
+      if (v !== "no" && v !== "never") {
+        warnings.push({ ruleId: rule.id, code: "rule-error", msg: `${rule.id} \u786C\u7D04\u675F\u56DE\u4E86\u770B\u4E0D\u61C2\u7684\u503C\uFF1A${v}` });
+        continue;
+      }
+      if (WORST[v] > WORST[verdict]) verdict = v;
+      warnings.push({ ruleId: rule.id, code: "hard", poiId: ctx.stop?.poi?.id, msg: warnText(rule, ctx) });
+    }
+    let penaltyMin = 0;
+    for (const rule of soft) {
+      if (rule.scope !== scope) continue;
+      const v = runRule(rule, ctx, warnings);
+      if (v === void 0) continue;
+      const minutes = Number(v);
+      if (!Number.isFinite(minutes) || minutes < 0) {
+        warnings.push({ ruleId: rule.id, code: "rule-error", msg: `${rule.id} \u8EDF\u7D04\u675F\u8981\u56DE \u22650 \u7684\u5206\u9418\u6578\uFF1A${v}` });
+        continue;
+      }
+      if (minutes === 0) continue;
+      const weighted = minutes * rule.weight;
+      penaltyMin += weighted;
+      breakdown.push({ ruleId: rule.id, minutes, weight: rule.weight, weighted });
+      warnings.push({ ruleId: rule.id, code: "soft", poiId: ctx.stop?.poi?.id, msg: warnText(rule, ctx) });
+    }
+    return { verdict, penaltyMin, breakdown, warnings };
+  }
+  function evaluateStop(ctx, rules) {
+    const stepped = stepAcc(rules.dims, ctx);
+    const ctx2 = { ...ctx, accBefore: ctx.acc, acc: stepped.acc };
+    const r = applyHardSoft(rules, ctx2, "stop");
+    return { verdict: r.verdict, penaltyMin: r.penaltyMin, acc: stepped.acc, breakdown: r.breakdown, warnings: [...stepped.warnings, ...r.warnings] };
+  }
+  function evaluateDay(ctx, rules) {
+    return applyHardSoft(rules, ctx, "day");
+  }
+
+  // src/engine/schedule.js
+  function placeStop({ prevEndMin, leg, poi, dwellMin, date, fixedWindow = null, dayStartMin = 0, first = false }) {
+    const travel = (leg?.walkMin ?? 0) + (leg?.rideMin ?? 0) + (leg?.waitMin ?? 0);
+    let arriveMin = Math.max(prevEndMin + travel, dayStartMin);
+    let startMin = arriveMin;
+    if (fixedWindow) {
+      startMin = Math.max(arriveMin, fixedWindow.startMin - (fixedWindow.arriveEarlyMin ?? 0));
+    } else {
+      const intervals = openIntervals(poi, date);
+      if (intervals && intervals.length) {
+        const next = intervals.find(([, close]) => arriveMin < close);
+        if (next && arriveMin < next[0]) startMin = next[0];
+      }
+    }
+    if (first && startMin > arriveMin) arriveMin = startMin;
+    return { arriveMin, startMin, waitMin: startMin - arriveMin, endMin: startMin + dwellMin };
+  }
+
+  // src/engine/core.js
+  var PRIORITY_VALUE = Object.freeze({ must: 180, want: 90, maybe: 45 });
+  function candidateValue(c) {
+    const base = PRIORITY_VALUE[c.priority] ?? PRIORITY_VALUE.maybe;
+    const rating = c.poi?.my?.rating;
+    const bonus = rating === 6 ? 60 : rating === 5 ? 30 : 0;
+    return base + bonus;
+  }
+  function orderCandidates(list) {
+    return [...list].sort((a, b) => {
+      const fa = a.fixedWindow ? a.fixedWindow.startMin : Infinity;
+      const fb = b.fixedWindow ? b.fixedWindow.startMin : Infinity;
+      if (fa !== fb) return fa - fb;
+      return candidateValue(b) - candidateValue(a);
+    });
+  }
+  function planDay({ candidates, day, home, legFn: legFn2, rules, settings, country, kb, options = {} }) {
+    const maxNodes = options.maxNodes ?? 2e5;
+    const maxMs = options.maxMs ?? 800;
+    const explain = Boolean(options.explain);
+    const started = Date.now();
+    const cands = orderCandidates(candidates.map((c, i) => ({ ...c, _i: i, value: candidateValue(c), dwellMin: c.dwellMin ?? c.poi.dwellMin ?? settings.defaultDwellMin ?? 60 })));
+    const stats = { nodes: 0, truncated: false, ms: 0 };
+    const dead = /* @__PURE__ */ new Map();
+    let best = null;
+    const dayCtxBase = { day, settings, country, kb };
+    function tryEnd(seq, acc, score, path) {
+      const dayEval = evaluateDay({ ...dayCtxBase, sequence: seq, acc }, rules);
+      const total = score - dayEval.penaltyMin;
+      const complete = dayEval.verdict === "ok";
+      if (!best || complete && !best.complete || complete === best.complete && total > best.total) {
+        best = { total, complete, seq: [...seq], path: [...path], dayEval, acc };
+      }
+    }
+    function search(seq, remaining, acc, score, path) {
+      if (stats.nodes++ > maxNodes || Date.now() - started > maxMs) {
+        stats.truncated = true;
+        return;
+      }
+      tryEnd(seq, acc, score, path);
+      if (!remaining.length) return;
+      const slots = Math.max(0, (settings.maxStopsPerDay ?? 8) - seq.length);
+      const optimistic = score + remaining.slice(0, slots).reduce((s, c) => s + c.value, 0);
+      if (best && best.complete && optimistic <= best.total) return;
+      const prev = seq.length ? seq[seq.length - 1] : null;
+      const prevPoi = prev ? prev.poi : home;
+      const prevEnd = prev ? prev.endMin : day.window.startMin;
+      const nowDead = [];
+      for (const c of remaining) {
+        if (nowDead.includes(c._i)) continue;
+        const leg = withBacktrack(normalizeLeg(legFn2(prevPoi, c.poi)), seq, home, c.poi, legFn2);
+        const placed = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev });
+        const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i };
+        const ctx = { ...dayCtxBase, stop, prev, next: null, leg, acc, sequence: seq };
+        const r = evaluateStop(ctx, rules);
+        if (r.verdict === "never") {
+          nowDead.push(c._i);
+          if (!dead.has(c._i)) dead.set(c._i, r.warnings.find((w) => w.code === "hard")?.msg ?? "\u4ECA\u5929\u6392\u4E0D\u9032");
+          continue;
+        }
+        if (r.verdict === "no") continue;
+        const nextRemaining = remaining.filter((o) => o._i !== c._i && !nowDead.includes(o._i));
+        search([...seq, stop], nextRemaining, r.acc, score + c.value - r.penaltyMin, [...path, { stop, penaltyMin: r.penaltyMin, breakdown: r.breakdown, warnings: r.warnings }]);
+        if (stats.truncated) return;
+      }
+    }
+    greedySeed();
+    search([], cands, emptyAcc(rules.dims), 0, []);
+    stats.ms = Date.now() - started;
+    function greedySeed() {
+      let seq = [];
+      let remaining = cands;
+      let acc = emptyAcc(rules.dims);
+      let score = 0;
+      const path = [];
+      for (; ; ) {
+        const prev = seq.length ? seq[seq.length - 1] : null;
+        const prevPoi = prev ? prev.poi : home;
+        const prevEnd = prev ? prev.endMin : day.window.startMin;
+        let pick = null;
+        for (const c of remaining) {
+          const leg = withBacktrack(normalizeLeg(legFn2(prevPoi, c.poi)), seq, home, c.poi, legFn2);
+          const placed = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev });
+          const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i };
+          const r = evaluateStop({ ...dayCtxBase, stop, prev, next: null, leg, acc, sequence: seq }, rules);
+          if (r.verdict !== "ok") continue;
+          const gain = c.value - r.penaltyMin;
+          if (!pick || gain > pick.gain || gain === pick.gain && placed.startMin < pick.stop.startMin) pick = { c, stop, r, gain };
+        }
+        if (!pick || pick.gain <= 0) break;
+        seq = [...seq, pick.stop];
+        acc = pick.r.acc;
+        score += pick.gain;
+        path.push({ stop: pick.stop, penaltyMin: pick.r.penaltyMin, breakdown: pick.r.breakdown, warnings: pick.r.warnings });
+        remaining = remaining.filter((o) => o._i !== pick.c._i);
+      }
+      tryEnd(seq, acc, score, path);
+    }
+    if (!best) best = { total: 0, complete: false, seq: [], path: [], dayEval: evaluateDay({ ...dayCtxBase, sequence: [], acc: emptyAcc(rules.dims) }, rules), acc: emptyAcc(rules.dims) };
+    const placedIdx = new Set(best.seq.map((s) => s.candidateIndex));
+    const dropped = cands.filter((c) => !placedIdx.has(c._i)).map((c) => ({ poi: c.poi, priority: c.priority, reason: dead.get(c._i) ?? "\u6642\u9593\u6216\u5206\u6578\u6392\u4E0D\u9032" }));
+    const stopPenalty = best.path.reduce((s, p) => s + p.penaltyMin, 0);
+    const warnings = [
+      ...best.path.flatMap((p) => p.warnings),
+      ...best.dayEval.warnings
+    ];
+    return {
+      sequence: best.seq,
+      score: best.total,
+      complete: best.complete,
+      penaltyMin: stopPenalty + best.dayEval.penaltyMin,
+      warnings: dedupeWarnings(warnings),
+      dropped,
+      breakdown: explain ? { stops: best.path.map((p) => ({ poiId: p.stop.poi.id, penaltyMin: p.penaltyMin, items: p.breakdown })), day: best.dayEval.breakdown } : null,
+      stats
+    };
+  }
+  function withBacktrack(leg, seq, home, toPoi, legFn2) {
+    if (leg.backtrackMin != null) return leg;
+    if (leg.mode !== "walk") return { ...leg, backtrackMin: 0 };
+    const beforePrev = seq.length >= 2 ? seq[seq.length - 2].poi : seq.length === 1 ? home : null;
+    if (!beforePrev) return { ...leg, backtrackMin: 0 };
+    const direct = normalizeLeg(legFn2(beforePrev, toPoi));
+    const backtrackMin = direct.mode === "walk" ? Math.max(0, leg.walkMin - direct.walkMin) : 0;
+    return { ...leg, backtrackMin };
+  }
+  function normalizeLeg(leg) {
+    const l = leg ?? {};
+    return { walkMin: num(l.walkMin), rideMin: num(l.rideMin), climbMin: num(l.climbMin), waitMin: num(l.waitMin), backtrackMin: l.backtrackMin == null ? null : num(l.backtrackMin), mode: l.mode ?? (num(l.rideMin) > 0 ? "ride" : "walk") };
+  }
+  var num = (v) => Number.isFinite(v) ? v : 0;
+  function dedupeWarnings(list) {
+    const seen = /* @__PURE__ */ new Set();
+    const out = [];
+    for (const w of list) {
+      const key = `${w.ruleId}|${w.code}|${w.poiId ?? ""}|${w.msg}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(w);
+    }
+    return out;
+  }
+
+  // src/engine/trip.js
+  function dayWindow(day, index, settings) {
+    const [start, end] = (settings.dayWindow ?? ["09:00", "24:00"]).map(hmToMin);
+    let startMin = start;
+    if (day.earlyDay && day.departHM) startMin = hmToMin(day.departHM);
+    else if (!day.earlyDay && day.type === "normal" && index + 1 >= (settings.lateStartFromDay ?? 3) && !day.dayTrip) startMin = hmToMin(settings.lateStartHM ?? "11:00");
+    if (day.type === "arrival" && day.arriveMin != null) startMin = Math.max(startMin, day.arriveMin + (settings.arrivalBufferMin ?? 60));
+    let endMin = end;
+    if (day.type === "departure" && day.departAirportMin != null) endMin = Math.min(endMin, day.departAirportMin - (settings.departureBufferMin ?? 180));
+    return { startMin, endMin };
+  }
+  function regionZonesOf({ home, candidates, anchorPoi }) {
+    const z = new Set([home?.zoneId, anchorPoi?.zoneId, ...candidates.map((c) => c.poi.zoneId)].filter(Boolean));
+    return [...z];
+  }
+  function planTrip({ trip, pois, rules, settings, country, kb, legFn: legFn2, options = {} }) {
+    const out = [];
+    const warnings = [];
+    let prevTheme = null;
+    let prevType = null;
+    trip.days.forEach((d, index) => {
+      const home = resolveHome(trip, d.date);
+      const candidates = (d.picks ?? []).map((p) => {
+        const poi = pois[p.poiId];
+        if (!poi) {
+          warnings.push({ code: "pick-unknown", date: d.date, msg: `${d.date} \u7684 ${p.poiId} \u4E0D\u5728\u77E5\u8B58\u5EAB` });
+          return null;
+        }
+        return { poi, priority: p.priority ?? "want", dwellMin: p.dwellMin, fixedWindow: p.fixedWindow ?? null, designated: (d.designated ?? []).includes(p.poiId), isAnchor: d.anchor?.poiId === p.poiId || Boolean(d.anchor?.poiIds?.includes(p.poiId)) };
+      }).filter(Boolean);
+      const anchorPoi = d.anchor?.poiId ? pois[d.anchor.poiId] : d.anchor?.poiIds?.length ? pois[d.anchor.poiIds[0]] : null;
+      const themeCategory = d.anchor?.theme ?? null;
+      const day = {
+        date: d.date,
+        type: d.type ?? "normal",
+        earlyDay: Boolean(d.earlyDay),
+        party: trip.party ?? 1,
+        dayTripNext: prevType === "daytrip" || Boolean(trip.days[index - 1]?.dayTrip),
+        themeCategory,
+        prevThemeCategory: prevTheme,
+        anchorPoiId: anchorPoi?.id ?? null,
+        anchorName: anchorPoi?.name_zh ?? d.anchor?.theme ?? null,
+        designated: d.designated ?? [],
+        regionZones: regionZonesOf({ home, candidates, anchorPoi }),
+        window: dayWindow(d, index, settings),
+        nightSlotOff: Boolean(d.nightSlotOff) || Boolean(trip.days[index + 1]?.earlyDay)
+      };
+      const plan = planDay({ candidates, day, home, legFn: legFn2, rules, settings, country, kb, options });
+      out.push({ date: d.date, day, plan });
+      prevTheme = themeCategory;
+      prevType = d.dayTrip ? "daytrip" : d.type ?? "normal";
+    });
+    return { days: out, warnings };
+  }
+  function resolveHome(trip, date) {
+    const bases = trip.homeBases ?? [];
+    const hit = bases.find((b) => (!b.fromDate || b.fromDate <= date) && (!b.toDate || date <= b.toDate)) ?? bases[0];
+    return hit?.poi ?? { id: "home", name_zh: "\u4F4F\u5BBF", zoneId: null };
+  }
+
+  // src/engine/swap.js
+  function swapCandidates({ plan, stopId, pool, legFn: legFn2, date, settings = {} }) {
+    const seq = plan.sequence;
+    const i = seq.findIndex((s) => s.poi.id === stopId);
+    if (i < 0) return [];
+    const cur = seq[i];
+    const prev = seq[i - 1] ?? null;
+    const next = seq[i + 1] ?? null;
+    const maxDetour = settings.swapDetourMaxMin ?? 10;
+    const eating = /* @__PURE__ */ new Set(["food", "bar", "cafe"]);
+    const sameType = (p) => eating.has(cur.poi.category) ? eating.has(p.category) : p.category === cur.poi.category;
+    const inPlan = new Set(seq.map((s) => s.poi.id));
+    const out = [];
+    for (const c of pool) {
+      const poi = c.poi ?? c;
+      if (poi.id === cur.poi.id || inPlan.has(poi.id) || !sameType(poi)) continue;
+      const a = prev ? legMin(legFn2(prev.poi, poi)) : 0;
+      const b = next ? legMin(legFn2(poi, next.poi)) : 0;
+      const base = prev && next ? legMin(legFn2(prev.poi, next.poi)) : 0;
+      const detourMin = Math.max(0, a + b - base);
+      if (detourMin > maxDetour) continue;
+      const iv = openIntervals(poi, date);
+      const open = iv === null ? null : iv.some(([o, cl]) => cur.startMin >= o && cur.startMin + (poi.dwellMin ?? cur.dwellMin) <= cl);
+      if (open === false) continue;
+      out.push({ poi, detourMin, open });
+    }
+    out.sort((x, y) => x.detourMin - y.detourMin);
+    return out;
+  }
+  function applySwap(day, fromPoiId, toPoi, priority = "want") {
+    const picks = (day.picks ?? []).map((p) => p.poiId === fromPoiId ? { ...p, poiId: toPoi.id, priority: p.priority ?? priority } : p);
+    const swapped = [...day.swapped ?? [], { from: fromPoiId, to: toPoi.id, at: (/* @__PURE__ */ new Date()).toISOString() }];
+    return { ...day, picks, swapped };
+  }
+  var legMin = (l) => (l?.walkMin ?? 0) + (l?.rideMin ?? 0);
+
+  // src/geo/matrix.js
+  var R = 6371e3;
+  function haversineM(a, b) {
+    const toRad = (d) => d * Math.PI / 180;
+    const dLat = toRad(b.lat - a.lat);
+    const dLng = toRad(b.lng - a.lng);
+    const s = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(s));
+  }
+  function makeLegFn({ walk = {}, settings = {}, zoneLinks = {}, fallbackMin = {} } = {}) {
+    const mPerMin = settings.walkingMPerMin ?? 80;
+    const detour = settings.detourFactor ?? 1.3;
+    const same = fallbackMin.sameZone ?? 10;
+    const cross = fallbackMin.crossZone ?? 20;
+    const warned = /* @__PURE__ */ new Set();
+    const warnings = [];
+    const legFn2 = (from, to) => {
+      const key = `${from?.id}|${to?.id}`;
+      const link = zoneLinks[`${from?.zoneId}|${to?.zoneId}`] ?? zoneLinks[`${to?.zoneId}|${from?.zoneId}`];
+      if (walk[key]) {
+        const w = walk[key];
+        if (link && w.min > (settings.walkVsRideMaxWalkMin ?? 30)) return { walkMin: link.walkMin ?? 5, rideMin: link.rideMin, climbMin: 0, mode: "ride", source: "link" };
+        return { walkMin: w.min, rideMin: 0, climbMin: 0, mode: "walk", source: "valhalla", m: w.m };
+      }
+      if (hasCoords(from) && hasCoords(to)) {
+        const min = Math.ceil(haversineM(from, to) * detour / mPerMin);
+        if (link && min > (settings.walkVsRideMaxWalkMin ?? 30)) return { walkMin: link.walkMin ?? 5, rideMin: link.rideMin, climbMin: 0, mode: "ride", source: "link" };
+        note(`${from.name_zh ?? from.id}\u2192${to.name_zh ?? to.id} \u6C92\u6709\u5BE6\u7B97\u6B65\u884C\u5206\u9418\uFF0C\u7528\u76F4\u7DDA\u8DDD\u96E2\u4F30`);
+        return { walkMin: min, rideMin: 0, climbMin: 0, mode: "walk", source: "haversine" };
+      }
+      if (link) return { walkMin: link.walkMin ?? 5, rideMin: link.rideMin, climbMin: 0, mode: "ride", source: "link" };
+      note(`${from?.name_zh ?? from?.id}\u2192${to?.name_zh ?? to?.id} \u6C92\u6709\u5EA7\u6A19\uFF0C\u7528\u5340\u57DF\u9810\u8A2D\u5206\u9418`);
+      return { walkMin: from?.zoneId === to?.zoneId ? same : cross, rideMin: 0, climbMin: 0, mode: "walk", source: "zone-default" };
+    };
+    function note(msg) {
+      if (warned.has(msg)) return;
+      warned.add(msg);
+      warnings.push({ code: "leg-estimated", msg });
+    }
+    legFn2.warnings = warnings;
+    return legFn2;
+  }
+  var hasCoords = (p) => Number.isFinite(p?.lat) && Number.isFinite(p?.lng);
+
+  // src/data/migrations.js
+  var DB_NAME = "trip-pilot";
+  var DB_VERSION = 1;
+  var MIGRATIONS = [
+    {
+      version: 1,
+      note: "\u521D\u7248\uFF1A\u77E5\u8B58\u5EAB POI\u3001\u65C5\u7A0B\u3001\u88DD\u7F6E\uFF08\u540C\u6B65\u7AEF\u9EDE\u8207 token\uFF0C\u4E0D\u9032\u4EFB\u4F55\u532F\u51FA\uFF09\u3001\u5099\u4EFD\u5FEB\u7167",
+      apply(db) {
+        const pois = db.createObjectStore("pois", { keyPath: "id" });
+        pois.createIndex("byCity", "cityId", { unique: false });
+        pois.createIndex("byCategory", "category", { unique: false });
+        db.createObjectStore("trips", { keyPath: "id" });
+        db.createObjectStore("device", { keyPath: "key" });
+        const backups = db.createObjectStore("backups", { keyPath: "at" });
+        backups.createIndex("byTrip", "tripId", { unique: false });
+      }
+    }
+  ];
+  function runMigrations(db, oldVersion, newVersion = DB_VERSION, migrations = MIGRATIONS) {
+    const ran = [];
+    const sorted = [...migrations].sort((a, b) => a.version - b.version);
+    for (const m of sorted) {
+      if (m.version > oldVersion && m.version <= newVersion) {
+        m.apply(db);
+        ran.push(m.version);
+      }
+    }
+    return ran;
+  }
+
+  // src/derive/category.json
+  var category_default = {
+    _\u8AAA\u660E: "\u77E5\u8B58\u5EAB\u7684 category \u662F\u7814\u7A76\u5BEB\u7684\u81EA\u7531\u6587\u5B57\uFF0C\u9019\u5F35\u8868\u628A\u5B83\u5C0D\u5230\u898F\u7BC4\u5E97\u578B\u3002\u4F9D\u5E8F\u6BD4\u5C0D keywords\uFF0C\u7B2C\u4E00\u500B\u547D\u4E2D\u5C31\u7528\uFF1B\u90FD\u6C92\u547D\u4E2D\u2192 other \u4E26\u8A18\u8B66\u544A\u3002\u6539\u9019\u5F35\u8868\u4E0D\u7528\u6539\u7A0B\u5F0F\u3002",
+    rules: [
+      {
+        key: "logistics",
+        keywords: [
+          "\u4EA4\u901A\uFF5C",
+          "\u5BE6\u7528\uFF5C"
+        ]
+      },
+      {
+        key: "event",
+        keywords: [
+          "\u796D\u5178",
+          "\u76C6\u8E0A",
+          "\u71C8\u7C60",
+          "\u82B1\u706B",
+          "\u591C\u9593\u9EDE\u71C8",
+          "\u76C2\u862D\u76C6\u9650\u5B9A",
+          "\u4F8B\u796D",
+          "\u5E02\u96C6"
+        ]
+      },
+      {
+        key: "mausoleum",
+        keywords: [
+          "\u9748\u5EDF",
+          "\u9748\u5C4B"
+        ]
+      },
+      {
+        key: "shrine",
+        keywords: [
+          "\u795E\u793E",
+          "\u516B\u5E61\u5BAE",
+          "\u5929\u6EFF\u5BAE",
+          "\u5927\u795E\u5BAE"
+        ]
+      },
+      {
+        key: "temple",
+        keywords: [
+          "\u5BFA\u9662",
+          "\u5BFA\uFF08",
+          "\u4E0D\u52D5\u9662",
+          "\u570B\u5206\u5BFA"
+        ]
+      },
+      {
+        key: "daytrip",
+        keywords: [
+          "\u4E00\u65E5\u904A",
+          "\u534A\u65E5\u904A"
+        ]
+      },
+      {
+        key: "experience",
+        keywords: [
+          "\u9AD4\u9A57",
+          "\u5DE5\u85DD"
+        ]
+      },
+      {
+        key: "onsen",
+        keywords: [
+          "\u6EAB\u6CC9",
+          "\u9322\u6E6F"
+        ]
+      },
+      {
+        key: "brewery",
+        keywords: [
+          "\u9152\u85CF",
+          "\u9152\u8535",
+          "\u84B8\u6E9C\u6240",
+          "\u89D2\u6253\u3061"
+        ]
+      },
+      {
+        key: "bar",
+        keywords: [
+          "\u6A6B\u4E01\u9152\u5834",
+          "\u9152\u5834",
+          "\u5C45\u9152\u5C4B",
+          "\u591C\u751F\u6D3B",
+          "\u30D0\u30FC",
+          "bar"
+        ]
+      },
+      {
+        key: "cafe",
+        keywords: [
+          "\u55AB\u8336",
+          "\u5496\u5561",
+          "\u7119\u714E",
+          "coffee",
+          "book cafe"
+        ]
+      },
+      {
+        key: "food",
+        keywords: [
+          "\u725B\u820C",
+          "\u725B\u305F\u3093",
+          "\u5B9A\u98DF",
+          "\u5E02\u5834\u65E9\u9910",
+          "\u751C\u9EDE",
+          "\u9EB5\u98DF",
+          "\u58FD\u53F8",
+          "\u6D77\u9BAE",
+          "\u9910",
+          "\u98DF\u5802",
+          "\u62C9\u9EB5"
+        ]
+      },
+      {
+        key: "market",
+        keywords: [
+          "\u5E02\u5834",
+          "\u671D\u5E02"
+        ]
+      },
+      {
+        key: "vintage",
+        keywords: [
+          "\u53E4\u8457",
+          "\u53E4\u7740",
+          "vintage",
+          "reuse"
+        ]
+      },
+      {
+        key: "record",
+        keywords: [
+          "\u5531\u7247",
+          "\u9ED1\u81A0",
+          "\u30EC\u30B3\u30FC\u30C9",
+          "record"
+        ]
+      },
+      {
+        key: "drugstore",
+        keywords: [
+          "\u85E5\u599D",
+          "\u85E5\u818F",
+          "\u776B\u6BDB\u818F",
+          "\u30DE\u30B9\u30AB\u30E9",
+          "\u85AC\u7528",
+          "\u30C9\u30E9\u30C3\u30B0",
+          "\u677E\u672C\u6E05",
+          "\u30C4\u30EB\u30CF"
+        ]
+      },
+      {
+        key: "outlet",
+        keywords: [
+          "outlet",
+          "\u30A2\u30A6\u30C8\u30EC\u30C3\u30C8"
+        ]
+      },
+      {
+        key: "department",
+        keywords: [
+          "\u767E\u8CA8",
+          "\u8ECA\u7AD9\u5546\u5834",
+          "\u5546\u5834",
+          "S-PAL",
+          "PARCO",
+          "\u4E09\u8D8A",
+          "\u85E4\u5D0E"
+        ]
+      },
+      {
+        key: "electronics",
+        keywords: [
+          "\u96FB\u5668",
+          "\u76F8\u6A5F",
+          "\u6A21\u578B\u73A9\u5177",
+          "Yodobashi",
+          "\u30E8\u30C9\u30D0\u30B7"
+        ]
+      },
+      {
+        key: "arcade",
+        keywords: [
+          "\u5546\u5E97\u8857",
+          "\u62F1\u5ECA",
+          "\u6A6B\u4E01"
+        ]
+      },
+      {
+        key: "gift",
+        keywords: [
+          "\u4F34\u624B\u79AE",
+          "\u548C\u83D3\u5B50",
+          "\u8001\u8216"
+        ]
+      },
+      {
+        key: "store",
+        keywords: [
+          "\u96DC\u8CA8",
+          "\u6587\u5177",
+          "\u7F8E\u599D",
+          "\u9999\u6C34",
+          "\u8DD1\u978B",
+          "\u7403\u978B",
+          "\u904B\u52D5",
+          "\u9078\u54C1",
+          "\u9078\u7269",
+          "\u6B64\u884C\u76EE\u6A19\u54C1",
+          "EDP",
+          "Cloudmonster",
+          "On\uFF08",
+          "Be Delicious"
+        ]
+      },
+      {
+        key: "museum",
+        keywords: [
+          "\u535A\u7269\u9928",
+          "\u7F8E\u8853\u9928",
+          "\u8CC7\u6599\u9928"
+        ]
+      },
+      {
+        key: "garden",
+        keywords: [
+          "\u5EAD\u5712",
+          "\u516C\u5712"
+        ]
+      }
+    ]
+  };
+
+  // src/derive/walkFactor.json
+  var walkFactor_default = {
+    _\u8AAA\u660E: "\u5E97\u578B\u2192\u8173\u7684\u8CA0\u8377\u4FC2\u6578\uFF08profile \xA72.4\uFF0C\u539F\u8A71 #95\u3001#106\u3001#110\u3001#111\u3001#117\uFF09\u3002\u7AD9\u8457\u901B 0\u3001\u6162\u8D70\u53C3\u89C0 0.5\u3001\u8D70\u52D5 1.0\uFF1BwalkAround \u7684\u5927\u5E97 1.0\u3002\u6539\u6578\u5B57\u4E0D\u7528\u6539\u7A0B\u5F0F\u3002",
+    byCategory: {
+      vintage: 0,
+      record: 0,
+      store: 0,
+      drugstore: 0,
+      gift: 0,
+      food: 0,
+      cafe: 0,
+      bar: 0,
+      brewery: 0,
+      onsen: 0,
+      cruise: 0,
+      logistics: 0,
+      shrine: 0.5,
+      temple: 0.5,
+      mausoleum: 0.5,
+      museum: 0.5,
+      garden: 0.5,
+      arcade: 0.5,
+      market: 0.5,
+      event: 0.5,
+      experience: 0.5,
+      daytrip: 0.5,
+      department: 1,
+      electronics: 1,
+      outlet: 1,
+      street: 1,
+      other: 0.5
+    },
+    walkAround: ["department", "electronics", "outlet"],
+    _\u5F85\u78BA\u8A8D: "\u5546\u5E97\u8857\u3001\u5E02\u5834\u3001\u7E01\u65E5\u62BC 0.5 \u4ED6\u7B54\u300C\u53EF\u4EE5\u300D\uFF08#111\uFF09\uFF1B\u66F8\u5E97\u6B78 store \u4F46\u4ED6\u8AAA\u66F8\u5E97\u662F\u6162\u6162\u901B\uFF08#117\uFF09\u2192 \u7814\u7A76\u6A19 category=bookstore \u6642\u8D70 0.5",
+    bookstoreFactor: 0.5
+  };
+
+  // src/derive/recovery.json
+  var recovery_default = {
+    _\u8AAA\u660E: "\u5E97\u578B\u2192\u6062\u5FA9\u7AD9\uFF08\u6709\u5750\u4E0B\u6216\u5403\u559D\uFF0Cprofile \xA72.4 \u6062\u5FA9\uFF09\u8207\u5496\u5561\u5EF3\u985E\uFF08\u5750\u4E0B\u578B\u614B\u662F\u559D\u5496\u5561\uFF0C\u542B\u66F8\u5E97\u5496\u5561\u3001\u6709\u5EA7\u4F4D\u7684\u5496\u5561\u8C46\u5E97\uFF1B#113\u3001#143\uFF09\u3002",
+    recovery: ["food", "cafe", "bar", "brewery", "onsen", "cruise"],
+    cafeLike: ["cafe"],
+    prepNeeded: { onsen: ["\u6BDB\u5DFE", "\u63DB\u6D17\u8863\u7269"] }
+  };
+
+  // src/derive/dwell.json
+  var dwell_default = {
+    _\u8AAA\u660E: "\u5E97\u578B\u2192\u9810\u8A2D\u505C\u7559\u5206\u9418\uFF08DESIGN \xA71.3 \u4E00\u9EDE\u9810\u8A2D 60\uFF1B\u53E4\u8457\u5E97\u6BCF\u5BB6 60 \u662F\u539F\u8A71 #104\uFF1B\u5176\u9918\u9810\u8A2D\uFF09\u3002\u77E5\u8B58\u5EAB\u6709\u5BEB duration \u6642\u512A\u5148\u7528\u5B83\u3002",
+    default: 60,
+    byCategory: {
+      vintage: 60,
+      record: 60,
+      store: 30,
+      drugstore: 15,
+      gift: 20,
+      food: 60,
+      cafe: 60,
+      bar: 90,
+      brewery: 40,
+      onsen: 60,
+      cruise: 50,
+      logistics: 0,
+      shrine: 45,
+      temple: 60,
+      mausoleum: 60,
+      museum: 60,
+      garden: 45,
+      arcade: 45,
+      market: 40,
+      event: 90,
+      experience: 60,
+      daytrip: 180,
+      department: 90,
+      electronics: 60,
+      outlet: 120,
+      street: 30,
+      other: 60
+    }
+  };
+
+  // src/derive/hours.js
+  var DOW3 = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+  var DAY_CHAR = { \u4E00: 0, \u4E8C: 1, \u4E09: 2, \u56DB: 3, \u4E94: 4, \u516D: 5, \u65E5: 6, \u6708: 0, \u706B: 1, \u6C34: 2, \u6728: 3, \u91D1: 4, \u571F: 5 };
+  var RANGE_SEP = "[\uFF5E\u301C~\\-\u2013\u2014]";
+  var TIME = "(\\d{1,2})[:\uFF1A](\\d{2})";
+  var TIME_RANGE = new RegExp(`${TIME}\\s*${RANGE_SEP}\\s*(\u7FCC)?\\s*${TIME}`, "g");
+  var CLOSED_WORD = /(公休|定休|休業|休館|休息|休日|休(?=\s|$|[、，。；）(（]))/;
+  var DAY_TOKEN = "[\u4E00\u4E8C\u4E09\u56DB\u4E94\u516D\u65E5\u6708\u706B\u6C34\u6728\u91D1\u571F]";
+  var pad = (n) => String(n).padStart(2, "0");
+  var hm2 = (h, m) => `${pad(h)}:${pad(m)}`;
+  function stripParens(s) {
+    return String(s ?? "").replace(/[（(【〔[][^）)】〕\]]*[）)】〕\]]/g, " ");
+  }
+  function daysOf(text) {
+    let s = String(text ?? "").replace(/祝前日|祝日|祭日|假日|節日|祝/g, " ").replace(/年中無休|無休|毎日|每日|全日|月～日|月〜日|月~日/g, " ALL ").replace(/平日/g, " WEEKDAY ").replace(/週末|土日|週六日|六日/g, " WEEKEND ");
+    const out = /* @__PURE__ */ new Set();
+    if (/\bALL\b/.test(s)) for (let i = 0; i < 7; i++) out.add(i);
+    if (/\bWEEKDAY\b/.test(s)) [0, 1, 2, 3, 4].forEach((d) => out.add(d));
+    if (/\bWEEKEND\b/.test(s)) [5, 6].forEach((d) => out.add(d));
+    const range = new RegExp(`(?:\u9031|\u6BCE\u9031|\u6BCF\u9031)?(${DAY_TOKEN})(?:\u66DC\u65E5?)?\\s*${RANGE_SEP}\\s*(?:\u9031)?(${DAY_TOKEN})(?:\u66DC\u65E5?)?`, "g");
+    s = s.replace(range, (_, a, b) => {
+      let i = DAY_CHAR[a];
+      const j = DAY_CHAR[b];
+      for (let k = 0; k < 7; k++) {
+        out.add(i);
+        if (i === j) break;
+        i = (i + 1) % 7;
+      }
+      return " ";
+    });
+    s = s.replace(new RegExp(`(?:\u9031|\u6BCE\u9031|\u6BCF\u9031)(${DAY_TOKEN})(?:\u66DC\u65E5?)?`, "g"), (_, a) => {
+      out.add(DAY_CHAR[a]);
+      return " ";
+    });
+    s = s.replace(new RegExp(`(${DAY_TOKEN})\u66DC\u65E5?`, "g"), (_, a) => {
+      out.add(DAY_CHAR[a]);
+      return " ";
+    });
+    s = s.replace(new RegExp(`(?<=[\u30FB\u3001,])\\s*(${DAY_TOKEN})(?!\\p{Script=Han})`, "gu"), (_, a) => {
+      out.add(DAY_CHAR[a]);
+      return " ";
+    });
+    s = s.replace(new RegExp(`(?<!\\p{Script=Han})(${DAY_TOKEN}{2,})(?!\\p{Script=Han})`, "gu"), (_, run) => {
+      for (const ch of run) out.add(DAY_CHAR[ch]);
+      return " ";
+    });
+    return out.size ? out : null;
+  }
+  function rangesOf(text) {
+    const s = String(text ?? "");
+    const out = [];
+    if (/24\s*(時間|小時|h)/i.test(s)) out.push(["00:00", "24:00"]);
+    for (const m of s.matchAll(TIME_RANGE)) {
+      const open = Number(m[1]) * 60 + Number(m[2]);
+      let close = Number(m[4]) * 60 + Number(m[5]);
+      if (m[3] || close <= open) close += 24 * 60;
+      if (close - open <= 0 || close - open > 24 * 60) continue;
+      out.push([hm2(Math.floor(open / 60), open % 60), hm2(Math.floor(close / 60), close % 60)]);
+    }
+    return out;
+  }
+  function parseHoursText(text) {
+    const raw = String(text ?? "").trim();
+    if (!raw) return { hours: null, closedDays: [], note: null, partial: false };
+    const clean = stripParens(raw);
+    const assigned = /* @__PURE__ */ new Map();
+    const closed = /* @__PURE__ */ new Set();
+    let firstRanges = null;
+    let firstScoped = false;
+    let mentionsWeekday = false;
+    let mentionsSat = false;
+    const notes = [];
+    if (/不定休/.test(clean)) notes.push("\u4E0D\u5B9A\u4F11");
+    if (/未確認|兩說|各店不一|衝突|視.*狀況|售完/.test(raw)) notes.push("\u6642\u9593\u6709\u4E0D\u78BA\u5B9A\u7684\u5730\u65B9\uFF0C\u770B\u539F\u6587");
+    for (const clause of clean.split(/[；;。]/)) {
+      let scope = null;
+      for (const rawSeg of clause.split(/[／/、，,]/)) {
+        const seg = rawSeg.trim();
+        if (!seg) continue;
+        const ranges = rangesOf(seg);
+        const at = seg.search(TIME_RANGE);
+        const prefix = ranges.length && at >= 0 ? seg.slice(0, at) : seg;
+        const days = daysOf(prefix);
+        if (/平日/.test(prefix)) mentionsWeekday = true;
+        if (/土|週六|六曜|週末/.test(prefix)) mentionsSat = true;
+        if (!ranges.length) {
+          if (days && CLOSED_WORD.test(seg) && !/無休/.test(seg)) for (const d of days) closed.add(d);
+          continue;
+        }
+        if (days) scope = days;
+        const target = scope ?? /* @__PURE__ */ new Set([0, 1, 2, 3, 4, 5, 6]);
+        if (!firstRanges) {
+          firstRanges = ranges;
+          firstScoped = Boolean(scope);
+        }
+        for (const d of target) assigned.set(d, [...assigned.get(d) ?? [], ...ranges]);
+      }
+    }
+    if (!firstRanges) return { hours: null, closedDays: [...closed].sort().map((d) => DOW3[d]), note: notes.join("\uFF1B") || null, partial: false };
+    if (mentionsWeekday && !mentionsSat && !assigned.has(5)) {
+      const weekday = assigned.get(0) ?? assigned.get(1) ?? assigned.get(2) ?? assigned.get(3) ?? assigned.get(4);
+      if (weekday) assigned.set(5, [...weekday]);
+    }
+    const hours = {};
+    for (let d = 0; d < 7; d++) {
+      const list = closed.has(d) ? [] : assigned.get(d) ?? [];
+      hours[DOW3[d]] = dedupe(list);
+    }
+    const unassigned = DOW3.filter((k, d) => !closed.has(d) && !assigned.has(d));
+    const partial = firstScoped && unassigned.length > 0;
+    if (partial) notes.push(`\u6C92\u5BEB\u5230\u7684\u661F\u671F\uFF08${unassigned.join("\u3001")}\uFF09\u7576\u4F5C\u4F11`);
+    return { hours, closedDays: [...closed].sort().map((d) => DOW3[d]), note: notes.join("\uFF1B") || null, partial };
+  }
+  function dedupe(list) {
+    const seen = /* @__PURE__ */ new Set();
+    const out = [];
+    for (const r of list) {
+      const k = r.join("-");
+      if (!seen.has(k)) {
+        seen.add(k);
+        out.push(r);
+      }
+    }
+    return out.sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]));
+  }
+
+  // src/data/schema.js
+  var DERIVE = { category: category_default, walk: walkFactor_default, recovery: recovery_default, dwell: dwell_default };
+  var CATEGORIES = Object.freeze([
+    "shrine",
+    "temple",
+    "mausoleum",
+    "museum",
+    "garden",
+    "arcade",
+    "market",
+    "event",
+    "experience",
+    "daytrip",
+    "vintage",
+    "record",
+    "store",
+    "bookstore",
+    "drugstore",
+    "gift",
+    "department",
+    "electronics",
+    "outlet",
+    "street",
+    "food",
+    "cafe",
+    "bar",
+    "brewery",
+    "onsen",
+    "cruise",
+    "logistics",
+    "other"
+  ]);
+  function classifyCategory(raw, table = DERIVE.category) {
+    const text = String(raw ?? "").toLowerCase();
+    if (!text) return { key: "other", matched: null };
+    for (const rule of table.rules) {
+      for (const kw of rule.keywords) {
+        if (text.includes(String(kw).toLowerCase())) return { key: rule.key, matched: kw };
+      }
+    }
+    return { key: "other", matched: null };
+  }
+  function parseDurationMin(text) {
+    if (text == null) return null;
+    const s = String(text).replace(/[～~]/g, "-").replace(/[–—]/g, "-");
+    const m = s.match(/(\d+(?:\.\d+)?)(?:\s*-\s*(\d+(?:\.\d+)?))?\s*(小時|時間|hr|h|分鐘|分|min)/i);
+    if (!m) return null;
+    const lo = parseFloat(m[1]);
+    const hi = m[2] ? parseFloat(m[2]) : lo;
+    const unit = /小時|時間|hr|h/i.test(m[3]) ? 60 : 1;
+    const mid = (lo + hi) / 2 * unit;
+    return Math.max(5, Math.round(mid / 5) * 5);
+  }
+  function slugId(poi) {
+    const base = poi.id || poi.name_local || poi.name_zh || poi.name || "";
+    return String(base).trim().toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "") || "poi";
+  }
+  function normalizePoi(raw, { derive = DERIVE } = {}) {
+    const warnings = [];
+    const poi = { ...raw };
+    poi.id = slugId(raw);
+    poi.name_zh = raw.name_zh ?? raw.name ?? raw.name_local ?? poi.id;
+    poi.name_local = raw.name_local ?? raw.name_zh ?? poi.id;
+    const m = String(poi.name_zh ?? "").match(/^([^｜|]{1,24})[｜|]\s*(.+)$/u);
+    if (m && !raw.item) {
+      poi.item = m[1].replace(/^[^\p{L}\p{N}]+/u, "").trim();
+      poi.name_zh = m[2].trim();
+    }
+    let category = raw.category;
+    if (!CATEGORIES.includes(category)) {
+      const { key, matched } = classifyCategory(raw.category, derive.category);
+      poi.categoryRaw = raw.category ?? null;
+      category = key;
+      if (key === "other") warnings.push({ code: "category-unknown", poiId: poi.id, msg: `\u5E97\u578B\u770B\u4E0D\u51FA\u4F86\uFF1A${raw.category ?? "\uFF08\u7A7A\uFF09"}` });
+      else poi.categoryMatched = matched;
+    }
+    poi.category = category;
+    const walk = derive.walk;
+    poi.walkAround = typeof raw.walkAround === "boolean" ? raw.walkAround : walk.walkAround.includes(category);
+    if (typeof raw.walkFactor === "number") poi.walkFactor = raw.walkFactor;
+    else if (poi.walkAround) poi.walkFactor = 1;
+    else if (category === "bookstore") poi.walkFactor = walk.bookstoreFactor;
+    else poi.walkFactor = walk.byCategory[category] ?? walk.byCategory.other;
+    poi.climb = raw.climb === true;
+    poi.climbMin = Number.isFinite(raw.climbMin) ? raw.climbMin : 0;
+    if (poi.climb && poi.climbMin === 0) warnings.push({ code: "climb-no-minutes", poiId: poi.id, msg: "\u6A19\u4E86\u722C\u5761\u4F46\u6C92\u5BEB\u722C\u5761\u5206\u9418\uFF0C\u52A0\u6210\u4E0D\u751F\u6548" });
+    const rec = derive.recovery;
+    poi.recovery = typeof raw.recovery === "boolean" ? raw.recovery : rec.recovery.includes(category) || raw.role === "rest";
+    poi.cafeLike = typeof raw.cafeLike === "boolean" ? raw.cafeLike : rec.cafeLike.includes(category);
+    if (rec.prepNeeded[category] && !Array.isArray(raw.prepNeeded)) poi.prepNeeded = [...rec.prepNeeded[category]];
+    poi.deepDig = raw.deepDig === true;
+    poi.seated = typeof raw.seated === "boolean" ? raw.seated : null;
+    if (Number.isFinite(raw.dwellMin)) poi.dwellMin = raw.dwellMin;
+    else {
+      const parsed = parseDurationMin(raw.duration);
+      poi.dwellMin = parsed ?? derive.dwell.byCategory[category] ?? derive.dwell.default;
+      if (parsed == null && raw.duration) warnings.push({ code: "duration-unparsed", poiId: poi.id, msg: `\u505C\u7559\u6642\u9593\u770B\u4E0D\u61C2\uFF1A${raw.duration}` });
+    }
+    if (raw.hours && typeof raw.hours === "object") poi.hours = raw.hours;
+    else if (typeof (raw.hours ?? raw.hoursRaw) === "string" && String(raw.hours ?? raw.hoursRaw).trim()) {
+      const hoursText = typeof raw.hours === "string" ? raw.hours : raw.hoursRaw;
+      const parsed = parseHoursText(hoursText);
+      poi.hoursRaw = hoursText;
+      poi.hoursNote = parsed.note;
+      if (parsed.hours) {
+        poi.hours = parsed.hours;
+        poi.hoursSource = "text";
+        if (parsed.partial) warnings.push({ code: "hours-partial", poiId: poi.id, msg: `\u71DF\u696D\u6642\u9593\u5F9E\u6587\u5B57\u89E3\u6790\uFF1A${parsed.note}` });
+      } else {
+        poi.hours = null;
+        warnings.push({ code: "hours-missing", poiId: poi.id, msg: "\u71DF\u696D\u6642\u9593\u6587\u5B57\u770B\u4E0D\u51FA\u6642\u6BB5" });
+      }
+    } else {
+      poi.hours = null;
+      warnings.push({ code: "hours-missing", poiId: poi.id, msg: "\u6C92\u6709\u71DF\u696D\u6642\u9593" });
+    }
+    if (!(Number.isFinite(raw.lat) && Number.isFinite(raw.lng))) {
+      poi.lat = null;
+      poi.lng = null;
+      warnings.push({ code: "coords-missing", poiId: poi.id, msg: "\u6C92\u6709\u5EA7\u6A19" });
+    }
+    poi.my = raw.my && typeof raw.my === "object" ? raw.my : {};
+    poi.source = raw.source ?? null;
+    return { poi, warnings };
+  }
+  function normalizeAll(list, options) {
+    const pois = [];
+    const warnings = [];
+    for (const raw of list) {
+      const r = normalizePoi(raw, options);
+      pois.push(r.poi);
+      warnings.push(...r.warnings);
+    }
+    const count = (key) => pois.reduce((m, p) => (m[p[key]] = (m[p[key]] ?? 0) + 1, m), {});
+    return { pois, warnings, stats: { byCategory: count("category"), byWalkFactor: count("walkFactor"), recovery: pois.filter((p) => p.recovery).length, cafeLike: pois.filter((p) => p.cafeLike).length } };
+  }
+
+  // src/data/pack.js
+  var PACK_FORMAT = "trip-pilot-pack";
+  var PACK_VERSION = 1;
+  function readPack(json) {
+    const pack = typeof json === "string" ? JSON.parse(json) : json;
+    if (!pack || pack.meta?.format !== PACK_FORMAT) throw new Error("\u9019\u4E0D\u662F Trip Pilot \u7684\u6253\u5305\u6A94");
+    if (pack.meta.version > PACK_VERSION) throw new Error(`\u6253\u5305\u6A94\u7248\u672C ${pack.meta.version} \u6BD4 App \u65B0\uFF0C\u5148\u66F4\u65B0 App`);
+    if (!pack.trip?.id || !pack.city?.id) throw new Error("\u6253\u5305\u6A94\u7F3A\u65C5\u7A0B\u6216\u57CE\u5E02");
+    const { pois, warnings } = normalizeAll(pack.pois ?? []);
+    return { pack, pois, warnings };
+  }
+
+  // src/data/store.js
+  var dbPromise = null;
+  function openDB() {
+    if (dbPromise) return dbPromise;
+    dbPromise = new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, DB_VERSION);
+      req.onupgradeneeded = (e) => {
+        runMigrations(req.result, e.oldVersion, e.newVersion ?? DB_VERSION);
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+      req.onblocked = () => reject(new Error("\u8CC7\u6599\u5EAB\u88AB\u53E6\u4E00\u500B\u5206\u9801\u64CB\u4F4F\uFF0C\u95DC\u6389\u5176\u4ED6 Trip Pilot \u5206\u9801\u518D\u8A66"));
+    });
+    return dbPromise;
+  }
+  async function tx(mode, storeNames, fn) {
+    const db = await openDB();
+    return new Promise((resolve, reject) => {
+      const t = db.transaction(storeNames, mode);
+      const stores = (Array.isArray(storeNames) ? storeNames : [storeNames]).map((n) => t.objectStore(n));
+      let result;
+      try {
+        result = fn(...stores);
+      } catch (err) {
+        reject(err);
+        return;
+      }
+      t.oncomplete = () => resolve(result instanceof IDBRequest ? result.result : result);
+      t.onerror = () => reject(t.error);
+      t.onabort = () => reject(t.error);
+    });
+  }
+  var channel;
+  function announce(msg) {
+    try {
+      if (channel === void 0) channel = typeof BroadcastChannel === "function" ? new BroadcastChannel("trip-pilot") : null;
+      channel?.postMessage(msg);
+    } catch {
+    }
+  }
+  var listTrips = () => tx("readonly", "trips", (s) => s.getAll());
+  var listPoisByCity = (cityId) => tx("readonly", "pois", (s) => s.index("byCity").getAll(cityId));
+  async function importPack(json) {
+    const { pack, pois, warnings } = readPack(json);
+    const cityId = pack.city.id;
+    await tx("readwrite", ["pois", "trips"], (poiStore, tripStore) => {
+      for (const p of pois) poiStore.put({ ...p, cityId });
+      tripStore.put({ ...pack.trip, cityId, country: pack.country, zones: pack.zones, walk: pack.walk, rules: pack.rules, packMeta: pack.meta, city: pack.city });
+    });
+    announce({ type: "pack", tripId: pack.trip.id });
+    return { tripId: pack.trip.id, poiCount: pois.length, warnings };
+  }
+  async function loadLatestPack() {
+    const trips = await listTrips();
+    if (!trips?.length) return null;
+    const t = [...trips].sort((a, b) => String(b.packMeta?.generatedAt ?? "").localeCompare(String(a.packMeta?.generatedAt ?? "")))[0];
+    const pois = await listPoisByCity(t.cityId);
+    const { cityId, city, country, zones, walk, rules, packMeta, ...trip } = t;
+    return { pack: { meta: packMeta, city: city ?? { id: cityId }, country, zones, walk, trip, rules }, pois };
+  }
+
+  // src/demo/sendai.js
+  var H = (...pairs) => pairs;
+  var everyDay = (list, closed = []) => Object.fromEntries(["mon", "tue", "wed", "thu", "fri", "sat", "sun"].map((d) => [d, closed.includes(d) ? [] : list]));
+  var RAW_POIS = [
+    { name_zh: "\u5BAE\u57CE\u7E23\u8B77\u570B\u795E\u793E", category: "shrine", zoneId: "aoba-castle", duration: "35 \u5206\u9418", hours: everyDay(H(["09:00", "17:00"])), highlight: "\u4ED9\u53F0\u57CE\u672C\u4E38\u8DE1\u4E0A\u7684\u795E\u793E\uFF0C\u5FA1\u5B88\u300C\u5065\u5EB7\u9577\u5BFF\u5B88\u300D\u5B98\u65B9\u9801\u9010\u54C1\u5217\u540D\u3002" },
+    { name_zh: "\u5927\u5D0E\u516B\u5E61\u5BAE", category: "shrine", zoneId: "hachiman", duration: "60 \u5206\u9418", climb: true, climbMin: 3, hours: everyDay(H(["09:00", "16:00"])), highlight: "1607 \u5E74\u4F0A\u9054\u653F\u5B97\u5275\u5EFA\uFF0C\u6B0A\u73FE\u9020\u73FE\u5B58\u6700\u53E4\u5BE6\u4F8B\u3001\u6574\u68DF\u570B\u5BF6\u3002" },
+    { name_zh: "\u305F\u3093\u713C\u304D\u4E00\u9686", category: "food", zoneId: "kokubuncho", duration: "65 \u5206\u9418", hours: everyDay(H(["11:30", "13:30"], ["17:00", "21:00"]), ["sun"]), highlight: "1972 \u5E74\u5275\u696D\u3001\u4F50\u91CE\u5553\u56DB\u90CE\u76F4\u50B3\u7684\u725B\u820C\u76F4\u7CFB\uFF1B\u4E0D\u63A5\u53D7\u8A02\u4F4D\u3002" },
+    { name_zh: "\u73C8\u5DE3\u591A\u5922", category: "cafe", zoneId: "ichibancho", duration: "60 \u5206\u9418", hours: everyDay(H(["12:00", "24:00"]), ["wed"]), highlight: "\u5B9A\u79AA\u5BFA\u901A\u6B05\u6728\u65C1 2F\u3001\u7D04 50 \u5E74\u7684\u81EA\u5BB6\u7119\u714E\u5C08\u9580\u5E97\u3002" },
+    { name_zh: "\u706B\u661F\u306E\u5EAD", category: "cafe", zoneId: "honcho", duration: "75 \u5206\u9418", hours: everyDay(H(["11:00", "18:00"]), ["tue", "wed"]), highlight: "\u672C\u753A\u7684\u4E8C\u624B\u66F8\u5496\u5561\u3002" },
+    { name_zh: "\u55AB\u8336 Elbe", category: "cafe", zoneId: "ichibancho", duration: "60 \u5206\u9418", hours: everyDay(H(["11:30", "17:00"], ["17:30", "21:00"]), ["sun"]), highlight: "\u4E00\u756A\u753A\u5730\u4E0B\u7684\u662D\u548C\u7D14\u55AB\u8336\uFF0C\u540D\u7269\u5869\u5473\u30B9\u30D1\u30B2\u30C3\u30C6\u30A3\u3002" },
+    { name_zh: "\u6C50\u8C37", category: "bar", zoneId: "ichibancho", duration: "90 \u5206\u9418", hours: everyDay(H(["17:00", "23:00"]), ["sun"]), highlight: "\u6587\u5316\u6A2A\u4E01\u53E3\u7684\u65E5\u672C\u9152\u5C0F\u5E97\uFF0C\u592B\u5A66\u4E8C\u4EBA\u7D93\u71DF\u3002" },
+    { name_zh: "\u30C7\u30A3\u30B9\u30AF\u30CE\u30FC\u30C8", category: "record", zoneId: "honcho", duration: "60 \u5206\u9418", hours: everyDay(H(["12:00", "20:00"]), ["wed"]), highlight: "\u672C\u753A\u4E8C\u4E01\u76EE 3F\uFF0C1981 \u5E74\u8D77\u7684\u7235\u58EB\u5C08\u9580\u5531\u7247\u884C\u3002" },
+    { name_zh: "\u963F\u6B66\u9688\u66F8\u623F", category: "bookstore", zoneId: "honcho", duration: "30 \u5206\u9418", hours: everyDay(H(["12:00", "19:00"]), ["mon"]), highlight: "\u672C\u753A\u7684\u820A\u66F8\u5E97\uFF0C\u6536 LP \u8CB7\u53D6\u3002" },
+    { name_zh: "\u677E\u672C\u6E05", category: "drugstore", zoneId: "station", duration: "10 \u5206\u9418", hours: everyDay(H(["08:00", "22:00"])), highlight: "\u30AF\u30EA\u30B9\u30ED\u30FC\u30C9\u7684\u85E5\u599D\uFF0C\u4EE3\u8CFC\u7528\u3002" },
+    { name_zh: "\u304A\u3084\u307E", category: "food", zoneId: "ichibancho", duration: "60 \u5206\u9418", hours: everyDay(H(["11:30", "13:30"], ["17:30", "22:00"]), ["sun"]), highlight: "\u4E00\u756A\u753A\u4E09\u4E01\u76EE\u7684\u70AD\u706B\u725B\u820C\uFF0C\u592B\u5A66\u52A0\u5152\u5B50\u7684\u5C0F\u5E97\u3002" },
+    { name_zh: "Utah", category: "vintage", zoneId: "honcho", duration: "60 \u5206\u9418", hours: everyDay(H(["12:00", "20:00"])), highlight: "\u672C\u753A\u7684\u7F8E\u5F0F\u53E4\u8457\uFF0C\u5E97\u4E3B\u5B9A\u671F\u8D74\u7F8E\u8CB7\u4ED8\u3002" },
+    { name_zh: "me", category: "vintage", zoneId: "honcho", duration: "60 \u5206\u9418", hours: everyDay(H(["12:00", "19:30"]), ["tue"]), highlight: "Utah \u8D70\u5169\u5206\u9418\u7684\u53E4\u8457\u5E97\u3002" },
+    { name_zh: "SQUAT", category: "vintage", zoneId: "honcho", duration: "60 \u5206\u9418", hours: everyDay(H(["11:00", "20:00"])), highlight: "\u672C\u753A\u7684\u53E4\u8457\u5E97\u3002" },
+    { name_zh: "SEGA-RU", category: "vintage", zoneId: "ichibancho", duration: "60 \u5206\u9418", hours: everyDay(H(["12:00", "20:00"]), ["wed"]), highlight: "\u4E00\u756A\u753A\u5317\u6BB5 3F \u7684\u53E4\u8457\u5E97\u3002" },
+    { name_zh: "TRUE VINTAGE", category: "vintage", zoneId: "ichibancho", duration: "60 \u5206\u9418", deepDig: true, hours: everyDay(H(["11:00", "20:00"])), highlight: "\u4E00\u756A\u753A\u5357\u7AEF\uFF0C\u85CF\u91CF\u5927\u7684\u53E4\u8457\u5E97\u3002" },
+    { name_zh: "\u661F\u5C71\u73C8\u7432\u5E97", category: "cafe", zoneId: "ichibancho", duration: "60 \u5206\u9418", hours: everyDay(H(["10:00", "22:00"])), highlight: "\u4E00\u756A\u753A\u56DB\u4E01\u76EE 3F\uFF0C\u677E\u672C\u6C11\u85DD\u5BB6\u5177\u8207\u53E4\u8463\u676F\u7684\u55AB\u8336\u3002" },
+    { name_zh: "\u6587\u5316\u6A2A\u4E01 \u5C0F\u9152\u5834", category: "bar", zoneId: "ichibancho", duration: "90 \u5206\u9418", hours: everyDay(H(["17:00", "24:00"])), highlight: "\u6587\u5316\u6A2A\u4E01\u8207\u58F1\u5F10\u53C2\u6A2A\u4E01\u7684\u5C0F\u9152\u5834\u5DE1\u79AE\u3002" },
+    { name_zh: "\u30D0\u30F3\u30B6\u30A4", category: "bar", zoneId: "ichibancho", duration: "90 \u5206\u9418", hours: everyDay(H(["17:00", "23:00"]), ["fri", "sat", "sun"]), highlight: "\u4E00\u756A\u753A\u4E09\u4E01\u76EE\u6A6B\u5DF7 3F \u7684\u9ED1\u81A0 bar\uFF0C\u5BA2\u4EBA\u9EDE\u64AD\u3002" }
+  ];
+  var POIS = Object.fromEntries(RAW_POIS.map((r) => {
+    const { poi } = normalizePoi(r);
+    return [poi.name_zh, poi];
+  }));
+  var HOME = { id: "home", name_zh: "Comfort Hotel \u4ED9\u53F0\u897F\u53E3", zoneId: "station" };
+  var KB = { zones: { station: { environment: "urban" }, ichibancho: { environment: "urban" }, honcho: { environment: "urban" }, kokubuncho: { environment: "urban" }, "aoba-castle": { environment: "urban" }, hachiman: { environment: "urban" } } };
+  var COUNTRY = { mealSlots: { lunch: ["11:30", "13:30"], dinner: ["18:00", "20:30"] }, nightSlot: ["20:00", "24:00"], climate: { summerMonths: [6, 7, 8, 9] } };
+  var WALK = { station: { ichibancho: 12, honcho: 15, kokubuncho: 15 }, ichibancho: { honcho: 8, kokubuncho: 6 }, honcho: { kokubuncho: 10 } };
+  var RIDE = { station: { "aoba-castle": { ride: 25, walk: 8 }, hachiman: { ride: 30, walk: 5 } }, "aoba-castle": { hachiman: { ride: 15, walk: 5 }, ichibancho: { ride: 20, walk: 5 } }, hachiman: { ichibancho: { ride: 20, walk: 5 }, kokubuncho: { ride: 20, walk: 5 } } };
+  function legFn(from, to) {
+    const a = from.zoneId;
+    const b = to.zoneId;
+    if (a === b) return { walkMin: a === "ichibancho" ? 8 : 5, rideMin: 0, climbMin: 0 };
+    const r = RIDE[a]?.[b] ?? RIDE[b]?.[a];
+    if (r) return { walkMin: r.walk, rideMin: r.ride, climbMin: 0 };
+    const w = WALK[a]?.[b] ?? WALK[b]?.[a];
+    if (w != null) return { walkMin: w, rideMin: 0, climbMin: 0 };
+    return { walkMin: 20, rideMin: 0, climbMin: 0 };
+  }
+  var DAY_0813 = { date: "2026-08-13", type: "normal", earlyDay: false, party: 1, dayTripNext: false, themeCategory: null, prevThemeCategory: null, anchorPoiId: POIS["\u5927\u5D0E\u516B\u5E61\u5BAE"].id, anchorName: "\u5927\u5D0E\u516B\u5E61\u5BAE", designated: [POIS["\u5BAE\u57CE\u7E23\u8B77\u570B\u795E\u793E"].id], regionZones: ["station", "ichibancho", "honcho", "kokubuncho", "aoba-castle", "hachiman"], window: { startMin: 9 * 60, endMin: 24 * 60 } };
+  var DAY_0817 = { date: "2026-08-17", type: "normal", earlyDay: false, party: 1, dayTripNext: true, themeCategory: "vintage", prevThemeCategory: null, anchorPoiId: POIS.Utah.id, anchorName: "Utah", designated: [POIS["\u304A\u3084\u307E"].id, POIS["\u30D0\u30F3\u30B6\u30A4"].id], regionZones: ["station", "ichibancho", "honcho", "kokubuncho"], window: { startMin: 11 * 60, endMin: 24 * 60 } };
+  var CANDS_0813 = [
+    { poi: POIS["\u5927\u5D0E\u516B\u5E61\u5BAE"], priority: "must", isAnchor: true },
+    { poi: POIS["\u5BAE\u57CE\u7E23\u8B77\u570B\u795E\u793E"], priority: "must", designated: true },
+    { poi: POIS["\u305F\u3093\u713C\u304D\u4E00\u9686"], priority: "want" },
+    { poi: POIS["\u73C8\u5DE3\u591A\u5922"], priority: "want" },
+    { poi: POIS["\u706B\u661F\u306E\u5EAD"], priority: "maybe" },
+    { poi: POIS["\u55AB\u8336 Elbe"], priority: "want" },
+    { poi: POIS["\u6C50\u8C37"], priority: "want" },
+    { poi: POIS["\u30C7\u30A3\u30B9\u30AF\u30CE\u30FC\u30C8"], priority: "maybe" },
+    { poi: POIS["\u963F\u6B66\u9688\u66F8\u623F"], priority: "maybe" }
+  ];
+  var CANDS_0817 = [
+    { poi: POIS["\u677E\u672C\u6E05"], priority: "want" },
+    { poi: POIS["\u304A\u3084\u307E"], priority: "must", designated: true },
+    { poi: POIS.Utah, priority: "must", isAnchor: true },
+    { poi: POIS.me, priority: "want" },
+    { poi: POIS.SQUAT, priority: "maybe" },
+    { poi: POIS["SEGA-RU"], priority: "want" },
+    { poi: POIS["TRUE VINTAGE"], priority: "maybe" },
+    { poi: POIS["\u661F\u5C71\u73C8\u7432\u5E97"], priority: "want" },
+    { poi: POIS["\u6587\u5316\u6A2A\u4E01 \u5C0F\u9152\u5834"], priority: "want" },
+    { poi: POIS["\u30D0\u30F3\u30B6\u30A4"], priority: "must", designated: true }
+  ];
+  function demoTrip() {
+    const pick = (c) => ({ poiId: c.poi.id, priority: c.priority });
+    return {
+      id: "demo-sendai-2026-08",
+      cityId: "sendai",
+      name: "\u4ED9\u53F0\u793A\u7BC4\uFF088/13\u30018/17\uFF09",
+      party: 1,
+      homeBases: [{ poi: HOME }],
+      days: [
+        { date: "2026-08-13", type: "normal", anchor: { poiId: POIS["\u5927\u5D0E\u516B\u5E61\u5BAE"].id }, designated: [POIS["\u5BAE\u57CE\u7E23\u8B77\u570B\u795E\u793E"].id], picks: CANDS_0813.map(pick) },
+        { date: "2026-08-17", type: "normal", anchor: { theme: "vintage", poiIds: [POIS.Utah.id] }, designated: [POIS["\u304A\u3084\u307E"].id, POIS["\u30D0\u30F3\u30B6\u30A4"].id], picks: CANDS_0817.map(pick) }
+      ]
+    };
+  }
+
+  // src/ui/planner.js
+  function renderPlanner({ state: state2, actions }) {
+    const nodes = [el("h1", { text: state2.trip.name ?? TEXT.appName })];
+    for (const d of state2.trip.days) {
+      const planned = state2.plans[d.date];
+      if (!planned) continue;
+      nodes.push(dayBlock(d, planned, state2, actions));
+    }
+    return nodes;
+  }
+  function dayBlock(d, planned, state2, actions) {
+    const { plan, day } = planned;
+    const anchorLine = day.themeCategory ? `${TEXT.themeOf(day.themeCategory)}\uFF0C${TEXT.anchorOf(day.anchorName)}` : TEXT.anchorOf(day.anchorName);
+    const dayWarnings = plan.warnings.filter((w) => !w.poiId && w.code !== "skipped-missing");
+    const block = el("section", { class: "day" }, [
+      el("header", { class: "day-head" }, [el("h2", { text: dateLabel(d.date) }), el("p", { class: "muted", text: anchorLine })]),
+      el("p", { class: "muted small", text: TEXT.dayScore(plan.score, plan.penaltyMin) }),
+      firstLegLine(plan, d, state2)
+    ]);
+    plan.sequence.forEach((s, i) => block.append(stopCard(s, i, plan, d, state2, actions)));
+    if (dayWarnings.length) block.append(el("ul", { class: "warn-list" }, dayWarnings.map((w) => el("li", { text: w.msg }))));
+    if (plan.dropped.length) {
+      block.append(el("details", { class: "dropped" }, [
+        el("summary", { text: `${TEXT.dropped}\uFF1A${plan.dropped.length}` }),
+        el("ul", {}, plan.dropped.map((x) => el("li", {}, [el("strong", { text: x.poi.name_zh }), ` ${x.reason}`])))
+      ]));
+    }
+    return block;
+  }
+  function firstLegLine(plan, d, state2) {
+    const first = plan.sequence[0];
+    if (!first) return null;
+    const leg = state2.legFn(resolveHome(state2.trip, d.date), first.poi);
+    const legText = leg.rideMin > 0 ? TEXT.rideTo(leg.walkMin, leg.rideMin) : TEXT.walkTo(leg.walkMin);
+    const travel = (leg.walkMin ?? 0) + (leg.rideMin ?? 0) + (leg.waitMin ?? 0);
+    return el("p", { class: "leg muted small", text: `\u2193 ${TEXT.firstLeg(hm(first.arriveMin - travel), legText)}${waitText(first)}` });
+  }
+  function waitText(stop) {
+    return stop?.waitMin > 5 ? `\uFF0C${TEXT.waitOpen(stop.waitMin)}` : "";
+  }
+  function stopCard(s, i, plan, d, state2, actions) {
+    const poi = s.poi;
+    const next = plan.sequence[i + 1];
+    const legNext = next ? state2.legFn(poi, next.poi) : null;
+    const closes = closeHm(poi, d.date);
+    const warns = plan.warnings.filter((w) => w.poiId === poi.id && w.code !== "skipped-missing");
+    const card = el("article", { class: `card${s.isAnchor ? " anchor" : ""}${poi.recovery ? " rest" : ""}` }, [
+      el("div", { class: "row" }, [
+        el("span", { class: "time", text: `${hm(s.startMin)}\u2013${hm(s.endMin)}` }),
+        el("span", { class: "cat", text: CATEGORY[poi.category] ?? "" }),
+        poi.item ? el("span", { class: "cat item", text: poi.item }) : null
+      ]),
+      el("h3", { text: poi.name_zh }),
+      el("p", { class: "muted small", text: [poi.guide?.intro ?? poi.highlight ?? "", closes ? TEXT.closesAt(closes) : ""].filter(Boolean).join("\u3000") }),
+      warns.length ? el("ul", { class: "warn-list" }, warns.map((w) => el("li", { text: w.msg }))) : null,
+      el("div", { class: "actions" }, [
+        el("button", { class: "btn", type: "button", onclick: () => toggleSwap(card, s, plan, d, state2, actions) }, TEXT.swap),
+        s.designated || s.isAnchor ? null : el("button", { class: "btn quiet", type: "button", onclick: () => actions.removeStop(d.date, poi.id) }, TEXT.remove)
+      ])
+    ]);
+    if (legNext) {
+      const legText = legNext.rideMin > 0 ? TEXT.rideTo(legNext.walkMin, legNext.rideMin) : TEXT.walkTo(legNext.walkMin);
+      card.append(el("p", { class: "leg muted small", text: `\u2193 ${legText}${waitText(next)}` }));
+    }
+    return card;
+  }
+  function toggleSwap(card, s, plan, d, state2, actions) {
+    const existing = card.querySelector(".swap-list");
+    if (existing) {
+      existing.remove();
+      return;
+    }
+    const cands = swapCandidates({ plan, stopId: s.poi.id, pool: state2.pool, legFn: state2.legFn, date: d.date, settings: state2.settings });
+    const list = el("div", { class: "swap-list" });
+    if (!cands.length) list.append(el("p", { class: "muted small", text: TEXT.noSwap }));
+    for (const c of cands.slice(0, 6)) {
+      list.append(el("button", { class: "btn alt", type: "button", onclick: () => actions.swapStop(d.date, s.poi.id, c.poi) }, [
+        el("strong", { text: c.poi.name_zh }),
+        ` \xB7 ${TEXT.swapNote(c.detourMin)}`,
+        c.open === null ? ` \xB7 ${TEXT.openUnknown}` : ""
+      ]));
+    }
+    card.append(list);
+  }
+  function closeHm(poi, date) {
+    const iv = openIntervals(poi, date);
+    if (!iv || !iv.length) return null;
+    return hm(Math.max(...iv.map(([, c]) => c)));
+  }
+
+  // src/strategies/compress.js
+  var compress_default = {
+    id: "compress",
+    label: "\u6BCF\u7AD9\u7E2E\u77ED\u4E00\u9EDE",
+    apply({ remaining, settings }) {
+      const factor = settings.compressFactor ?? 0.75;
+      const minDwell = settings.compressMinDwell ?? 20;
+      const changes = [];
+      const candidates = remaining.map((c) => {
+        if (c.priority === "must") return c;
+        const base = c.dwellMin ?? c.poi.dwellMin ?? settings.defaultDwellMin ?? 60;
+        const dwellMin = Math.max(minDwell, Math.round(base * factor / 5) * 5);
+        if (dwellMin !== base) changes.push({ poiId: c.poi.id, from: base, to: dwellMin });
+        return { ...c, dwellMin };
+      });
+      return { candidates, changes, note: `\u5269\u4E0B\u7684\u7AD9\u5404\u7E2E\u77ED\u5230\u7D04 ${Math.round(factor * 100)}%\uFF0C\u6307\u5B9A\u7684\u4E0D\u7E2E` };
+    }
+  };
+
+  // src/strategies/cut-tail.js
+  var cut_tail_default = {
+    id: "cut-tail",
+    label: "\u585E\u4E0D\u4E0B\u7684\u780D\u6389",
+    apply({ remaining }) {
+      return { candidates: remaining, changes: [], note: "\u505C\u7559\u4E0D\u8B8A\uFF0C\u6392\u4E0D\u9032\u7684\u7AD9\u7531\u5F8C\u5F80\u524D\u780D\uFF0C\u6307\u5B9A\u7684\u6700\u5F8C\u624D\u52D5" };
+    }
+  };
+
+  // src/strategies/swap-alt.js
+  var swap_alt_default = {
+    id: "swap-alt",
+    label: "\u6700\u9060\u7684\u90A3\u7AD9\u63DB\u5099\u6848",
+    apply({ remaining, here, legFn: legFn2, pool = [] }) {
+      const byId = new Map(pool.map((c) => [c.poi.id, c]));
+      let farthest = null;
+      let farMin = -1;
+      for (const c of remaining) {
+        if (c.priority === "must" || !Array.isArray(c.poi.alternatives) || !c.poi.alternatives.length) continue;
+        const leg = legFn2(here, c.poi);
+        const min = (leg.walkMin ?? 0) + (leg.rideMin ?? 0);
+        if (min > farMin) {
+          farMin = min;
+          farthest = c;
+        }
+      }
+      if (!farthest) return null;
+      let best = null;
+      let bestMin = Infinity;
+      for (const altId of farthest.poi.alternatives) {
+        const alt = byId.get(altId);
+        if (!alt || remaining.some((c) => c.poi.id === altId)) continue;
+        const leg = legFn2(here, alt.poi);
+        const min = (leg.walkMin ?? 0) + (leg.rideMin ?? 0);
+        if (min < bestMin) {
+          bestMin = min;
+          best = alt;
+        }
+      }
+      if (!best) return null;
+      const candidates = remaining.map((c) => c === farthest ? { ...best, priority: farthest.priority } : c);
+      return { candidates, changes: [{ from: farthest.poi.id, to: best.poi.id }], note: `${farthest.poi.name_zh} \u63DB\u6210\u6BD4\u8F03\u8FD1\u7684 ${best.poi.name_zh}` };
+    }
+  };
+
+  // src/strategies/move-day.js
+  var move_day_default = {
+    id: "move-day",
+    label: "\u5E7E\u7AD9\u632A\u5230\u5225\u5929",
+    apply({ remaining }) {
+      const movable = remaining.filter((c) => c.priority !== "must" && Array.isArray(c.poi.otherDaysOpen) && c.poi.otherDaysOpen.length);
+      if (!movable.length) return null;
+      const order = { maybe: 0, want: 1 };
+      const toMove = [...movable].sort((a, b) => (order[a.priority] ?? 2) - (order[b.priority] ?? 2)).slice(0, Math.max(1, Math.floor(movable.length / 2)));
+      const movedIds = new Set(toMove.map((c) => c.poi.id));
+      return {
+        candidates: remaining.filter((c) => !movedIds.has(c.poi.id)),
+        changes: toMove.map((c) => ({ poiId: c.poi.id, toDays: c.poi.otherDaysOpen })),
+        note: `${toMove.map((c) => c.poi.name_zh).join("\u3001")} \u632A\u5230\u5225\u5929\uFF0C\u4ECA\u5929\u7559\u767D`
+      };
+    }
+  };
+
+  // src/strategies/slow-down.js
+  function restSoon(candidates, day, nowMin, soonMin) {
+    const at = nowMin + soonMin;
+    return candidates.some((c) => {
+      if (!c.poi.recovery) return false;
+      const iv = openIntervals(c.poi, day?.date);
+      if (iv === null) return true;
+      return iv.some(([o, cl]) => at >= o && at < cl);
+    });
+  }
+  var slow_down_default = {
+    id: "slow-down",
+    label: "\u5148\u5750\u4E00\u4E0B\uFF0C\u5C11\u8D70\u8DEF",
+    apply({ remaining, here, legFn: legFn2, pool = [], settings, day, nowMin = 0 }) {
+      const changes = [];
+      let candidates = remaining.filter((c) => {
+        const keep = c.priority === "must" || (c.poi.walkFactor ?? 0) < 0.5 || c.poi.recovery;
+        if (!keep) changes.push({ poiId: c.poi.id, action: "cut", why: "\u8981\u8D70\u8DEF\u7684\u7AD9" });
+        return keep;
+      });
+      const hasRest = restSoon(candidates, day, nowMin, settings.restSoonMin ?? 30);
+      if (!hasRest) {
+        const rests = pool.filter((c) => c.poi.recovery && !remaining.some((r) => r.poi.id === c.poi.id));
+        let pick = null;
+        let pickMin = Infinity;
+        for (const c of rests) {
+          const leg = legFn2(here, c.poi);
+          const min = (leg.walkMin ?? 0) + (leg.rideMin ?? 0) - (c.poi.cafeLike ? 5 : 0);
+          if (min < pickMin) {
+            pickMin = min;
+            pick = c;
+          }
+        }
+        if (pick) {
+          candidates = [{ ...pick, priority: "want", insertedBy: "engine", dwellMin: pick.dwellMin ?? Math.max(settings.restResetMin ?? 30, 30) }, ...candidates];
+          changes.push({ poiId: pick.poi.id, action: "insert-rest" });
+        }
+      }
+      return {
+        candidates,
+        changes,
+        settingsPatch: { maxShopRunCount: Math.max(1, Math.floor((settings.maxShopRunCount ?? 4) / 2)), maxShopRunMin: Math.floor((settings.maxShopRunMin ?? 240) / 2) },
+        note: hasRest ? "\u780D\u6389\u8981\u8D70\u8DEF\u7684\u7AD9\uFF0C\u901B\u5E97\u4E5F\u5C11\u4E00\u534A" : "\u5148\u627E\u6700\u8FD1\u7684\u5730\u65B9\u5750\u4E00\u4E0B\uFF0C\u518D\u780D\u6389\u8981\u8D70\u8DEF\u7684\u7AD9"
+      };
+    }
+  };
+
+  // src/strategies/index.js
+  var STRATEGIES = Object.freeze([compress_default, cut_tail_default, swap_alt_default, move_day_default, slow_down_default]);
+  function replanDay(input) {
+    const { strategies = STRATEGIES, options = {} } = input;
+    const top = options.top ?? 3;
+    const proposals = [];
+    for (const s of strategies) {
+      let out;
+      try {
+        out = s.apply(input);
+      } catch (err) {
+        continue;
+      }
+      if (!out) continue;
+      const day = { ...input.day, ...out.dayPatch ?? {}, window: { ...input.day.window, startMin: input.nowMin, ...out.dayPatch?.window ?? {} } };
+      const settings = { ...input.settings, ...out.settingsPatch ?? {} };
+      const plan = planDay({ candidates: out.candidates, day, home: input.here, legFn: input.legFn, rules: input.rules, settings, country: input.country, kb: input.kb, options: { maxMs: options.maxMs ?? 300 } });
+      proposals.push({ id: s.id, label: s.label, note: out.note, changes: out.changes ?? [], plan });
+    }
+    const seen = /* @__PURE__ */ new Set();
+    const unique = proposals.filter((p) => {
+      const key = p.plan.sequence.map((x) => x.poi.id).join(">");
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    unique.sort((a, b) => b.plan.score - a.plan.score);
+    return { proposals: unique.slice(0, top), all: proposals };
+  }
+
+  // src/ui/now.js
+  function renderNow({ state: state2, actions }) {
+    const f = state2.field;
+    const dates = state2.trip.days.map((d) => d.date);
+    const date = dates.includes(f.date) ? f.date : dates[0];
+    const planned = state2.plans[date];
+    const seq = planned?.plan.sequence ?? [];
+    const simulate = f.simulate || date !== todayStr();
+    const nowMin = simulate ? f.simNowMin ?? planned?.day.window.startMin ?? 540 : nowMinutes();
+    const idx = Math.min(f.index ?? 0, seq.length);
+    const next = seq[idx] ?? null;
+    const prev = idx > 0 ? seq[idx - 1] : null;
+    const nodes = [];
+    nodes.push(el("div", { class: "row top" }, [
+      el("label", { class: "muted small" }, [TEXT.pickDay, " ", el("select", { onchange: (e) => actions.setField({ date: e.target.value, index: 0 }) }, dates.map((dt) => el("option", { value: dt, selected: dt === date }, dateLabel(dt))))]),
+      el("button", { class: `btn quiet${simulate ? " on" : ""}`, type: "button", onclick: () => actions.setField({ simulate: !f.simulate, simNowMin: planned?.day.window.startMin ?? 540 }) }, simulate ? TEXT.simOff : TEXT.simulate)
+    ]));
+    if (simulate) {
+      nodes.push(el("div", { class: "row sim" }, [
+        el("span", { class: "time big", text: hm(nowMin) }),
+        el("button", { class: "btn", type: "button", onclick: () => actions.setField({ simNowMin: nowMin + 15 }) }, TEXT.simPlus(15)),
+        el("button", { class: "btn", type: "button", onclick: () => actions.setField({ simNowMin: nowMin + 60 }) }, TEXT.simPlus(60)),
+        el("button", { class: "btn quiet", type: "button", onclick: () => actions.setField({ simNowMin: planned?.day.window.startMin ?? 540, index: 0 }) }, TEXT.simReset)
+      ]));
+    }
+    if (!next) {
+      nodes.push(el("section", { class: "card big" }, [el("h2", { text: TEXT.dayDone })]));
+      return nodes;
+    }
+    const from = prev ? prev.poi : resolveHome(state2.trip, date);
+    const leg = state2.legFn(from, next.poi);
+    const legText = leg.rideMin > 0 ? TEXT.rideTo(leg.walkMin, leg.rideMin) : TEXT.walkTo(leg.walkMin);
+    const closes = closeMin(next.poi, date);
+    const lateMin = nowMin + leg.walkMin + leg.rideMin - next.startMin;
+    const arriveMin = nowMin + leg.walkMin + leg.rideMin;
+    const threatened = closes != null && arriveMin + Math.min(next.dwellMin, 30) > closes;
+    const status = lateMin > (state2.settings.lateThresholdMin ?? 15) ? TEXT.late(lateMin) : lateMin < -5 ? TEXT.early(-lateMin) : "";
+    nodes.push(el("section", { class: "card big next" }, [
+      el("p", { class: "muted small", text: TEXT.nextStop + (status ? `\u3000${status}` : "") }),
+      el("h2", { text: next.poi.name_zh }),
+      el("p", { class: "big-line", text: `${legText}${closes != null ? `\u3000${TEXT.closesAt(hm(closes))}` : ""}` }),
+      el("p", { class: "muted small", text: `${hm(next.startMin)} \u5230\uFF0C\u5F85 ${next.dwellMin} \u5206` }),
+      next.insertedBy === "engine" ? el("p", { class: "muted small", text: TEXT.restInserted }) : null
+    ]));
+    if (threatened) nodes.push(proposalsBlock({ state: state2, actions, date, planned, seq, idx, nowMin, next, closes }));
+    nodes.push(el("button", { class: "btn primary huge", type: "button", onclick: () => leave({ state: state2, actions, seq, idx, prev: next }) }, TEXT.leaveNow));
+    nodes.push(el("details", { class: "resync" }, [
+      el("summary", { text: TEXT.arrivedHere }),
+      el("div", { class: "list" }, seq.map((s, i) => el("button", { class: "btn alt", type: "button", onclick: () => actions.setField({ index: i }) }, `${hm(s.startMin)} ${s.poi.name_zh}`)))
+    ]));
+    return nodes;
+  }
+  function leave({ state: state2, actions, seq, idx, prev }) {
+    const root = document.getElementById("app");
+    const box = el("div", { class: "sheet" }, [
+      el("h3", { text: TEXT.rateTitle(prev.poi.name_zh) }),
+      el("div", { class: "stars" }, [1, 2, 3, 4, 5, 6].map((n) => el("button", { class: "btn star", type: "button", onclick: () => done(n) }, `${n} ${TEXT.stars[n]}`))),
+      el("button", { class: "btn quiet", type: "button", onclick: () => done(null) }, TEXT.rateSkip)
+    ]);
+    root.append(box);
+    function done(rating) {
+      const ratings = { ...state2.field.ratings ?? {} };
+      if (rating) ratings[prev.poi.id] = { rating, at: (/* @__PURE__ */ new Date()).toISOString() };
+      else ratings[prev.poi.id] = { skipped: true, at: (/* @__PURE__ */ new Date()).toISOString() };
+      actions.setField({ index: idx + 1, ratings });
+    }
+  }
+  function proposalsBlock({ state: state2, actions, date, planned, seq, idx, nowMin, next, closes }) {
+    const remaining = seq.slice(idx).map((s) => ({ poi: s.poi, priority: s.priority ?? "want", dwellMin: s.dwellMin, designated: s.designated, isAnchor: s.isAnchor, fixedWindow: s.fixedWindow }));
+    const here = idx > 0 ? seq[idx - 1].poi : resolveHome(state2.trip, date);
+    const { proposals } = replanDay({ day: planned.day, remaining, here, nowMin, rules: state2.rules, settings: state2.settings, country: state2.country, kb: state2.kb, legFn: state2.legFn, pool: state2.pool });
+    const block = el("section", { class: "card warn" }, [
+      el("p", { class: "warn-line", text: TEXT.hardLimit(next.poi.name_zh, hm(closes)) }),
+      el("h3", { text: TEXT.proposals })
+    ]);
+    for (const p of proposals) {
+      block.append(el("div", { class: "proposal" }, [
+        el("strong", { text: p.label }),
+        el("span", { class: "muted small", text: `\u3000${p.note}` }),
+        el("p", { class: "small", text: p.plan.sequence.map((s) => `${hm(s.startMin)} ${s.poi.name_zh}`).join(" \u2192 ") || "\uFF08\u4ECA\u5929\u5230\u6B64\u70BA\u6B62\uFF09" }),
+        el("button", { class: "btn", type: "button", onclick: () => applyProposal({ state: state2, actions, date, planned, idx, proposal: p }) }, TEXT.takeThis)
+      ]));
+    }
+    return block;
+  }
+  function applyProposal({ state: state2, actions, date, planned, idx, proposal }) {
+    const done = planned.plan.sequence.slice(0, idx);
+    planned.plan = { ...proposal.plan, sequence: [...done, ...proposal.plan.sequence] };
+    actions.setField({ index: idx });
+  }
+  function closeMin(poi, date) {
+    const iv = openIntervals(poi, date);
+    if (!iv || !iv.length) return null;
+    return Math.max(...iv.map(([, c]) => c));
+  }
+
+  // src/ui/settings.js
+  function renderSettings({ state: state2, actions }) {
+    const d = state2.device;
+    const s = state2.settings;
+    const num2 = (label, key, value, step = 15) => el("label", { class: "field" }, [
+      el("span", { text: label }),
+      el("input", { type: "number", inputmode: "numeric", min: 0, step, value, onchange: (e) => actions.saveDevice({ [key]: Number(e.target.value) }) })
+    ]);
+    const meta = state2.packMeta;
+    const packLine = meta ? TEXT.lastPack(meta.tripName ?? meta.tripId ?? "", meta.generatedAt) : TEXT.noPack;
+    return [
+      el("h1", { text: TEXT.tabs.settings }),
+      el("section", { class: "group" }, [
+        el("h2", { text: TEXT.packSection }),
+        el("p", { class: "muted small", text: packLine }),
+        el("label", { class: "field" }, [
+          el("span", { text: TEXT.packUrl }),
+          el("input", { type: "url", inputmode: "url", autocapitalize: "off", autocorrect: "off", spellcheck: "false", value: d.packUrl ?? "", placeholder: "https://\u2026/trip-pilot/pack.json", onchange: (e) => actions.saveDevice({ packUrl: e.target.value.trim() }) })
+        ]),
+        el("div", { class: "actions" }, [
+          el("button", { class: "btn primary", type: "button", onclick: () => actions.updateFromUrl() }, TEXT.update),
+          el("label", { class: "btn" }, [
+            TEXT.importFile,
+            el("input", { type: "file", accept: ".json,application/json", class: "hidden-input", onchange: (e) => {
+              const f = e.target.files?.[0];
+              if (f) actions.importFile(f);
+              e.target.value = "";
+            } })
+          ])
+        ]),
+        state2.packStatus ? el("p", { class: "small status", text: state2.packStatus }) : null
+      ]),
+      el("section", { class: "group" }, [
+        el("h2", { text: TEXT.settingsTitle }),
+        num2(TEXT.walkBudget, "walkBudgetMin", d.walkBudgetMin ?? s.walkBudgetMin),
+        num2(TEXT.openSlot, "openSlotMinPerDay", d.openSlotMinPerDay ?? s.openSlotMinPerDay),
+        el("label", { class: "field" }, [
+          el("span", { text: TEXT.departHM }),
+          el("input", { type: "time", value: d.departHM ?? s.dayWindow[0], onchange: (e) => actions.saveDevice({ departHM: e.target.value }) })
+        ]),
+        el("label", { class: "field row" }, [
+          el("span", { text: TEXT.nightSlot }),
+          el("input", { type: "checkbox", checked: d.nightSlotOn !== false, onchange: (e) => actions.saveDevice({ nightSlotOn: e.target.checked }) })
+        ])
+      ])
+    ];
+  }
+
+  // src/ui/pool.js
+  function renderPool({ state: state2 }) {
+    const plannedOn = /* @__PURE__ */ new Map();
+    for (const [date, d] of Object.entries(state2.plans)) for (const s of d.plan.sequence) plannedOn.set(s.poi.id, date);
+    const groups = /* @__PURE__ */ new Map();
+    for (const c of state2.pool) {
+      const cat = c.poi.category;
+      if (!groups.has(cat)) groups.set(cat, []);
+      groups.get(cat).push(c.poi);
+    }
+    const nodes = [el("h1", { text: TEXT.poolTitle })];
+    for (const [cat, list] of groups) {
+      nodes.push(el("section", { class: "group" }, [
+        el("h2", { text: `${CATEGORY[cat] ?? cat}\uFF08${list.length}\uFF09` }),
+        el("ul", { class: "plain" }, list.map((p) => {
+          const on = plannedOn.get(p.id);
+          return el("li", {}, [p.item ? el("span", { class: "cat item", text: p.item }) : null, el("strong", { text: p.name_zh }), el("span", { class: "muted small", text: `\u3000${on ? TEXT.plannedOn(dateLabel(on)) : TEXT.notPlanned}` })]);
+        }))
+      ]));
+    }
+    return nodes;
+  }
+
+  // src/ui/app.js
+  var SETTINGS_KEY = "trip-pilot:settings";
+  var FIELD_KEY = "trip-pilot:field";
+  var state = {
+    trip: null,
+    pois: {},
+    country: null,
+    kb: null,
+    legFn: null,
+    rules: null,
+    settings: null,
+    plans: {},
+    pool: [],
+    packRules: null,
+    packMeta: null,
+    packStatus: "",
+    route: "#/plan",
+    device: loadJSON(SETTINGS_KEY, {}),
+    field: loadJSON(FIELD_KEY, { date: null, index: 0, simulate: false, simNowMin: null, ratings: {} })
+  };
+  function loadJSON(key, fallback) {
+    try {
+      const v = JSON.parse(localStorage.getItem(key) ?? "null");
+      return v ?? fallback;
+    } catch {
+      return fallback;
+    }
+  }
+  function saveJSON(key, v) {
+    try {
+      localStorage.setItem(key, JSON.stringify(v));
+    } catch {
+    }
+  }
+  function buildSettings() {
+    const src = state.packRules ?? rules_default;
+    const base = { ...src.settings };
+    const d = state.device;
+    if (Number.isFinite(d.walkBudgetMin)) base.walkBudgetMin = d.walkBudgetMin;
+    if (Number.isFinite(d.openSlotMinPerDay)) base.openSlotMinPerDay = d.openSlotMinPerDay;
+    if (d.departHM) base.dayWindow = [d.departHM, base.dayWindow[1]];
+    const config = { ...src.rules };
+    if (d.nightSlotOn === false) config["night-slot"] = { ...config["night-slot"] ?? {}, weight: 0 };
+    state.settings = base;
+    state.rules = loadRules(BUILTIN, config);
+  }
+  function loadDemo() {
+    state.trip = demoTrip();
+    state.pois = Object.fromEntries(Object.values(POIS).map((p) => [p.id, p]));
+    state.country = COUNTRY;
+    state.kb = KB;
+    state.legFn = legFn;
+    state.pool = Object.values(POIS).map((poi) => ({ poi }));
+    if (!state.field.date) state.field.date = state.trip.days[0].date;
+    replanAll();
+  }
+  function loadFromPack(packResult) {
+    const { pack, pois } = packResult;
+    state.trip = pack.trip;
+    state.pois = Object.fromEntries(pois.map((p) => [p.id, p]));
+    state.country = pack.country;
+    state.kb = { zones: pack.zones?.zones ?? {} };
+    state.packRules = pack.rules ?? null;
+    state.packMeta = { ...pack.meta ?? {}, tripId: pack.trip.id, tripName: pack.trip.name ?? pack.trip.id, city: pack.city ?? null };
+    buildSettings();
+    state.legFn = makeLegFn({ walk: pack.walk?.pairs ?? {}, settings: state.settings, zoneLinks: pack.zones?.links ?? {} });
+    state.pool = pois.map((poi) => ({ poi }));
+    if (!state.field.date) state.field.date = state.trip.days[0].date;
+    replanAll();
+  }
+  function replanAll() {
+    buildSettings();
+    if (!state.trip) return;
+    const r = planTrip({ trip: state.trip, pois: state.pois, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, legFn: state.legFn });
+    state.plans = Object.fromEntries(r.days.map((d) => [d.date, d]));
+    render();
+  }
+  function swapStop(date, fromPoiId, toPoi) {
+    const day = state.trip.days.find((d) => d.date === date);
+    if (!day) return;
+    if (!state.pois[toPoi.id]) state.pois[toPoi.id] = toPoi;
+    Object.assign(day, applySwap(day, fromPoiId, toPoi));
+    replanAll();
+  }
+  function removeStop(date, poiId) {
+    const day = state.trip.days.find((d) => d.date === date);
+    if (!day) return;
+    day.picks = (day.picks ?? []).filter((p) => p.poiId !== poiId);
+    day.removed = [...day.removed ?? [], { poiId, at: (/* @__PURE__ */ new Date()).toISOString() }];
+    replanAll();
+  }
+  async function applyPackJson(json, { persist = true } = {}) {
+    const result = readPack(json);
+    if (persist) await importPack(json);
+    loadFromPack(result);
+    state.packStatus = TEXT.updated(result.pack.trip.name ?? result.pack.trip.id, result.pack.meta?.generatedAt);
+    render();
+  }
+  async function updateFromUrl() {
+    const url = state.device.packUrl;
+    if (!url) {
+      state.packStatus = TEXT.needUrl;
+      render();
+      return;
+    }
+    state.packStatus = TEXT.updating;
+    render();
+    try {
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await applyPackJson(await res.json());
+    } catch (err) {
+      state.packStatus = TEXT.updateFailed(err.message);
+      render();
+    }
+  }
+  async function importFile(file) {
+    try {
+      await applyPackJson(JSON.parse(await file.text()));
+    } catch (err) {
+      state.packStatus = TEXT.updateFailed(err.message);
+      render();
+    }
+  }
+  function saveDevice(partial) {
+    state.device = { ...state.device, ...partial };
+    saveJSON(SETTINGS_KEY, state.device);
+    replanAll();
+  }
+  function setField(partial) {
+    state.field = { ...state.field, ...partial };
+    saveJSON(FIELD_KEY, state.field);
+    render();
+  }
+  var VIEWS = { "#/plan": renderPlanner, "#/now": renderNow, "#/pool": renderPool, "#/settings": renderSettings };
+  function render() {
+    const root = document.getElementById("app");
+    if (!root) return;
+    clear(root);
+    const actions = { swapStop, removeStop, saveDevice, setField, replanAll, updateFromUrl, importFile };
+    const view = !state.trip && state.route !== "#/settings" ? renderEmpty : VIEWS[state.route] ?? renderPlanner;
+    root.append(el("main", { class: "view" }, view({ state, actions })));
+    root.append(tabBar());
+  }
+  function renderEmpty() {
+    return [
+      el("h1", { text: TEXT.appName }),
+      el("p", { class: "muted", text: TEXT.shellHint }),
+      el("div", { class: "actions" }, [
+        el("a", { class: "btn primary", href: "#/settings" }, TEXT.goUpdate),
+        el("button", { class: "btn", type: "button", onclick: loadDemo }, TEXT.loadDemo)
+      ])
+    ];
+  }
+  function tabBar() {
+    return el("nav", { class: "tabs", "aria-label": "\u4E3B\u9078\u55AE" }, Object.entries(TEXT.tabs).map(([key, label]) => {
+      const href = `#/${key}`;
+      return el("a", { href, class: `tab${state.route === href ? " active" : ""}` }, label);
+    }));
+  }
+  async function boot() {
+    buildSettings();
+    const apply = () => {
+      state.route = location.hash && VIEWS[location.hash] ? location.hash : "#/plan";
+      render();
+    };
+    window.addEventListener("hashchange", apply);
+    if (!state.field.date) state.field.date = todayStr();
+    readPackParam();
+    apply();
+    try {
+      const stored = await loadLatestPack();
+      if (stored) {
+        loadFromPack(stored);
+        replanAll();
+      }
+    } catch (err) {
+      console.warn("\u8B80\u4E0D\u5230\u624B\u6A5F\u88E1\u7684\u65C5\u7A0B", err);
+    }
+  }
+  function readPackParam() {
+    const m = location.hash.match(/[?&]pack=([^&]+)/);
+    if (!m) return;
+    state.device = { ...state.device, packUrl: decodeURIComponent(m[1]) };
+    saveJSON(SETTINGS_KEY, state.device);
+    location.hash = "#/settings";
+  }
+
+  // src/main.js
+  var VERSION = true ? "202610110044-259e20b4" : "dev";
   function showUpdateBanner(registration) {
     if (document.querySelector(".banner")) return;
     const banner = el("div", { class: "banner", role: "status" }, [
       el("span", {}, TEXT.updateBanner),
-      el("button", {
-        type: "button",
-        onclick: () => {
-          registration.waiting?.postMessage({ type: "SKIP_WAITING" });
-        }
-      }, TEXT.updateButton)
+      el("button", { class: "btn", type: "button", onclick: () => registration.waiting?.postMessage({ type: "SKIP_WAITING" }) }, TEXT.updateButton)
     ]);
     document.body.append(banner);
   }
@@ -112,19 +2728,24 @@
       });
       let reloading = false;
       navigator.serviceWorker.addEventListener("controllerchange", () => {
-        if (reloading) return;
-        reloading = true;
-        location.reload();
+        if (!reloading) {
+          reloading = true;
+          location.reload();
+        }
       });
     } catch (err) {
       console.warn("service worker \u8A3B\u518A\u5931\u6557", err);
     }
+    try {
+      await navigator.storage?.persist?.();
+    } catch {
+    }
   }
-  var root = document.getElementById("app");
-  if (root) {
-    renderShell(root);
-    registerServiceWorker();
-  }
+  document.title = TEXT.appName;
+  var footer = el("p", { class: "muted small version", text: TEXT.version(VERSION) });
+  document.body.append(footer);
+  boot();
+  registerServiceWorker();
 })();
 </script>
 </body>
