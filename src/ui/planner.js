@@ -3,6 +3,7 @@ import { el, hm, dateLabel } from './dom.js';
 import { TEXT, CATEGORY } from './text.js';
 import { swapCandidates } from '../engine/swap.js';
 import { openIntervals } from '../engine/time.js';
+import { resolveHome } from '../engine/trip.js';
 
 export function renderPlanner({ state, actions }) {
   const nodes = [el('h1', { text: state.trip.name ?? TEXT.appName })];
@@ -21,6 +22,7 @@ function dayBlock(d, planned, state, actions) {
   const block = el('section', { class: 'day' }, [
     el('header', { class: 'day-head' }, [el('h2', { text: dateLabel(d.date) }), el('p', { class: 'muted', text: anchorLine })]),
     el('p', { class: 'muted small', text: TEXT.dayScore(plan.score, plan.penaltyMin) }),
+    firstLegLine(plan, d, state),
   ]);
   plan.sequence.forEach((s, i) => block.append(stopCard(s, i, plan, d, state, actions)));
   if (dayWarnings.length) block.append(el('ul', { class: 'warn-list' }, dayWarnings.map((w) => el('li', { text: w.msg }))));
@@ -31,6 +33,21 @@ function dayBlock(d, planned, state, actions) {
     ]));
   }
   return block;
+}
+
+/** 出門那一段：幾點出門、從住宿到第一站走幾分（原本只畫站與站之間，第一段看不到）。 */
+function firstLegLine(plan, d, state) {
+  const first = plan.sequence[0];
+  if (!first) return null;
+  const leg = state.legFn(resolveHome(state.trip, d.date), first.poi);
+  const legText = leg.rideMin > 0 ? TEXT.rideTo(leg.walkMin, leg.rideMin) : TEXT.walkTo(leg.walkMin);
+  const travel = (leg.walkMin ?? 0) + (leg.rideMin ?? 0) + (leg.waitMin ?? 0);
+  return el('p', { class: 'leg muted small', text: `↓ ${TEXT.firstLeg(hm(first.arriveMin - travel), legText)}${waitText(first)}` });
+}
+
+/** 到了還沒開門要等的分鐘：超過 5 分才寫，讓他看得出中間那段空白是等開門、不是漏排。 */
+function waitText(stop) {
+  return stop?.waitMin > 5 ? `，${TEXT.waitOpen(stop.waitMin)}` : '';
 }
 
 function stopCard(s, i, plan, d, state, actions) {
@@ -54,7 +71,7 @@ function stopCard(s, i, plan, d, state, actions) {
   ]);
   if (legNext) {
     const legText = legNext.rideMin > 0 ? TEXT.rideTo(legNext.walkMin, legNext.rideMin) : TEXT.walkTo(legNext.walkMin);
-    card.append(el('p', { class: 'leg muted small', text: `↓ ${legText}` }));
+    card.append(el('p', { class: 'leg muted small', text: `↓ ${legText}${waitText(next)}` }));
   }
   return card;
 }

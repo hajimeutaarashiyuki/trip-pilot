@@ -70,7 +70,7 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
     for (const c of remaining) {
       if (nowDead.includes(c._i)) continue;
       const leg = normalizeLeg(legFn(prevPoi, c.poi));
-      const placed = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin });
+      const placed = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev });
       const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i };
       const ctx = { ...dayCtxBase, stop, prev, next: null, leg, acc, sequence: seq };
       const r = evaluateStop(ctx, rules);
@@ -100,7 +100,7 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
       let pick = null;
       for (const c of remaining) {
         const leg = normalizeLeg(legFn(prevPoi, c.poi));
-        const placed = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin });
+        const placed = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev });
         const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i };
         const r = evaluateStop({ ...dayCtxBase, stop, prev, next: null, leg, acc, sequence: seq }, rules);
         if (r.verdict !== 'ok') continue;

@@ -66,3 +66,12 @@ test('沒有候選也回得出東西；節點預算用完回目前最好的', ()
   assert.ok(r.stats.truncated);
   assert.ok(r.sequence.length > 0);
 });
+
+test('placeStop：當天第一站要等開門，就改成晚點出門，不在門口等', () => {
+  const x = poi('x', { hours: { thu: [['10:00', '18:00']] } });
+  const g = placeStop({ prevEndMin: 9 * 60, leg: { walkMin: 10 }, poi: x, dwellMin: 60, date: '2026-08-13', dayStartMin: 9 * 60, first: true });
+  assert.equal(g.waitMin, 0); assert.equal(g.arriveMin, 10 * 60); assert.equal(g.startMin, 10 * 60); assert.equal(g.endMin, 11 * 60);
+  // 不是第一站就照舊：到了等
+  const h = placeStop({ prevEndMin: 9 * 60, leg: { walkMin: 10 }, poi: x, dwellMin: 60, date: '2026-08-13', dayStartMin: 9 * 60, first: false });
+  assert.equal(h.waitMin, 50);
+});

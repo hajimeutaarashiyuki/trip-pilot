@@ -2,7 +2,7 @@
 // 執行期零依賴；開發期只有 esbuild。版本字串＝時間戳加內容雜湊，SW 快取名跟著換。
 import { build as esbuild } from 'esbuild';
 import { createHash } from 'node:crypto';
-import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdir, readdir, readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -31,8 +31,9 @@ export async function build({ outDir = dist } = {}) {
   );
   const manifest = await readFile(path.join(src, 'manifest.webmanifest'), 'utf8');
 
-  await rm(outDir, { recursive: true, force: true });
+  // 不整個砍 dist：有伺服器拿 dist 當工作目錄時 Windows 會 EBUSY，只清裡面的檔
   await mkdir(outDir, { recursive: true });
+  for (const name of await readdir(outDir)) await rm(path.join(outDir, name), { recursive: true, force: true });
   await writeFile(path.join(outDir, 'index.html'), html, 'utf8');
   await writeFile(path.join(outDir, 'sw.js'), sw, 'utf8');
   await writeFile(path.join(outDir, 'manifest.webmanifest'), manifest, 'utf8');

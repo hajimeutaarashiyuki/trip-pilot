@@ -36,7 +36,8 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, opti
       if (!poi) { warnings.push({ code: 'pick-unknown', date: d.date, msg: `${d.date} 的 ${p.poiId} 不在知識庫` }); return null; }
       return { poi, priority: p.priority ?? 'want', dwellMin: p.dwellMin, fixedWindow: p.fixedWindow ?? null, designated: (d.designated ?? []).includes(p.poiId), isAnchor: d.anchor?.poiId === p.poiId || Boolean(d.anchor?.poiIds?.includes(p.poiId)) };
     }).filter(Boolean);
-    const anchorPoi = d.anchor?.poiId ? pois[d.anchor.poiId] : null;
+    // 主行程：單站型用那站；主題型用骨架店的第一家當顯示名（畫面不得露出 theme 鍵值）
+    const anchorPoi = d.anchor?.poiId ? pois[d.anchor.poiId] : (d.anchor?.poiIds?.length ? pois[d.anchor.poiIds[0]] : null);
     const themeCategory = d.anchor?.theme ?? null;
     const day = {
       date: d.date, type: d.type ?? 'normal', earlyDay: Boolean(d.earlyDay), party: trip.party ?? 1,
@@ -53,7 +54,7 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, opti
   return { days: out, warnings };
 }
 
-function resolveHome(trip, date) {
+export function resolveHome(trip, date) {
   const bases = trip.homeBases ?? [];
   const hit = bases.find((b) => (!b.fromDate || b.fromDate <= date) && (!b.toDate || date <= b.toDate)) ?? bases[0];
   return hit?.poi ?? { id: 'home', name_zh: '住宿', zoneId: null };

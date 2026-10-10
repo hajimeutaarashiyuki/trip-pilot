@@ -1,9 +1,10 @@
 // 現場：照走時只有下一站（名字、走幾分、幾點關）；一顆「出發去下一站」；落後只在角落寫；硬時限受威脅才翻成選擇清單；
 // 離站彈一次評分可略過；試走模式不靠 GPS、時間可快轉（原話 #140、#141、#153）。
-import { el, hm, dateLabel, nowMinutes } from './dom.js';
+import { el, hm, dateLabel, nowMinutes, todayStr } from './dom.js';
 import { TEXT } from './text.js';
 import { openIntervals } from '../engine/time.js';
 import { replanDay } from '../strategies/index.js';
+import { resolveHome } from '../engine/trip.js';
 
 export function renderNow({ state, actions }) {
   const f = state.field;
@@ -11,7 +12,9 @@ export function renderNow({ state, actions }) {
   const date = dates.includes(f.date) ? f.date : dates[0];
   const planned = state.plans[date];
   const seq = planned?.plan.sequence ?? [];
-  const nowMin = f.simulate ? (f.simNowMin ?? planned?.day.window.startMin ?? 540) : nowMinutes();
+  // 選的那天不是今天（示範、或提前看），真的時間沒有意義：自動用試走模式
+  const simulate = f.simulate || date !== todayStr();
+  const nowMin = simulate ? (f.simNowMin ?? planned?.day.window.startMin ?? 540) : nowMinutes();
   const idx = Math.min(f.index ?? 0, seq.length);
   const next = seq[idx] ?? null;
   const prev = idx > 0 ? seq[idx - 1] : null;
@@ -20,9 +23,9 @@ export function renderNow({ state, actions }) {
   // 哪一天、試走
   nodes.push(el('div', { class: 'row top' }, [
     el('label', { class: 'muted small' }, [TEXT.pickDay, ' ', el('select', { onchange: (e) => actions.setField({ date: e.target.value, index: 0 }) }, dates.map((dt) => el('option', { value: dt, selected: dt === date }, dateLabel(dt))))]),
-    el('button', { class: `btn quiet${f.simulate ? ' on' : ''}`, type: 'button', onclick: () => actions.setField({ simulate: !f.simulate, simNowMin: planned?.day.window.startMin ?? 540 }) }, f.simulate ? TEXT.simOff : TEXT.simulate),
+    el('button', { class: `btn quiet${simulate ? ' on' : ''}`, type: 'button', onclick: () => actions.setField({ simulate: !f.simulate, simNowMin: planned?.day.window.startMin ?? 540 }) }, simulate ? TEXT.simOff : TEXT.simulate),
   ]));
-  if (f.simulate) {
+  if (simulate) {
     nodes.push(el('div', { class: 'row sim' }, [
       el('span', { class: 'time big', text: hm(nowMin) }),
       el('button', { class: 'btn', type: 'button', onclick: () => actions.setField({ simNowMin: nowMin + 15 }) }, TEXT.simPlus(15)),
@@ -37,11 +40,11 @@ export function renderNow({ state, actions }) {
   }
 
   // 下一站卡
-  const from = prev ? prev.poi : resolveHome(state, date);
+  const from = prev ? prev.poi : resolveHome(state.trip, date);
   const leg = state.legFn(from, next.poi);
   const legText = leg.rideMin > 0 ? TEXT.rideTo(leg.walkMin, leg.rideMin) : TEXT.walkTo(leg.walkMin);
   const closes = closeMin(next.poi, date);
-  const lateMin = nowMin - next.startMin;
+  const lateMin = nowMin + leg.walkMin + leg.rideMin - next.startMin; // 現在出發會比排定晚幾分（負＝有餘裕）
   const arriveMin = nowMin + leg.walkMin + leg.rideMin;
   const threatened = closes != null && arriveMin + Math.min(next.dwellMin, 30) > closes;
   const status = lateMin > (state.settings.lateThresholdMin ?? 15) ? TEXT.late(lateMin) : lateMin < -5 ? TEXT.early(-lateMin) : '';
@@ -83,7 +86,7 @@ function leave({ state, actions, seq, idx, prev }) {
 
 function proposalsBlock({ state, actions, date, planned, seq, idx, nowMin, next, closes }) {
   const remaining = seq.slice(idx).map((s) => ({ poi: s.poi, priority: s.priority ?? 'want', dwellMin: s.dwellMin, designated: s.designated, isAnchor: s.isAnchor, fixedWindow: s.fixedWindow }));
-  const here = idx > 0 ? seq[idx - 1].poi : resolveHome(state, date);
+  const here = idx > 0 ? seq[idx - 1].poi : resolveHome(state.trip, date);
   const { proposals } = replanDay({ day: planned.day, remaining, here, nowMin, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, legFn: state.legFn, pool: state.pool });
   const block = el('section', { class: 'card warn' }, [
     el('p', { class: 'warn-line', text: TEXT.hardLimit(next.poi.name_zh, hm(closes)) }),
@@ -103,12 +106,6 @@ function applyProposal({ state, actions, date, planned, idx, proposal }) {
   const done = planned.plan.sequence.slice(0, idx);
   planned.plan = { ...proposal.plan, sequence: [...done, ...proposal.plan.sequence] };
   actions.setField({ index: idx });
-}
-
-function resolveHome(state, date) {
-  const bases = state.trip.homeBases ?? [];
-  const hit = bases.find((b) => (!b.fromDate || b.fromDate <= date) && (!b.toDate || date <= b.toDate)) ?? bases[0];
-  return hit?.poi ?? { id: 'home', name_zh: '住宿', zoneId: null };
 }
 
 function closeMin(poi, date) {
