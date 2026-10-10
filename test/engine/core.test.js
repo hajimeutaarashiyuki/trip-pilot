@@ -75,3 +75,13 @@ test('placeStop：當天第一站要等開門，就改成晚點出門，不在�
   const h = placeStop({ prevEndMin: 9 * 60, leg: { walkMin: 10 }, poi: x, dwellMin: 60, date: '2026-08-13', dayStartMin: 9 * 60, first: false });
   assert.equal(h.waitMin, 50);
 });
+
+test('折返：先去遠的再走回飯店旁的站會罰，引擎改成先近後遠', () => {
+  // 飯店—B 10 分；D 就在飯店旁（1 分）；B—D 9 分。飯店→B→D 走回頭路 8 分（×2＝罰 16）；飯店→D→B 不折返。
+  const walk = { 'home|B': 10, 'home|D': 1, 'B|D': 9 };
+  const legFn = (a, b) => ({ walkMin: walk[`${a.id}|${b.id}`] ?? walk[`${b.id}|${a.id}`] ?? 10, rideMin: 0, climbMin: 0 });
+  const cands = [{ poi: poi('B'), priority: 'must' }, { poi: poi('D'), priority: 'want' }];
+  const r = planDay({ candidates: cands, day: day(), home, legFn, rules, settings, country, kb, options: { explain: true } });
+  assert.deepEqual(r.sequence.map((s) => s.poi.id), ['D', 'B']);
+  assert.ok(!r.warnings.some((w) => w.code === 'skipped-missing' && /backtrack/.test(w.ruleId ?? w.msg ?? '')), '折返規則有在跑');
+});

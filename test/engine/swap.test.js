@@ -21,11 +21,13 @@ test('8/17 把 me 換掉：候選是同區順路、當時有開的古著店；�
   assert.ok(names.length >= 1 && cands.every((c) => c.poi.category === 'vintage'), `要是同類型：${names.join('、')}`);
   assert.ok(!names.includes('Utah'), '已經在行程裡的不列');
   assert.ok(!names.includes('星山珈琲店'), '不同類型不列');
-  assert.ok(cands.every((c) => c.detourMin <= (settings.swapDetourMaxMin ?? 10)));
-  // SQUAT 從松本清過去要多繞 11 分，預設 10 分不列；門檻放寬到 15 就列
-  assert.ok(!names.includes('SQUAT'));
-  const wider = swapCandidates({ plan, stopId: POIS.me.id, pool, legFn, date: DAY_0817.date, settings: { ...settings, swapDetourMaxMin: 15 } });
-  assert.ok(wider.some((c) => c.poi.name_zh === 'SQUAT'));
+  assert.ok(cands.every((c) => c.detourMin <= (settings.swapDetourMaxMin ?? 10)), '預設門檻內');
+  // 門檻放到夠寬：列出來的還是只有沒排進去的同類店；縮到比最小繞路還小：一家都不列（不綁死順序，引擎改排法測試也成立）
+  const wide = swapCandidates({ plan, stopId: POIS.me.id, pool, legFn, date: DAY_0817.date, settings: { ...settings, swapDetourMaxMin: 999 } });
+  assert.ok(wide.length >= cands.length && wide.every((c) => c.poi.category === 'vintage' && !plan.sequence.some((s) => s.poi.id === c.poi.id)), '放寬後仍是沒排進的古著店');
+  const minDetour = Math.min(...wide.map((c) => c.detourMin));
+  const narrow = swapCandidates({ plan, stopId: POIS.me.id, pool, legFn, date: DAY_0817.date, settings: { ...settings, swapDetourMaxMin: minDetour - 1 } });
+  assert.equal(narrow.length, 0, '門檻比最小繞路還小就沒有候選');
   const day = applySwap({ date: DAY_0817.date, picks: CANDS_0817.map((c) => ({ poiId: c.poi.id, priority: c.priority })) }, POIS.me.id, POIS.SQUAT);
   assert.ok(day.picks.some((p) => p.poiId === POIS.SQUAT.id) && !day.picks.some((p) => p.poiId === POIS.me.id));
   assert.equal(day.swapped[0].from, POIS.me.id);

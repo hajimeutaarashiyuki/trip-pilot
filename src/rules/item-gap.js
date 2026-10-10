@@ -3,7 +3,7 @@ export default {
   id: 'item-gap',
   kind: 'hard',
   scope: 'day',
-  reads: ['day.themeCategory'],
+  reads: [],   // themeCategory 沒有（非主題日）是正常狀態，不算缺欄位；apply 自己處理 null
   defaults: {},
   apply(ctx) {
     const t = ctx.day.themeCategory;

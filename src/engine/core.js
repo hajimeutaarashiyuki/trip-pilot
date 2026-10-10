@@ -69,7 +69,7 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
     const nowDead = [];
     for (const c of remaining) {
       if (nowDead.includes(c._i)) continue;
-      const leg = normalizeLeg(legFn(prevPoi, c.poi));
+      const leg = withBacktrack(normalizeLeg(legFn(prevPoi, c.poi)), seq, home, c.poi, legFn);
       const placed = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev });
       const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i };
       const ctx = { ...dayCtxBase, stop, prev, next: null, leg, acc, sequence: seq };
@@ -99,7 +99,7 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
       const prevEnd = prev ? prev.endMin : day.window.startMin;
       let pick = null;
       for (const c of remaining) {
-        const leg = normalizeLeg(legFn(prevPoi, c.poi));
+        const leg = withBacktrack(normalizeLeg(legFn(prevPoi, c.poi)), seq, home, c.poi, legFn);
         const placed = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev });
         const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i };
         const r = evaluateStop({ ...dayCtxBase, stop, prev, next: null, leg, acc, sequence: seq }, rules);
@@ -133,6 +133,20 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
     breakdown: explain ? { stops: best.path.map((p) => ({ poiId: p.stop.poi.id, penaltyMin: p.penaltyMin, items: p.breakdown })), day: best.dayEval.breakdown } : null,
     stats,
   };
+}
+
+/**
+ * 折返分鐘：這段走路比「從上上站直接走過來」多出來的部分。順路（上一站在路上）是 0；走回頭路就接近整段。
+ * 第一站沒有上上站＝0；搭車段不算。沒座標時 legFn 回區域預設分鐘，差值是 0 或很小，規則不會被誤觸發。
+ */
+function withBacktrack(leg, seq, home, toPoi, legFn) {
+  if (leg.backtrackMin != null) return leg;
+  if (leg.mode !== 'walk') return { ...leg, backtrackMin: 0 };
+  const beforePrev = seq.length >= 2 ? seq[seq.length - 2].poi : (seq.length === 1 ? home : null);
+  if (!beforePrev) return { ...leg, backtrackMin: 0 };
+  const direct = normalizeLeg(legFn(beforePrev, toPoi));
+  const backtrackMin = direct.mode === 'walk' ? Math.max(0, leg.walkMin - direct.walkMin) : 0;
+  return { ...leg, backtrackMin };
 }
 
 function normalizeLeg(leg) {
