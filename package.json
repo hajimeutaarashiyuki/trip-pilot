@@ -1,0 +1,15 @@
+{
+  "name": "trip-pilot",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Trip Pilot：個人旅程排程 PWA（單檔、離線優先、規則是插件）",
+  "scripts": {
+    "build": "node tools/build.mjs",
+    "test": "node --test"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}

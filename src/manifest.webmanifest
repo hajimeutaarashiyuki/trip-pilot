@@ -1,0 +1,11 @@
+{
+  "name": "Trip Pilot",
+  "short_name": "Trip Pilot",
+  "lang": "zh-Hant",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f7f5f0",
+  "theme_color": "#f7f5f0",
+  "icons": []
+}

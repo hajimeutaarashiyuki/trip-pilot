@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f7f5f0">
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#121416">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Trip Pilot">
+<title>Trip Pilot</title>
+<link rel="manifest" href="./manifest.webmanifest">
+<style>
+  :root {
+    --bg: #f7f5f0;
+    --bg-elevated: #ffffff;
+    --fg: #1d1d1b;
+    --muted: #6b6a66;
+    --accent: #2f6f5e;
+    --warn: #b7791f;
+    --line: #e3e0d8;
+    --gutter: 16px;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #121416;
+      --bg-elevated: #1c1f22;
+      --fg: #ece9e2;
+      --muted: #9a9890;
+      --accent: #7fc1ad;
+      --warn: #e0a94a;
+      --line: #2a2e32;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font: 17px/1.5 -apple-system, "PingFang TC", "Noto Sans TC", system-ui, sans-serif;
+    padding: max(var(--gutter), env(safe-area-inset-top)) max(var(--gutter), env(safe-area-inset-right)) max(var(--gutter), env(safe-area-inset-bottom)) max(var(--gutter), env(safe-area-inset-left));
+    overflow-x: hidden;
+  }
+  #app { max-width: 640px; margin: 0 auto; }
+  .banner {
+    position: fixed; left: 0; right: 0; bottom: 0;
+    padding: 12px max(var(--gutter), env(safe-area-inset-left)) max(12px, env(safe-area-inset-bottom));
+    background: var(--bg-elevated); border-top: 1px solid var(--line);
+    display: flex; gap: 12px; align-items: center; justify-content: space-between;
+  }
+  .banner button { font: inherit; padding: 8px 14px; border-radius: 10px; border: 1px solid var(--accent); background: transparent; color: var(--accent); }
+  h1 { font-size: 22px; margin: 0 0 8px; }
+  .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<!--APP-->
+</body>
+</html>

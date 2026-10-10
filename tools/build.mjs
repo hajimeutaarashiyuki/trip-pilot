@@ -1,0 +1,50 @@
+// 建置：把 src/ 合成一個 dist/index.html（程式內嵌），另產 sw.js 與 manifest（SW 與 manifest 必須是獨立檔）。
+// 執行期零依賴；開發期只有 esbuild。版本字串＝時間戳加內容雜湊，SW 快取名跟著換。
+import { build as esbuild } from 'esbuild';
+import { createHash } from 'node:crypto';
+import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const src = path.join(root, 'src');
+const dist = path.join(root, 'dist');
+
+export async function build({ outDir = dist } = {}) {
+  const app = await esbuild({
+    entryPoints: [path.join(src, 'main.js')],
+    bundle: true,
+    format: 'iife',
+    target: ['es2020', 'safari15'],
+    write: false,
+    define: { __APP_VERSION__: '"__VERSION_PLACEHOLDER__"' },
+    legalComments: 'none',
+  });
+  const appCode = app.outputFiles[0].text;
+  const version = `${stamp()}-${createHash('sha256').update(appCode).digest('hex').slice(0, 8)}`;
+  const template = await readFile(path.join(src, 'index.html'), 'utf8');
+  if (!template.includes('<!--APP-->')) throw new Error('index.html 缺 <!--APP--> 佔位');
+  const html = template.replace('<!--APP-->', `<script>${appCode.replaceAll('__VERSION_PLACEHOLDER__', version).replaceAll('</script', '<\\/script')}</script>`);
+  const sw = (await readFile(path.join(src, 'sw.js'), 'utf8')).replace(
+    /const VERSION = [^;]+;/,
+    `const VERSION = ${JSON.stringify(version)};`,
+  );
+  const manifest = await readFile(path.join(src, 'manifest.webmanifest'), 'utf8');
+
+  await rm(outDir, { recursive: true, force: true });
+  await mkdir(outDir, { recursive: true });
+  await writeFile(path.join(outDir, 'index.html'), html, 'utf8');
+  await writeFile(path.join(outDir, 'sw.js'), sw, 'utf8');
+  await writeFile(path.join(outDir, 'manifest.webmanifest'), manifest, 'utf8');
+  return { version, bytes: Buffer.byteLength(html, 'utf8'), outDir };
+}
+
+function stamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}${p(d.getHours())}${p(d.getMinutes())}`;
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  build().then((r) => console.log(`建置完成 ${r.version}，index.html ${r.bytes} bytes → ${r.outDir}`));
+}
