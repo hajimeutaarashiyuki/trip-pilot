@@ -6,7 +6,8 @@
   "description": "Trip Pilot：個人旅程排程 PWA（單檔、離線優先、規則是插件）",
   "scripts": {
     "build": "node tools/build.mjs",
-    "test": "node --test"
+    "test": "node --test",
+    "deploy": "node tools/deploy-pages.mjs"
   },
   "license": "MIT",
   "devDependencies": {
