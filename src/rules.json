@@ -21,7 +21,106 @@
     "walkingMPerMin": 80,
     "detourFactor": 1.3,
     "maxStopsPerDay": 8,
-    "_原話": { "maxShopRunMin": "#103（題目寫 240 他答可以）", "walkBudgetMin": "#114（先留）", "sameTypeMaxPerDay": "#123、#143" }
+    "_原話": {
+      "maxShopRunMin": "#103（題目寫 240 他答可以）",
+      "walkBudgetMin": "#114（先留）",
+      "sameTypeMaxPerDay": "#123、#143"
+    }
   },
-  "rules": {}
+  "rules": {
+    "dim-walk": {
+      "weight": 1
+    },
+    "dim-walk-run": {
+      "weight": 1
+    },
+    "dim-shop-run": {
+      "weight": 1
+    },
+    "dim-cat-count": {
+      "weight": 1
+    },
+    "dim-rec-run": {
+      "weight": 1
+    },
+    "dim-afternoon": {
+      "weight": 1
+    },
+    "hours": {
+      "weight": 1,
+      "lastEntryMin": 0
+    },
+    "fixed-window": {
+      "weight": 1
+    },
+    "window": {
+      "weight": 1
+    },
+    "max-stops": {
+      "weight": 1
+    },
+    "same-type-day": {
+      "weight": 1
+    },
+    "early-day": {
+      "weight": 1,
+      "maxAfternoonStops": 1
+    },
+    "walk-budget": {
+      "weight": 1,
+      "perMinOver": 1
+    },
+    "walk-run": {
+      "weight": 1,
+      "perMinOver": 1
+    },
+    "shop-run": {
+      "weight": 1,
+      "shopOverMin": 60,
+      "perMinOver": 1
+    },
+    "cafe-adjacent": {
+      "weight": 1,
+      "sameTypeMin": 40
+    },
+    "recovery-run": {
+      "weight": 1,
+      "pairMin": 10,
+      "runMin": 40,
+      "runFrom": 3
+    },
+    "backtrack": {
+      "weight": 1,
+      "perMin": 2
+    },
+    "zone-exit": {
+      "weight": 1,
+      "exitMin": 60
+    },
+    "noon-urban": {
+      "weight": 1,
+      "from": "11:30",
+      "to": "14:30",
+      "penaltyMin": 20
+    },
+    "anchor": {
+      "weight": 1
+    },
+    "designated": {
+      "weight": 1,
+      "missMin": 120
+    },
+    "item-gap": {
+      "weight": 1
+    },
+    "meal-slots": {
+      "weight": 1,
+      "missMin": 20
+    },
+    "night-slot": {
+      "weight": 1,
+      "missMin": 10
+    }
+  },
+  "_規則說明": "每條規則：weight 0 = 停用；其餘鍵是那條規則的門檻或罰分（分鐘）。預設值是 10-10 從 DESIGN §5.2 換算的，都是預設等級。"
 }
