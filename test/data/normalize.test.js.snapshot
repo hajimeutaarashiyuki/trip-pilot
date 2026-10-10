@@ -1,0 +1,37 @@
+exports[`仙台 136 筆全部通過 normalize，分佈進 snapshot 1`] = `
+{
+  "stats": {
+    "byCategory": {
+      "shrine": 9,
+      "mausoleum": 2,
+      "temple": 5,
+      "drugstore": 15,
+      "arcade": 1,
+      "food": 14,
+      "department": 3,
+      "store": 18,
+      "electronics": 1,
+      "outlet": 2,
+      "gift": 2,
+      "daytrip": 10,
+      "experience": 2,
+      "bar": 2,
+      "brewery": 3,
+      "onsen": 2,
+      "cafe": 12,
+      "market": 1,
+      "logistics": 10,
+      "event": 8,
+      "vintage": 14
+    },
+    "byWalkFactor": {
+      "0": 92,
+      "1": 6,
+      "0.5": 38
+    },
+    "recovery": 33,
+    "cafeLike": 12
+  },
+  "unknown": []
+}
+`;

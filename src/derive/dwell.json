@@ -1,0 +1,33 @@
+{
+  "_說明": "店型→預設停留分鐘（DESIGN §1.3 一點預設 60；古著店每家 60 是原話 #104；其餘預設）。知識庫有寫 duration 時優先用它。",
+  "default": 60,
+  "byCategory": {
+    "vintage": 60,
+    "record": 60,
+    "store": 30,
+    "drugstore": 15,
+    "gift": 20,
+    "food": 60,
+    "cafe": 60,
+    "bar": 90,
+    "brewery": 40,
+    "onsen": 60,
+    "cruise": 50,
+    "logistics": 0,
+    "shrine": 45,
+    "temple": 60,
+    "mausoleum": 60,
+    "museum": 60,
+    "garden": 45,
+    "arcade": 45,
+    "market": 40,
+    "event": 90,
+    "experience": 60,
+    "daytrip": 180,
+    "department": 90,
+    "electronics": 60,
+    "outlet": 120,
+    "street": 30,
+    "other": 60
+  }
+}

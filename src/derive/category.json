@@ -1,0 +1,234 @@
+{
+  "_說明": "知識庫的 category 是研究寫的自由文字，這張表把它對到規範店型。依序比對 keywords，第一個命中就用；都沒命中→ other 並記警告。改這張表不用改程式。",
+  "rules": [
+    {
+      "key": "logistics",
+      "keywords": [
+        "交通｜",
+        "實用｜"
+      ]
+    },
+    {
+      "key": "event",
+      "keywords": [
+        "祭典",
+        "盆踊",
+        "燈籠",
+        "花火",
+        "夜間點燈",
+        "盂蘭盆限定",
+        "例祭",
+        "市集"
+      ]
+    },
+    {
+      "key": "mausoleum",
+      "keywords": [
+        "靈廟",
+        "靈屋"
+      ]
+    },
+    {
+      "key": "shrine",
+      "keywords": [
+        "神社",
+        "八幡宮",
+        "天滿宮",
+        "大神宮"
+      ]
+    },
+    {
+      "key": "temple",
+      "keywords": [
+        "寺院",
+        "寺（",
+        "不動院",
+        "國分寺"
+      ]
+    },
+    {
+      "key": "daytrip",
+      "keywords": [
+        "一日遊",
+        "半日遊"
+      ]
+    },
+    {
+      "key": "experience",
+      "keywords": [
+        "體驗",
+        "工藝"
+      ]
+    },
+    {
+      "key": "onsen",
+      "keywords": [
+        "溫泉",
+        "錢湯"
+      ]
+    },
+    {
+      "key": "brewery",
+      "keywords": [
+        "酒藏",
+        "酒蔵",
+        "蒸溜所",
+        "角打ち"
+      ]
+    },
+    {
+      "key": "bar",
+      "keywords": [
+        "橫丁酒場",
+        "酒場",
+        "居酒屋",
+        "夜生活",
+        "バー",
+        "bar"
+      ]
+    },
+    {
+      "key": "cafe",
+      "keywords": [
+        "喫茶",
+        "咖啡",
+        "焙煎",
+        "coffee",
+        "book cafe"
+      ]
+    },
+    {
+      "key": "food",
+      "keywords": [
+        "牛舌",
+        "牛たん",
+        "定食",
+        "市場早餐",
+        "甜點",
+        "麵食",
+        "壽司",
+        "海鮮",
+        "餐",
+        "食堂",
+        "拉麵"
+      ]
+    },
+    {
+      "key": "market",
+      "keywords": [
+        "市場",
+        "朝市"
+      ]
+    },
+    {
+      "key": "vintage",
+      "keywords": [
+        "古著",
+        "古着",
+        "vintage",
+        "reuse"
+      ]
+    },
+    {
+      "key": "record",
+      "keywords": [
+        "唱片",
+        "黑膠",
+        "レコード",
+        "record"
+      ]
+    },
+    {
+      "key": "drugstore",
+      "keywords": [
+        "藥妝",
+        "藥膏",
+        "睫毛膏",
+        "マスカラ",
+        "薬用",
+        "ドラッグ",
+        "松本清",
+        "ツルハ"
+      ]
+    },
+    {
+      "key": "outlet",
+      "keywords": [
+        "outlet",
+        "アウトレット"
+      ]
+    },
+    {
+      "key": "department",
+      "keywords": [
+        "百貨",
+        "車站商場",
+        "商場",
+        "S-PAL",
+        "PARCO",
+        "三越",
+        "藤崎"
+      ]
+    },
+    {
+      "key": "electronics",
+      "keywords": [
+        "電器",
+        "相機",
+        "模型玩具",
+        "Yodobashi",
+        "ヨドバシ"
+      ]
+    },
+    {
+      "key": "arcade",
+      "keywords": [
+        "商店街",
+        "拱廊",
+        "橫丁"
+      ]
+    },
+    {
+      "key": "gift",
+      "keywords": [
+        "伴手禮",
+        "和菓子",
+        "老舖"
+      ]
+    },
+    {
+      "key": "store",
+      "keywords": [
+        "雜貨",
+        "文具",
+        "美妝",
+        "香水",
+        "跑鞋",
+        "球鞋",
+        "運動",
+        "選品",
+        "選物",
+        "此行目標品",
+        "EDP",
+        "Cloudmonster",
+        "On（",
+        "Be Delicious"
+      ]
+    },
+    {
+      "key": "museum",
+      "keywords": [
+        "博物館",
+        "美術館",
+        "資料館"
+      ]
+    },
+    {
+      "key": "garden",
+      "keywords": [
+        "庭園",
+        "公園"
+      ]
+    }
+  ]
+}
