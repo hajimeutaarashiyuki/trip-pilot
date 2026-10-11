@@ -32,6 +32,7 @@
     "walkVsRideMaxWalkMin": 30,
     "daylightMarginMin": 30,
     "restPoolMax": 6,
+    "fillPoolMax": 6,
     "restInsertMaxPerDay": 2,
     "_原話": {
       "maxShopRunMin": "#103（題目寫 240 他答可以）",

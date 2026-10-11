@@ -5,8 +5,9 @@ import { hmToMin } from './time.js';
 import { haversineM } from '../geo/matrix.js';
 
 /**
- * 引擎插恢復站的觸發：照他勾的排完後出現這些規則的警告才跑第二趟。
- * walk-run：DESIGN §1.3「走路連跑要破 150 才由引擎插恢復站」；wait-at-door：DESIGN §5.2「引擎先試著在等開門那段空檔放一站」（來源同插恢復站）。
+ * 引擎插站的觸發：照他勾的排完後出現這些規則的警告才跑第二趟。
+ * walk-run：DESIGN §1.3「走路連跑要破 150 才由引擎插恢復站」→ restCandidates（只拿恢復站）；
+ * wait-at-door：等開門空檔填站，任何站都可以（原話 #161）→ fillCandidates（離那段空檔最近的任何站型）。
  */
 export const REST_TRIGGER_RULES = new Set(['walk-run', 'wait-at-door']);
 
@@ -33,7 +34,7 @@ export function regionZonesOf({ home, candidates, anchorPoi }) {
  * - trip.days[]: { date, type, earlyDay, departHM?, dayTrip?, anchor?: { poiId } | { theme, poiIds[] }, picks: [{ poiId, priority, dwellMin?, fixedWindow? }], designated?: [poiId], nightSlotOff?, removed?: [{ poiId, insertedBy? }] }
  *   removed 帶 insertedBy 'engine' ＝ 他拒絕過引擎插的站：那天不再插（profile §2.4 細則「拒絕＝跳過，不觸發改案、不罰、當天不再重插，連跑警告降成提示」）
  * - pois：{ [poiId]: poi }（已 normalize）
- * - restPool：引擎可插的恢復站來源（已規範化的 POI 陣列，可空；畫面與報告傳整個知識庫），每天由 restCandidates 篩
+ * - restPool：引擎可插的站的來源（已規範化的 POI 陣列，可空；畫面與報告傳整個知識庫），每天由 restCandidates（恢復站）與 fillCandidates（填空檔，任何站）篩
  */
 export function planTrip({ trip, pois, rules, settings, country, kb, legFn, restPool = [], options = {} }) {
   const out = []; const warnings = [];
@@ -66,9 +67,12 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
     if (triggered && rejectedRest(d.removed)) {
       plan = { ...plan, warnings: plan.warnings.map((w) => (REST_TRIGGER_RULES.has(w.ruleId) ? { ...w, hint: true } : w)) };
     } else if (triggered) {
-      const rests = restCandidates({ restPool, candidates, day, removed: d.removed, pickedAnywhere, home, settings });
-      if (rests.length) {
-        const withRests = planDay({ candidates: [...candidates, ...rests], day, home, legFn, rules, settings, country, kb, options });
+      const rests = plan.warnings.some((w) => w.ruleId === 'walk-run') ? restCandidates({ restPool, candidates, day, removed: d.removed, pickedAnywhere, home, settings }) : [];
+      const fillers = plan.warnings.some((w) => w.ruleId === 'wait-at-door') ? fillCandidates({ restPool, candidates, day, removed: d.removed, pickedAnywhere, home, plan, settings }) : [];
+      const seen = new Set(rests.map((c) => c.poi.id));
+      const extra = [...rests, ...fillers.filter((c) => (seen.has(c.poi.id) ? false : (seen.add(c.poi.id), true)))];
+      if (extra.length) {
+        const withRests = planDay({ candidates: [...candidates, ...extra], day, home, legFn, rules, settings, country, kb, options });
         if ((withRests.complete && !plan.complete) || (withRests.complete === plan.complete && withRests.score > plan.score)) plan = withRests;
       }
     }
@@ -97,6 +101,31 @@ export function restCandidates({ restPool = [], candidates = [], day, removed = 
     .slice(0, settings.restPoolMax ?? 6)
     .map(({ p }) => ({ poi: p, priority: 'rest', optional: true, insertedBy: 'engine', dwellMin: p.dwellMin ?? Math.max(settings.restResetMin ?? 30, 30) }));
 }
+
+/**
+ * 填等開門空檔的候選（原話 #161「任何站都可以」）：restPool 裡不是交通、活動、錢湯的站，在當日區域內、沒被任何一天勾選、沒被這天拒絕過；
+ * 每個等開門警告（帶 poiId）找那站與它前一站（沒有就住宿）的中點，取離中點最近的 settings.fillPoolMax 家。
+ * 價值 0（priority 'filler'）、optional、insertedBy 'engine'；排進去就是「引擎排進來填空檔的站」，可拒絕。
+ */
+export function fillCandidates({ restPool = [], candidates = [], day, removed = [], pickedAnywhere = new Set(), home = null, plan, settings = {} }) {
+  if (!restPool.length || !plan?.sequence?.length) return [];
+  const removedIds = new Set(removed.map((r) => r.poiId));
+  const pool = restPool.filter((p) => p && !NO_FILL_CATEGORIES.has(p.category) && (day.regionZones ?? []).includes(p.zoneId) && !pickedAnywhere.has(p.id) && !removedIds.has(p.id));
+  const out = new Map();
+  for (const w of plan.warnings.filter((x) => x.ruleId === 'wait-at-door' && x.poiId)) {
+    const i = plan.sequence.findIndex((s) => s.poi.id === w.poiId);
+    if (i < 0) continue;
+    const waiting = plan.sequence[i].poi; const before = i > 0 ? plan.sequence[i - 1].poi : home;
+    const mid = centroidOf([waiting, before].filter(Boolean)) ?? centroidOf(candidates.map((c) => c.poi));
+    const distance = (p) => (mid && hasCoords(p) ? haversineM(mid, p) : Infinity);
+    pool.map((p) => ({ p, d: distance(p) })).sort((a, b) => (a.d === b.d ? 0 : a.d < b.d ? -1 : 1)).slice(0, settings.fillPoolMax ?? 6)
+      .forEach(({ p }) => { if (!out.has(p.id)) out.set(p.id, { poi: p, priority: 'filler', optional: true, insertedBy: 'engine', dwellMin: p.dwellMin ?? settings.defaultDwellMin ?? 60 }); });
+  }
+  return [...out.values()];
+}
+
+// 填空檔不拿的店型：交通與資訊（不是地點）、活動（綁日期）、錢湯（要準備，profile §5.9）
+const NO_FILL_CATEGORIES = new Set(['logistics', 'event', 'onsen']);
 
 const hasCoords = (p) => Number.isFinite(p?.lat) && Number.isFinite(p?.lng);
 

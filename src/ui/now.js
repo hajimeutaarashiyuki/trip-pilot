@@ -58,7 +58,7 @@ export function renderNow({ state, actions }) {
     el('h2', { text: next.poi.name_zh }),
     el('p', { class: 'big-line', text: `${legText}${closes != null ? `　${TEXT.closesAt(hm(closes))}` : dark != null ? `　${TEXT.darkBefore(hm(dark))}` : ''}` }),
     el('p', { class: 'muted small', text: `${hm(next.startMin)} 到，待 ${next.dwellMin} 分` }),
-    next.insertedBy === 'engine' ? el('p', { class: 'muted small', text: TEXT.restInsertedNow }) : null,
+    next.insertedBy === 'engine' ? el('p', { class: 'muted small', text: next.poi.recovery ? TEXT.restInsertedNow : TEXT.fillerInsertedNow }) : null,
     // 路線深連結：不帶 origin（Google Maps 用現在位置），搭車段 transit、其餘 walking（原話 #157）
     el('div', { class: 'actions' }, [
       el('a', { class: 'btn', href: routeUrl({ to: next.poi, mode: legMode(leg), cityName: tripCityName(state) }), target: '_blank', rel: 'noopener' }, TEXT.openMaps),

@@ -101,7 +101,7 @@ function stopCard(s, i, plan, d, state, actions, seenCumulative = new Set()) {
     el('h3', { text: poi.name_zh }),
     el('p', { class: 'muted small', text: [poi.guide?.intro ?? poi.highlight ?? '', limitText].filter(Boolean).join('　') }),
     warns.length ? warnList(warns) : null,
-    s.insertedBy === 'engine' ? el('p', { class: 'muted small', text: TEXT.restInserted }) : null,
+    s.insertedBy === 'engine' ? el('p', { class: 'muted small', text: poi.recovery ? TEXT.restInserted : TEXT.fillerInserted }) : null,
     el('div', { class: 'actions' }, [
       // 引擎插的站不在 picks 裡，「換一家」接不上；「不去了」會記進 day.removed，下次重排就不再插＝拒絕（原話 #126）
       // 引擎插的站不是 designated 也不是 anchor（core 只從候選帶這兩個旗標），所以「不去了」照這個條件一定會出現

@@ -127,3 +127,22 @@ test('引擎插的恢復站不拿錢湯：要準備的站只有他自己勾才�
   const ids = restCandidates({ restPool: pool, candidates: [], day, settings: {} }).map((c) => c.poi.id);
   assert.deepEqual(ids, ['cafe']);
 });
+
+test('等開門空檔任何站都可以填（原話 #161）：非恢復站的店離空檔最近就排進去，活動類不拿', () => {
+  const A = poi('先去的站', { dwellMin: 60, hours: { thu: [['09:00', '11:00']] } });   // 只開到 11 點：不能把它挪到晚開的站後面
+  const B = poi('晚開的站', { dwellMin: 60, hours: { thu: [['12:00', '23:00']] } });
+  const shop = poi('唱片行', { category: 'record', walkFactor: 0, dwellMin: 110, lng: 140.8705 });
+  const event = poi('活動', { category: 'event', walkFactor: 0, dwellMin: 110, lng: 140.8702 });
+  const pois2 = { [A.id]: A, [B.id]: B };
+  const trip2 = { id: 't2', party: 1, homeBases: [{ poi: home }], days: [{ date: '2026-08-13', type: 'normal', designated: [A.id, B.id], picks: [{ poiId: A.id, priority: 'must' }, { poiId: B.id, priority: 'must' }] }] };
+  const bare = planTrip({ trip: trip2, pois: pois2, rules, settings, country, kb, legFn }).days[0].plan;
+  assert.ok(bare.warnings.some((w) => w.ruleId === 'wait-at-door'), `先去的站結束後要等晚開的站：${ids(bare).join('→')}`);
+  const filled = planTrip({ trip: trip2, pois: pois2, rules, settings, country, kb, legFn, restPool: [shop, event] }).days[0].plan;
+  const inserted = filled.sequence.find((s) => s.poi.id === '唱片行');
+  assert.ok(inserted, `唱片行要填進空檔：${ids(filled).join('→')}`);
+  assert.equal(inserted.priority, 'filler');
+  assert.equal(inserted.insertedBy, 'engine');
+  assert.ok(!ids(filled).includes('活動'), '活動類不拿來填');
+  assert.ok(filled.penaltyMin < bare.penaltyMin, `罰分 ${filled.penaltyMin} 要低於 ${bare.penaltyMin}`);
+  assert.ok(!filled.warnings.some((w) => w.ruleId === 'wait-at-door' && !w.hint), '填了之後不再等開門');
+});
