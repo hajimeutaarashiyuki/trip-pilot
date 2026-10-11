@@ -1,4 +1,5 @@
-// 幫一城的知識庫查座標：Photon（komoot，OSM 資料）優先、Nominatim 備援。
+// 幫一城的知識庫查座標：有 Google 金鑰就先 Google（店名→Places API (New) 文字搜尋、地址→Geocoding API），沒結果再 OSM（Photon 優先、Nominatim 備援）。
+// 金鑰：環境變數 GOOGLE_MAPS_API_KEY，或專案根目錄 .secrets/google-maps.key（不進倉庫）；沒有金鑰就只用 OSM。
 // 每個結果都要「落在該站的區」才收（區靠 zones.json 的 keywords 從 area 文字歸出來）；名字對得上才算 exact；
 // 店本身不在 OSM 的，退而用 area 裡的地址查（confidence: address）。查不到的留 null，不猜。
 // 人工補在 <城>/coords.manual.json（{ "<poiId>": { lat, lng, note } }），人工的優先。
@@ -6,10 +7,10 @@
 //   預設只查還沒有的；--retry 重查 null 與非 exact 的（exact 但跑出該區的也重查）；--force 全部重查；
 //   --fill 不打網路，只把還是 null 的站填成所屬區的區心（confidence: zone），讓步行矩陣有東西算。
 // 輸出：<城>/coords.json  { "<poiId>": { lat, lng, source, query, display, confidence, zoneId, distM } | null }
-//   confidence：exact（查到的地名含店名）、address（靠地址查到，店不在 OSM）、fuzzy（在該區內但名字對不上）、unzoned（歸不到區，只知道在範圍框內）、
+//   confidence：exact（查到的地名含店名）、google（Google 用店名查到、在區內但名字比不出來，通常是對的）、address（靠地址查到）、fuzzy（OSM 在區內但名字對不上）、unzoned（歸不到區，只知道在範圍框內）、
 //              zone（都查不到，先用該區的區心頂著，誤差是半徑；--fill 填的）、manual
 import { readFile, writeFile } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { normalizePoi } from '../src/data/schema.js';
@@ -23,7 +24,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const BBOX = { west: 139.5, south: 37.0, east: 142.2, north: 40.5 };
 // 這些店型不是地點（交通、實用資訊），不查
 const SKIP_CATEGORIES = new Set(['logistics']);
-const RANK = { exact: 3, address: 2, fuzzy: 1, unzoned: 0, zone: -1 };
+const RANK = { exact: 4, google: 3, address: 2, fuzzy: 1, unzoned: 0, zone: -1 };
 
 export async function geocodePhoton(query, bbox = BBOX, limit = 5) {
   // Photon 的 lang 只有 en/de/fr/it 等，日文地名用預設（原文）即可
@@ -55,6 +56,55 @@ export async function geocodeOne(query, bbox = BBOX) {
   try { const p = await geocodePhoton(query, bbox); if (p.length) return p; } catch (err) { console.error(`Photon：${err.message}`); }
   await sleep(1100);
   return geocodeNominatim(query, bbox);
+}
+
+/** Google 金鑰：環境變數 GOOGLE_MAPS_API_KEY，或專案根目錄 .secrets/google-maps.key（gitignore）。沒有回 null。 */
+export function googleKey() {
+  if (process.env.GOOGLE_MAPS_API_KEY) return process.env.GOOGLE_MAPS_API_KEY.trim();
+  const file = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '.secrets', 'google-maps.key');
+  try { return readFileSync(file, 'utf8').trim() || null; } catch { return null; }
+}
+
+/** Google Places API (New) 文字搜尋：店名查店。有區就以區心為偏好圈（bias，不是硬限制；區內才收由 inZone 管）。 */
+export async function geocodeGooglePlaces(query, zone, key, bbox = BBOX) {
+  const body = { textQuery: query, languageCode: 'ja', regionCode: 'JP', pageSize: 5 };
+  body.locationBias = zone
+    ? { circle: { center: { latitude: zone.lat, longitude: zone.lng }, radius: Math.max((zone.radiusM ?? 800) * 2, 1500) } }
+    : { rectangle: { low: { latitude: bbox.south, longitude: bbox.west }, high: { latitude: bbox.north, longitude: bbox.east } } };
+  const res = await fetch('https://places.googleapis.com/v1/places:searchText', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Goog-Api-Key': key, 'X-Goog-FieldMask': 'places.displayName,places.formattedAddress,places.location' },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Google Places ${res.status}`);
+  const data = await res.json();
+  return (data.places ?? [])
+    .map((p) => ({ lat: p.location?.latitude, lng: p.location?.longitude, name: p.displayName?.text ?? '', display: [p.displayName?.text, p.formattedAddress].filter(Boolean).join(', '), source: 'google' }))
+    .filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lng));
+}
+
+/** Google Geocoding：地址查點（限日本、偏好東北範圍）。 */
+export async function geocodeGoogleAddress(address, key, bbox = BBOX) {
+  const url = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(address)}&language=ja&region=jp&components=country:JP&bounds=${bbox.south},${bbox.west}%7C${bbox.north},${bbox.east}&key=${encodeURIComponent(key)}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Google Geocoding ${res.status}`);
+  const data = await res.json();
+  if (data.status && data.status !== 'OK' && data.status !== 'ZERO_RESULTS') throw new Error(`Google Geocoding ${data.status}`);
+  return (data.results ?? []).map((r) => ({ lat: r.geometry.location.lat, lng: r.geometry.location.lng, name: '', display: r.formatted_address, source: 'google' }));
+}
+
+/** 預設查法：有金鑰先 Google（店名→Places、地址→Geocoding），沒結果或出錯再 OSM。 */
+export function makeLookup(key) {
+  return async (query, kind = 'name', zone = null) => {
+    if (key) {
+      try {
+        const g = kind === 'address' ? await geocodeGoogleAddress(query, key) : await geocodeGooglePlaces(query, zone, key);
+        await sleep(150);
+        if (g.length) return g;
+      } catch (err) { console.error(`Google：${err.message}`); }
+    }
+    return geocodeOne(query);
+  };
 }
 
 /** 複合名拆段：「ハピナ名掛丁＋クリスロード＋マーブルロードおおまち」→ 三段；括號裡的也算一段。 */
@@ -111,16 +161,16 @@ export function zoneFor(poi, zones) {
   return id && zones[id] ? { id, ...zones[id] } : null;
 }
 
-/** 一站：照查詢順序找，exact 立刻收；否則留等級最高的（address ＞ fuzzy ＞ unzoned）。 */
+/** 一站：照查詢順序找，exact 立刻收；否則留等級最高的（google ＞ address ＞ fuzzy ＞ unzoned）。lookup(query, kind, zone) 回候選清單。 */
 export async function geocodePoi(poi, city, zone, lookup = geocodeOne) {
   let best = null;
   for (const { q, kind } of queriesFor(poi, city)) {
     let cands = [];
-    try { cands = await lookup(q); } catch (err) { console.error(`${poi.name_zh}：${err.message}`); }
+    try { cands = await lookup(q, kind, zone); } catch (err) { console.error(`${poi.name_zh}：${err.message}`); }
     await sleep(700);
     const hit = cands.find((c) => inZone(c, zone));
     if (!hit) continue;
-    const confidence = nameMatches(hit, poi) ? 'exact' : kind === 'address' ? 'address' : zone ? 'fuzzy' : 'unzoned';
+    const confidence = nameMatches(hit, poi) ? 'exact' : kind === 'address' ? 'address' : hit.source === 'google' ? 'google' : zone ? 'fuzzy' : 'unzoned';
     const r = { lat: hit.lat, lng: hit.lng, source: hit.source, query: q, display: hit.display, confidence, zoneId: zone?.id ?? null, distM: zone ? Math.round(haversineM(hit, zone)) : null };
     if (confidence === 'exact') return r;
     if (!best || RANK[confidence] > RANK[best.confidence]) best = r;
@@ -135,7 +185,7 @@ function loadPois(kb) {
   return list.map((raw) => normalizePoi(raw).poi).filter((p) => (seen.has(p.id) ? false : (seen.add(p.id), true)));
 }
 
-const MARK = { exact: '○', address: '▢', fuzzy: '△', unzoned: '？', zone: '◎' };
+const MARK = { exact: '○', google: '◇', address: '▢', fuzzy: '△', unzoned: '？', zone: '◎' };
 
 async function main() {
   const args = process.argv.slice(2);
@@ -152,7 +202,10 @@ async function main() {
   const manualPath = path.join(dir, 'coords.manual.json');
   const out = existsSync(outPath) && mode !== 'force' ? JSON.parse(await readFile(outPath, 'utf8')) : {};
   const manual = existsSync(manualPath) ? JSON.parse(await readFile(manualPath, 'utf8')) : {};
-  const counts = { exact: 0, address: 0, fuzzy: 0, unzoned: 0, zone: 0, none: 0, manual: 0, kept: 0, skipped: 0 };
+  const counts = { exact: 0, google: 0, address: 0, fuzzy: 0, unzoned: 0, zone: 0, none: 0, manual: 0, kept: 0, skipped: 0 };
+  const key = googleKey();
+  const lookup = makeLookup(key);
+  console.log(key ? 'Google 金鑰有：店名走 Places、地址走 Geocoding，沒結果再 OSM' : '沒有 Google 金鑰：只用 OSM');
   for (const poi of pois) {
     if (manual[poi.id]) { out[poi.id] = { ...manual[poi.id], source: 'manual', confidence: 'manual' }; counts.manual++; continue; }
     if (SKIP_CATEGORIES.has(poi.category)) { out[poi.id] = null; counts.skipped++; continue; }
@@ -167,13 +220,13 @@ async function main() {
       continue;
     }
     if (mode === 'retry' && cur && cur.confidence === 'exact' && inZone(cur, zone)) { counts.kept++; continue; }
-    const r = await geocodePoi(poi, city, zone);
+    const r = await geocodePoi(poi, city, zone, lookup);
     out[poi.id] = r;
     counts[r ? r.confidence : 'none']++;
     console.log(`${r ? MARK[r.confidence] : '×'} ${poi.name_zh}${zone ? `［${zone.id}］` : '［無區］'}${r ? `　${r.lat.toFixed(5)},${r.lng.toFixed(5)}　${r.display.slice(0, 60)}${r.distM != null ? `　距區心 ${r.distM} m` : ''}` : ''}`);
   }
   await writeFile(outPath, JSON.stringify(out, null, 2) + '\n', 'utf8');
-  console.log(`座標：exact ${counts.exact}、address ${counts.address}、fuzzy ${counts.fuzzy}、unzoned ${counts.unzoned}、區心頂替 ${counts.zone}、沒查到 ${counts.none}、人工 ${counts.manual}、沿用 ${counts.kept}、不查（交通類）${counts.skipped}；共 ${pois.length} 站 → ${outPath}`);
+  console.log(`座標：exact ${counts.exact}、google ${counts.google}、address ${counts.address}、fuzzy ${counts.fuzzy}、unzoned ${counts.unzoned}、區心頂替 ${counts.zone}、沒查到 ${counts.none}、人工 ${counts.manual}、沿用 ${counts.kept}、不查（交通類）${counts.skipped}；共 ${pois.length} 站 → ${outPath}`);
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();

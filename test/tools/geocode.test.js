@@ -54,3 +54,19 @@ test('geocodePoi：區外的候選跳過；exact 立刻收；否則地址勝過 
   assert.equal(e.confidence, 'exact');
   assert.equal(seen2.length, 1);
 });
+
+test('geocodePoi：Google 用店名查到、在區內但名字比不出來 → google，勝過地址；lookup 收到 kind 與 zone', async () => {
+  const zone = { id: 'ichibancho', lat: 38.2612, lng: 140.8716, radiusM: 900 };
+  const poi = { name_local: 'Utah', name_zh: 'Utah', area: '一番町（一番町4-3-26）' };
+  const seen = [];
+  const lookup = async (q, kind, z) => {
+    seen.push([q, kind, z?.id]);
+    if (kind === 'name' && q.startsWith('Utah')) return [{ lat: 38.2620, lng: 140.8720, name: 'ユタ', display: 'ユタ, 宮城県仙台市青葉区一番町', source: 'google' }];
+    if (kind === 'address') return [{ lat: 38.2630, lng: 140.8718, name: '', display: '〒980-0811 宮城県仙台市青葉区一番町４丁目３−２６', source: 'google' }];
+    return [];
+  };
+  const r = await geocodePoi(poi, '仙台', zone, lookup);
+  assert.equal(r.confidence, 'google');
+  assert.equal(r.source, 'google');
+  assert.ok(seen.some(([, kind, zid]) => kind === 'name' && zid === 'ichibancho'));
+});
