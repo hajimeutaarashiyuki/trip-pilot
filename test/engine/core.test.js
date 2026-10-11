@@ -101,3 +101,27 @@ test('固定時段的站（花火）前的空檔是卡位不是等開門：不�
   assert.ok(!r.warnings.some((w) => w.ruleId === 'wait-at-door'), '固定時段不算等開門');
   assert.deepEqual(r.dropped, []);
 });
+
+test('太晚出門（late-departure）：第一站 11:30 才開的店不再把整天推到 11:30 出門，先排 09:00 開的站；只有晚開的店時罰 60 封頂、警告寫幾點出門', () => {
+  const lateShop = { poi: poi('晚開的店', { walkFactor: 0, hours: { thu: [['11:30', '23:00']] } }), priority: 'must' };
+  const earlyShop = { poi: poi('早開的店', { walkFactor: 0, dwellMin: 90 }), priority: 'want' };
+  const r = planDay({ candidates: [lateShop, earlyShop], day: day(), home, legFn: flatLeg, rules, settings, country, kb });
+  assert.deepEqual(r.sequence.map((s) => s.poi.id), ['早開的店', '晚開的店'], '沒這條規則時引擎會先去晚開的店、11:30 出門（等開門罰 25 比晚出門罰 0 貴）');
+  assert.equal(r.sequence[0].startMin, 9 * 60 + 10);
+  assert.ok(!r.warnings.some((w) => w.ruleId === 'late-departure'));
+  const only = planDay({ candidates: [lateShop], day: day(), home, legFn: flatLeg, rules, settings, country, kb, options: { explain: true } });
+  assert.equal(only.sequence[0].startMin, 11 * 60 + 30);
+  const w = only.warnings.find((x) => x.ruleId === 'late-departure');
+  assert.ok(w, '太晚出門要有警告');
+  assert.match(w.msg, /^今天 11:20 才出門，比預設晚 140 分$/);
+  assert.deepEqual(only.breakdown.stops[0].items.filter((i) => i.ruleId === 'late-departure').map((i) => i.minutes), [60]);
+});
+
+test('落選理由：在某條分支排進去過的站是分數取捨，不拿硬約束那句（例如天黑）當理由', () => {
+  // 三站都排得進但只准 2 站：第三站是分數取捨，不是「排不進」
+  const cands = [{ poi: poi('A'), priority: 'must' }, { poi: poi('B'), priority: 'want' }, { poi: poi('C'), priority: 'maybe' }];
+  const r = planDay({ candidates: cands, day: day(), home, legFn: flatLeg, rules, settings: { ...settings, maxStopsPerDay: 2 }, country, kb });
+  assert.equal(r.sequence.length, 2);
+  assert.equal(r.dropped.length, 1);
+  assert.equal(r.dropped[0].reason, '今天勾了 3 站、上限 2，它排在後面');   // 排進去過＝取捨；勾的比名額多就寫名額那句（10-12 對抗審查）
+});

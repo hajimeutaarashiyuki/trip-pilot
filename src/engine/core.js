@@ -4,6 +4,7 @@
 // 硬約束回 never 的候選在這條分支裡整個拿掉（再往後插也不可能）；回 no 的留著，晚一點可能可以。
 // 有節點與時間預算：預算用完就回報目前最好的（anytime），stats.truncated 標 true。
 import { evaluateStop, evaluateDay } from './evaluate.js';
+import { SAME_TYPE_CATEGORIES } from '../rules/_helpers.js';   // 只借同類店型清單寫落選理由，不是規則邏輯
 import { emptyAcc } from './dims.js';
 import { placeStop } from './schedule.js';
 import { warnText } from '../rules/index.js';
@@ -32,8 +33,9 @@ function orderCandidates(list) {
 
 /**
  * planDay({ candidates, day, home, legFn, rules, settings, country, kb, options })
- * - candidates: [{ poi, dwellMin?, priority, designated?, isAnchor?, fixedWindow?, optional?, insertedBy? }]
- *   optional：排不進不算落選（不進 dropped）；insertedBy：誰插的（'engine'），排進去的 stop 會帶著
+ * - candidates: [{ poi, dwellMin?, priority, designated?, isAnchor?, fixedWindow?, optional?, insertedBy?, gap? }]
+ *   optional：排不進不算落選（不進 dropped）、不佔 maxStopsPerDay 名額（rules/max-stops.js）；insertedBy：誰插的（'engine'），排進去的 stop 會帶著；
+ *   gap：填站只能落在的那段空檔 { startMin, endMin }（trip.js fillCandidates，規則 filler-gap 擋），其他站 null
  * - home: 住宿據點（第一段移動的起點）
  * - legFn(fromPoi, toPoi) → { walkMin, rideMin, climbMin, backtrackMin?, mode }
  * 回 { sequence, score, penaltyMin, warnings, dropped, breakdown, stats }；永遠回得出東西（總則 0）。
@@ -41,12 +43,13 @@ function orderCandidates(list) {
 export function planDay({ candidates, day, home, legFn, rules, settings, country, kb, options = {} }) {
   const maxNodes = options.maxNodes ?? 200000;
   const maxMs = options.maxMs ?? 800;
-  const maxOptional = settings.restInsertMaxPerDay ?? 2;   // 一天最多排幾個 optional（引擎插的恢復站；rules.json settings.restInsertMaxPerDay）：價值 0 的站不受上界剪枝，不設上限會把節點吃光
+  const maxOptional = settings.restInsertMaxPerDay ?? 2;   // 一天最多排幾個 optional（引擎插的恢復站與填站；rules.json settings.restInsertMaxPerDay）：價值 0 的站不受上界剪枝，不設上限會把節點吃光
   const explain = Boolean(options.explain);
   const started = Date.now();
   const cands = orderCandidates(candidates.map((c, i) => ({ ...c, _i: i, value: candidateValue(c), dwellMin: c.dwellMin ?? c.poi.dwellMin ?? settings.defaultDwellMin ?? 60 })));
   const stats = { nodes: 0, truncated: false, ms: 0 };
-  const dead = new Map();   // _i → 最後一次 never 的人話理由
+  const dead = new Map();   // _i → 第一次 never 的人話理由
+  const placedEver = new Set();   // 在任何一條分支裡排進去過的候選：落選是分數取捨，不是硬約束擋的（理由不能拿 never 的那句誤導，例如「天黑」）
   let best = null;
 
   const dayCtxBase = { day, settings, country, kb };
@@ -64,8 +67,8 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
     if (stats.nodes++ > maxNodes || Date.now() - started > maxMs) { stats.truncated = true; return; }
     tryEnd(seq, acc, score, path);
     if (!remaining.length) return;
-    // 上界：最多再放 (上限 − 已放) 站，取價值最高的那幾個（remaining 已按價值排序）
-    const slots = Math.max(0, (settings.maxStopsPerDay ?? 8) - seq.length);
+    // 上界：最多再放 (上限 − 已放) 站，取價值最高的那幾個（remaining 已按價值排序）；optional 的站不佔名額（max-stops 只數他勾的），不扣
+    const slots = Math.max(0, (settings.maxStopsPerDay ?? 8) - seq.filter((s) => !s.optional).length);
     const optimistic = score + remaining.slice(0, slots).reduce((s, c) => s + c.value, 0);
     if (best && best.complete && optimistic <= best.total) return;
     const prev = seq.length ? seq[seq.length - 1] : null;
@@ -78,7 +81,7 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
       if (c.optional && optionalPlaced >= maxOptional) continue;
       const leg = withBacktrack(normalizeLeg(legFn(prevPoi, c.poi)), seq, home, c.poi, legFn);
       const placed = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev });
-      const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i, optional: Boolean(c.optional), insertedBy: c.insertedBy ?? null };
+      const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i, optional: Boolean(c.optional), insertedBy: c.insertedBy ?? null, gap: c.gap ?? null };
       const ctx = { ...dayCtxBase, stop, prev, next: null, leg, acc, sequence: seq };
       const r = evaluateStop(ctx, rules);
       if (r.verdict === 'never') {
@@ -88,6 +91,7 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
       }
       if (r.verdict === 'no') continue;
       const nextRemaining = remaining.filter((o) => o._i !== c._i && !nowDead.includes(o._i));
+      placedEver.add(c._i);
       search([...seq, stop], nextRemaining, r.acc, score + c.value - r.penaltyMin, [...path, { stop, penaltyMin: r.penaltyMin, breakdown: r.breakdown, warnings: r.warnings }]);
       if (stats.truncated) return;
     }
@@ -110,13 +114,14 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
         if (c.optional && optionalPlaced >= maxOptional) continue;
         const leg = withBacktrack(normalizeLeg(legFn(prevPoi, c.poi)), seq, home, c.poi, legFn);
         const placed = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev });
-        const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i, optional: Boolean(c.optional), insertedBy: c.insertedBy ?? null };
+        const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i, optional: Boolean(c.optional), insertedBy: c.insertedBy ?? null, gap: c.gap ?? null };
         const r = evaluateStop({ ...dayCtxBase, stop, prev, next: null, leg, acc, sequence: seq }, rules);
         if (r.verdict !== 'ok') continue;
         const gain = c.value - r.penaltyMin;
         if (!pick || gain > pick.gain || (gain === pick.gain && placed.startMin < pick.stop.startMin)) pick = { c, stop, r, gain };
       }
       if (!pick || pick.gain <= 0) break;
+      placedEver.add(pick.c._i);
       seq = [...seq, pick.stop]; acc = pick.r.acc; score += pick.gain;
       path.push({ stop: pick.stop, penaltyMin: pick.r.penaltyMin, breakdown: pick.r.breakdown, warnings: pick.r.warnings });
       remaining = remaining.filter((o) => o._i !== pick.c._i);
@@ -126,8 +131,21 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
 
   if (!best) best = { total: 0, complete: false, seq: [], path: [], dayEval: evaluateDay({ ...dayCtxBase, sequence: [], acc: emptyAcc(rules.dims) }, rules), acc: emptyAcc(rules.dims) };
   const placedIdx = new Set(best.seq.map((s) => s.candidateIndex));
-  // optional 的候選（引擎插的恢復站）排不進是常態，不算落選
-  const dropped = cands.filter((c) => !placedIdx.has(c._i) && !c.optional).map((c) => ({ poi: c.poi, priority: c.priority, reason: dead.get(c._i) ?? '時間或分數排不進' }));
+  // optional 的候選（引擎插的恢復站與填站）排不進是常態，不算落選
+  // 落選理由：排進去過的（placedEver）是取捨，再分是不是名額或同類上限造成；從沒排進去過的用硬約束記的那句
+  const nonOptional = cands.filter((c) => !c.optional);
+  const maxStops = settings.maxStopsPerDay ?? 8;
+  const sameTypeMax = settings.sameTypeMaxPerDay ?? 2;
+  const byCat = new Map();
+  for (const c of nonOptional) byCat.set(c.poi.category, (byCat.get(c.poi.category) ?? 0) + 1);
+  const reasonFor = (c) => {
+    if (!placedEver.has(c._i)) return dead.get(c._i) ?? '時間或分數排不進';
+    if (nonOptional.length > maxStops) return `今天勾了 ${nonOptional.length} 站、上限 ${maxStops}，它排在後面`;
+    const n = byCat.get(c.poi.category) ?? 0;
+    if (SAME_TYPE_CATEGORIES.includes(c.poi.category) && day.themeCategory !== c.poi.category && n > sameTypeMax) return `同類的店一天最多 ${sameTypeMax} 家、勾了 ${n} 家，它排在後面`;
+    return '排得進，但排進去整天的分數反而低';
+  };
+  const dropped = cands.filter((c) => !placedIdx.has(c._i) && !c.optional).map((c) => ({ poi: c.poi, priority: c.priority, reason: reasonFor(c) }));
   const stopPenalty = best.path.reduce((s, p) => s + p.penaltyMin, 0);
   const warnings = [
     ...best.path.flatMap((p) => p.warnings),

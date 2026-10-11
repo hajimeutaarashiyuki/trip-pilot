@@ -16,6 +16,7 @@
     "earlyDayAfterHM": "13:00",
     "partyWalkFactor": 0.85,
     "dayTripNextWalkFactor": 0.85,
+    "dayTripWalkFactor": 0.7,
     "openSlotMinPerDay": 90,
     "lateThresholdMin": 15,
     "walkingMPerMin": 80,
@@ -34,10 +35,12 @@
     "restPoolMax": 6,
     "fillPoolMax": 6,
     "restInsertMaxPerDay": 2,
+    "fillMinGapMin": 15,
     "_原話": {
       "maxShopRunMin": "#103（題目寫 240 他答可以）",
       "walkBudgetMin": "#114（先留）",
-      "sameTypeMaxPerDay": "#123、#143"
+      "sameTypeMaxPerDay": "#123、#143",
+      "dayTripWalkFactor": "#160（跟早起日同值 0.7，取最嚴）"
     }
   },
   "rules": {
@@ -124,6 +127,15 @@
       "freeMin": 15,
       "perMin": 1,
       "capMin": 60
+    },
+    "late-departure": {
+      "weight": 1,
+      "freeMin": 60,
+      "perMin": 1,
+      "capMin": 60
+    },
+    "filler-gap": {
+      "weight": 1
     },
     "anchor": {
       "weight": 1

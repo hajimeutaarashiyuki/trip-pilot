@@ -58,7 +58,7 @@ export function renderNow({ state, actions }) {
     el('h2', { text: next.poi.name_zh }),
     el('p', { class: 'big-line', text: `${legText}${closes != null ? `　${TEXT.closesAt(hm(closes))}` : dark != null ? `　${TEXT.darkBefore(hm(dark))}` : ''}` }),
     el('p', { class: 'muted small', text: `${hm(next.startMin)} 到，待 ${next.dwellMin} 分` }),
-    next.insertedBy === 'engine' ? el('p', { class: 'muted small', text: next.poi.recovery ? TEXT.restInsertedNow : TEXT.fillerInsertedNow }) : null,
+    next.insertedBy === 'engine' ? el('p', { class: 'muted small', text: next.priority === 'filler' ? TEXT.fillerInsertedNow : TEXT.restInsertedNow }) : null,
     // 路線深連結：不帶 origin（Google Maps 用現在位置），搭車段 transit、其餘 walking（原話 #157）
     el('div', { class: 'actions' }, [
       el('a', { class: 'btn', href: routeUrl({ to: next.poi, mode: legMode(leg), cityName: tripCityName(state) }), target: '_blank', rel: 'noopener' }, TEXT.openMaps),
@@ -93,8 +93,8 @@ function leave({ state, actions, seq, idx, prev }) {
 }
 
 function proposalsBlock({ state, actions, date, planned, seq, idx, nowMin, limitText }) {
-  // optional 與 insertedBy 要帶著：引擎插的站重排時還是價值 0、排不進不算落選、不算餐段與夜間站（採用改案後才不會變成他排的）
-  const remaining = seq.slice(idx).map((s) => ({ poi: s.poi, priority: s.priority ?? 'want', dwellMin: s.dwellMin, designated: s.designated, isAnchor: s.isAnchor, fixedWindow: s.fixedWindow, optional: Boolean(s.optional), insertedBy: s.insertedBy ?? null }));
+  // optional、insertedBy、gap 要帶著：引擎插的站重排時還是價值 0、排不進不算落選、不算餐段與夜間站、填站還是只能在它的空檔（採用改案後才不會變成他排的）
+  const remaining = seq.slice(idx).map((s) => ({ poi: s.poi, priority: s.priority ?? 'want', dwellMin: s.dwellMin, designated: s.designated, isAnchor: s.isAnchor, fixedWindow: s.fixedWindow, optional: Boolean(s.optional), insertedBy: s.insertedBy ?? null, gap: s.gap ?? null }));
   const here = idx > 0 ? seq[idx - 1].poi : resolveHome(state.trip, date);
   const { proposals } = replanDay({ day: planned.day, remaining, here, nowMin, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, legFn: state.legFn, pool: state.pool });
   const block = el('section', { class: 'card warn' }, [

@@ -22,6 +22,8 @@ export const CHECKS = [
   { label: '非主題日同類店上限', pattern: /非主題日同類店每天 ≤(\d+)/, key: 'sameTypeMaxPerDay' },
   { label: '留白', pattern: /每天留 (\d+) 分鐘/, key: 'openSlotMinPerDay' },
   { label: '早起日步行預算', pattern: /步行預算 150→(\d+)/, key: 'earlyDayWalkFactor', transform: (n) => Math.round((n / 150) * 100) / 100 },
+  // 一日遊本身的倍率跟早起日同一句（profile §2.4「一日遊／早起日的 0.7 倍留著」，原話 #160）
+  { label: '一日遊步行預算倍率', pattern: /一日遊／早起日的 (0\.\d+) 倍留著/, key: 'dayTripWalkFactor' },
   // 日照邊界「日出+30 到日落−30」：兩個數字都要等於 daylightMarginMin（profile 寫的減號是 U+2212，不是連字號）
   { label: '日照邊界（日出側）', pattern: /日出\+(\d+) 到日落−\d+/, key: 'daylightMarginMin' },
   { label: '日照邊界（日落側）', pattern: /日出\+\d+ 到日落−(\d+)/, key: 'daylightMarginMin' },

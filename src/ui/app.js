@@ -88,12 +88,12 @@ export function swapStop(date, fromPoiId, toPoi) {
   replanAll();
 }
 
-/** 不去了：他勾的站從 picks 拿掉；引擎插的站（insertedBy 'engine'）不在 picks，記進 removed 就是拒絕，trip.js 看到那天不再插（原話 #126、profile §2.4）。 */
-export function removeStop(date, poiId, insertedBy = null) {
+/** 不去了：他勾的站從 picks 拿掉；引擎插的站（insertedBy 'engine'）不在 picks，記進 removed 就是拒絕，trip.js 看到那天不再插同一種（priority 'rest' 恢復站／'filler' 填站；原話 #126、profile §2.4）。 */
+export function removeStop(date, poiId, insertedBy = null, priority = null) {
   const day = state.trip.days.find((d) => d.date === date);
   if (!day) return;
   day.picks = (day.picks ?? []).filter((p) => p.poiId !== poiId);
-  day.removed = [...(day.removed ?? []), { poiId, at: new Date().toISOString(), ...(insertedBy ? { insertedBy } : {}) }];   // 不算落選（原話 #91）
+  day.removed = [...(day.removed ?? []), { poiId, at: new Date().toISOString(), ...(insertedBy ? { insertedBy } : {}), ...(priority ? { priority } : {}) }];   // 不算落選（原話 #91）
   replanAll();
 }
 

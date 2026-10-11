@@ -25,7 +25,8 @@ export function replanDay(input) {
     let out;
     try { out = s.apply(input); } catch (err) { continue; }
     if (!out) continue;
-    const day = { ...input.day, ...(out.dayPatch ?? {}), window: { ...input.day.window, startMin: input.nowMin, ...(out.dayPatch?.window ?? {}) } };
+    // resumed：從當下接著排、不是出門（late-departure 不罰第一個剩下的站）
+    const day = { ...input.day, resumed: true, ...(out.dayPatch ?? {}), window: { ...input.day.window, startMin: input.nowMin, ...(out.dayPatch?.window ?? {}) } };
     const settings = { ...input.settings, ...(out.settingsPatch ?? {}) };
     const plan = planDay({ candidates: out.candidates, day, home: input.here, legFn: input.legFn, rules: input.rules, settings, country: input.country, kb: input.kb, options: { maxMs: options.maxMs ?? 300 } });
     proposals.push({ id: s.id, label: s.label, note: out.note, changes: out.changes ?? [], plan });

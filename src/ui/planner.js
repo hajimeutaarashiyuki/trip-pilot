@@ -101,12 +101,13 @@ function stopCard(s, i, plan, d, state, actions, seenCumulative = new Set()) {
     el('h3', { text: poi.name_zh }),
     el('p', { class: 'muted small', text: [poi.guide?.intro ?? poi.highlight ?? '', limitText].filter(Boolean).join('　') }),
     warns.length ? warnList(warns) : null,
-    s.insertedBy === 'engine' ? el('p', { class: 'muted small', text: poi.recovery ? TEXT.restInserted : TEXT.fillerInserted }) : null,
+    // 哪一種引擎插的站看 stop.priority（'filler' 填空檔、'rest' 恢復站），不看店型：恢復型的店也可能是填站
+    s.insertedBy === 'engine' ? el('p', { class: 'muted small', text: s.priority === 'filler' ? TEXT.fillerInserted : TEXT.restInserted }) : null,
     el('div', { class: 'actions' }, [
       // 引擎插的站不在 picks 裡，「換一家」接不上；「不去了」會記進 day.removed，下次重排就不再插＝拒絕（原話 #126）
       // 引擎插的站不是 designated 也不是 anchor（core 只從候選帶這兩個旗標），所以「不去了」照這個條件一定會出現
       s.insertedBy === 'engine' ? null : el('button', { class: 'btn', type: 'button', onclick: () => toggleSwap(card, s, plan, d, state, actions) }, TEXT.swap),
-      s.designated || s.isAnchor ? null : el('button', { class: 'btn quiet', type: 'button', onclick: () => actions.removeStop(d.date, poi.id, s.insertedBy) }, TEXT.remove),
+      s.designated || s.isAnchor ? null : el('button', { class: 'btn quiet', type: 'button', onclick: () => actions.removeStop(d.date, poi.id, s.insertedBy, s.priority) }, TEXT.remove),
       el('a', { class: 'btn quiet', href: placeUrl(poi, tripCityName(state)), target: '_blank', rel: 'noopener' }, TEXT.mapLink),
     ]),
   ]);

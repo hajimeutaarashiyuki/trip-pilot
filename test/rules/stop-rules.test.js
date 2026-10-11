@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { stop, ctx, run, warnOf, rules, settings } from './_fixtures.js';
 import { evaluateStop } from '../../src/engine/evaluate.js';
+import { budgetMultiplier } from '../../src/rules/_helpers.js';
 
 const HOURS = { thu: [['11:30', '13:30'], ['17:30', '21:00']] };   // 2026-08-13 是週四
 
@@ -84,4 +85,53 @@ test('wait-at-door：等開門超過 15 分的部分每分鐘罰 1、封頂 60�
   const fireworks = stop('花火', { category: 'event', walkFactor: 0, startMin: 19 * 60, dwellMin: 60, fixedWindow: { startMin: 19 * 60 + 30, arriveEarlyMin: 30 } });
   assert.equal(run('wait-at-door', ctx({ ...fireworks, waitMin: 200 })), 0, '固定時段（花火）前的空檔不是等開門');
   assert.match(warnOf('wait-at-door', ctx({ ...stop('Elbe'), waitMin: 45 })), /^到 Elbe 要在門口等 45 分$/);
+});
+
+test('late-departure：只罰當天第一站、比時窗起點晚超過 60 分的部分每分鐘 1、封頂 60；第二站不算；現場接著排（day.resumed）不算；晚出門日起點 11:00', () => {
+  const first = (startMin) => ctx(stop('第一站', { startMin }), { prev: null, sequence: [] });
+  assert.equal(run('late-departure', first(11 * 60 + 30)), 60, '11:30 才開始：超過 90 分，封頂 60');
+  assert.equal(run('late-departure', first(10 * 60 + 30)), 30);
+  assert.equal(run('late-departure', first(9 * 60 + 50)), 0);
+  assert.equal(run('late-departure', ctx(stop('第二站', { startMin: 11 * 60 + 30 }), { prev: stop('第一站'), sequence: [stop('第一站')] })), 0, '第二站不算');
+  assert.equal(run('late-departure', ctx(stop('第一站', { startMin: 11 * 60 + 30 }), { day: { resumed: true } })), 0, '現場改案從當下接著排，不是出門');
+  assert.equal(run('late-departure', ctx(stop('第一站', { startMin: 12 * 60 }), { day: { window: { startMin: 11 * 60, endMin: 1440 } } })), 0, '晚出門日時窗起點 11:00，12:00 到第一站不罰');
+  assert.match(warnOf('late-departure', first(11 * 60 + 30)), /^今天 11:30 才出門，比預設晚 150 分$/);
+  assert.match(warnOf('late-departure', ctx({ ...stop('第一站', { startMin: 11 * 60 + 30 }), arriveMin: 11 * 60 + 30 }, { leg: { walkMin: 5, rideMin: 20, climbMin: 0 } })), /^今天 11:05 才出門，比預設晚 125 分$/, '出門時刻＝到第一站減移動');
+  // 罰的是出門時刻：第一段車 60＋走 10、09:00 出門 10:10 到，不罰（10-12 對抗審查：原本罰的是第一站開始時刻）
+  assert.equal(run('late-departure', ctx({ ...stop('第一站', { startMin: 10 * 60 + 10 }), arriveMin: 10 * 60 + 10 }, { prev: null, sequence: [], leg: { walkMin: 10, rideMin: 60, climbMin: 0 } })), 0, '準時出門、第一段 70 分不罰');
+  assert.equal(run('late-departure', ctx(stop('第一站', { startMin: 11 * 60 + 30 }), { prev: null, sequence: [], day: { type: 'departure' } })), 0, '離境日不算');
+  assert.equal(run('late-departure', ctx({ ...stop('花火', { startMin: 19 * 60, category: 'event', walkFactor: 0 }), fixedWindow: { startMin: 19 * 60 + 30, arriveEarlyMin: 30 } }, { prev: null, sequence: [] })), 0, '固定時段的站當第一站不算');
+});
+
+test('filler-gap：填站的起訖要在它的空檔內，超出＝never；不是填站、沒有 gap 都 ok', () => {
+  const gap = { startMin: 600, endMin: 720 };
+  const filler = (startMin, dwellMin = 30) => ({ ...stop('藥妝店', { startMin, dwellMin, category: 'drugstore', walkFactor: 0 }), priority: 'filler', optional: true, insertedBy: 'engine', gap });
+  assert.equal(run('filler-gap', ctx(filler(600))), 'ok');
+  assert.equal(run('filler-gap', ctx(filler(690))), 'ok', '剛好貼齊空檔結束');
+  assert.equal(run('filler-gap', ctx(filler(700))), 'never', '11:40–12:10 超出 12:00');
+  assert.equal(run('filler-gap', ctx(filler(590))), 'never', '比空檔早開始');
+  assert.equal(run('filler-gap', ctx({ ...filler(700), priority: 'rest' })), 'ok', '恢復站不綁空檔');
+  assert.equal(run('filler-gap', ctx({ ...filler(700), gap: null })), 'ok');
+  assert.equal(run('filler-gap', ctx(stop('他勾的', { startMin: 700 }))), 'ok');
+  assert.match(warnOf('filler-gap', ctx(filler(700))), /^藥妝店 不在空檔內（10:00–12:00）$/);
+});
+
+test('max-stops：只數他勾的站，引擎插的（optional）不佔名額', () => {
+  const eight = Array.from({ length: 8 }, (_, i) => stop(`s${i}`));
+  const opt = { ...stop('咖啡廳', { category: 'cafe', walkFactor: 0, recovery: true }), optional: true, insertedBy: 'engine', priority: 'rest' };
+  assert.equal(run('max-stops', ctx(opt, { sequence: eight })), 'ok', '已經 8 站還能插引擎的站');
+  assert.equal(run('max-stops', ctx(stop('第八站'), { sequence: [...eight.slice(0, 7), opt] })), 'ok', '7 站＋1 個引擎插的，第 8 個他勾的站排得進');
+  assert.equal(run('max-stops', ctx(stop('第九站'), { sequence: [...eight, opt] })), 'never');
+  assert.match(warnOf('max-stops', ctx(stop('第九站'), { sequence: [...eight, opt] })), /^今天已經 8 站，上限 8$/);
+});
+
+test('walk-budget：一日遊本身 ×0.7（原話 #160，跟早起日同值）；倍率同時中取最嚴', () => {
+  assert.equal(settings.dayTripWalkFactor, 0.7);
+  assert.equal(budgetMultiplier({ dayTrip: true }, settings), 0.7);
+  assert.equal(budgetMultiplier({ dayTrip: true, earlyDay: true, party: 2, dayTripNext: true }, settings), 0.7, '四個倍率同時中取最嚴');
+  assert.equal(budgetMultiplier({ party: 2 }, settings), 0.85);
+  assert.equal(budgetMultiplier({}, settings), 1);
+  const dt = ctx(stop('x'), { acc: { 'dim-walk': 120 }, day: { dayTrip: true } });
+  assert.equal(run('walk-budget', dt), 120 - 150 * 0.7, '一日遊非早起日的預算是 150×0.7');
+  assert.match(warnOf('walk-budget', dt), /超過上限 105/);
 });

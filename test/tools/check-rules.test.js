@@ -29,3 +29,12 @@ test('日照邊界：profile 的「日出+30 到日落−30」兩個數字都要
   const r2 = checkRules('日出+30 到日落−45', rules);
   assert.deepEqual(r2.mismatches.map((m) => [m.key, m.profile, m.rules]), [['daylightMarginMin', 45, 30]]);
 });
+
+test('一日遊倍率：profile 的「一日遊／早起日的 0.7 倍留著」對 dayTripWalkFactor（原話 #160）', () => {
+  const rules = { settings: { dayTripWalkFactor: 0.7 } };
+  const r1 = checkRules('一日遊／早起日的 0.7 倍留著（原話 #160）', rules);
+  assert.ok(!r1.mismatches.some((m) => m.key === 'dayTripWalkFactor'));
+  assert.ok(!r1.notFound.includes('一日遊步行預算倍率'));
+  const r2 = checkRules('一日遊／早起日的 0.8 倍留著', rules);
+  assert.deepEqual(r2.mismatches.map((m) => [m.key, m.profile, m.rules]), [['dayTripWalkFactor', 0.8, 0.7]]);
+});

@@ -42,3 +42,19 @@ test('planTrip：兩天各自排好；第二天是古著主題日、第一天不
   assert.ok(d2.plan.sequence.filter((s) => s.poi.category === 'vintage').length >= 3);
   assert.ok(d1.plan.sequence.some((s) => s.poi.id === POIS['汐谷'].id));
 });
+
+test('planTrip：一日遊那天 day.dayTrip 帶給規則（步行預算 ×0.7，原話 #160）；不是一日遊是 false；翌日 dayTripNext', () => {
+  const trip = {
+    id: 't', party: 1, homeBases: [{ poi: HOME }],
+    days: [
+      { date: '2026-08-13', type: 'normal', picks: [{ poiId: POIS['大崎八幡宮'].id, priority: 'must' }] },
+      { date: '2026-08-14', type: 'normal', earlyDay: true, departHM: '07:30', dayTrip: true, picks: [{ poiId: POIS['大崎八幡宮'].id, priority: 'must' }] },
+      { date: '2026-08-15', type: 'normal', picks: [{ poiId: POIS['大崎八幡宮'].id, priority: 'must' }] },
+    ],
+  };
+  const r = planTrip({ trip, pois, rules, settings, country: COUNTRY, kb: KB, legFn });
+  assert.equal(r.days[0].day.dayTrip, false);
+  assert.equal(r.days[1].day.dayTrip, true);
+  assert.equal(r.days[2].day.dayTrip, false);
+  assert.equal(r.days[2].day.dayTripNext, true);
+});

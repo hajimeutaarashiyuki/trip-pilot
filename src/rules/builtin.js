@@ -21,6 +21,8 @@ import backtrack from './backtrack.js';
 import zoneExit from './zone-exit.js';
 import noonUrban from './noon-urban.js';
 import waitAtDoor from './wait-at-door.js';
+import lateDeparture from './late-departure.js';
+import fillerGap from './filler-gap.js';
 import anchor from './anchor.js';
 import designated from './designated.js';
 import itemGap from './item-gap.js';
@@ -31,9 +33,9 @@ export const BUILTIN = Object.freeze([
   // 累積量
   dimWalk, dimWalkRun, dimShopRun, dimCatCount, dimRecRun, dimAfternoon,
   // 硬約束（站）
-  hours, fixedWindow, windowRule, maxStops, sameTypeDay, earlyDay, daylight,
+  hours, fixedWindow, windowRule, maxStops, sameTypeDay, earlyDay, daylight, fillerGap,
   // 軟約束（站）
-  walkBudget, walkRun, shopRun, cafeAdjacent, recoveryRun, backtrack, zoneExit, noonUrban, waitAtDoor,
+  walkBudget, walkRun, shopRun, cafeAdjacent, recoveryRun, backtrack, zoneExit, noonUrban, waitAtDoor, lateDeparture,
   // 整天
   anchor, designated, itemGap, mealSlots, nightSlot,
 ]);
