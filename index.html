@@ -42,17 +42,17 @@
   .small { font-size: 14px; }
   .version { position: fixed; left: 0; right: 0; bottom: calc(var(--tabs) + env(safe-area-inset-bottom)); text-align: center; font-size: 11px; opacity: .6; pointer-events: none; }
 
-  .btn { font: inherit; font-size: 15px; padding: 8px 14px; border-radius: 10px; border: 1px solid var(--accent); background: transparent; color: var(--accent); }
+  .btn { font: inherit; font-size: 15px; line-height: 1.5; padding: 8px 14px; border-radius: 10px; border: 1px solid var(--accent); background: transparent; color: var(--accent); }
   .btn.primary { background: var(--accent); color: var(--accent-fg); }
   .btn.quiet { border-color: var(--line); color: var(--muted); }
   .btn.quiet.on { border-color: var(--accent); color: var(--accent); }
   .btn.alt { display: block; width: 100%; text-align: left; margin-top: 6px; border-color: var(--line); color: var(--fg); background: var(--bg-elevated); }
   .btn.huge { width: 100%; font-size: 20px; padding: 16px; margin: 12px 0; }
   .btn.star { padding: 10px 8px; }
-  a.btn { display: inline-block; text-decoration: none; }
+  a.btn { display: inline-block; text-decoration: none; text-align: center; vertical-align: middle; }
   .hidden-input { display: none; }
   .status { margin-top: 8px; }
-  .actions { display: flex; gap: 8px; margin-top: 6px; }
+  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
   .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .row.top { margin-bottom: 8px; }
   .row.sim { justify-content: flex-start; margin: 8px 0; flex-wrap: wrap; }
@@ -72,7 +72,9 @@
   .cat { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; }
   .cat.item { color: var(--accent); border-color: var(--accent); margin-right: 6px; }
   .leg { margin: 6px 0 0; }
+  .leg a { white-space: nowrap; display: inline-block; color: var(--accent); text-decoration: none; margin-left: 8px; padding: 4px 6px; }
   .warn-list { margin: 6px 0 0; padding-left: 18px; color: var(--warn); font-size: 14px; }
+  .warn-list li.hint { color: var(--muted); }
   .dropped summary { color: var(--muted); font-size: 14px; cursor: pointer; }
   .swap-list { margin-top: 8px; }
   .proposal { border-top: 1px solid var(--line); padding: 8px 0; }
@@ -162,6 +164,11 @@
     openUnknown: "\u71DF\u696D\u6642\u9593\u6C92\u67E5\u5230\uFF0C\u8981\u5148\u78BA\u8A8D",
     replan: "\u91CD\u6392",
     dayScore: (score, penalty) => penalty > 0 ? `\u9019\u5929\u6709 ${Math.round(penalty)} \u5206\u9418\u7684\u52C9\u5F37` : "\u9019\u5929\u6C92\u6709\u52C9\u5F37\u7684\u5730\u65B9",
+    openSlotLine: (left, used) => used > 0 ? `\u7559\u767D\uFF1A\u9084\u5269 ${left} \u5206\uFF08\u7B49\u958B\u9580\u7528\u6389 ${used} \u5206\uFF09` : `\u7559\u767D ${left} \u5206`,
+    darkBefore: (hm3) => `\u5929\u9ED1 ${hm3} \u524D`,
+    mapLink: "\u5730\u5716",
+    routeLink: "\u8DEF\u7DDA",
+    restInserted: "\u5F15\u64CE\u63D2\u7684\u4F11\u606F\u7AD9\uFF0C\u4E0D\u8981\u5C31\u6309\u300E\u4E0D\u53BB\u4E86\u300F",
     // 現場
     nextStop: "\u4E0B\u4E00\u7AD9",
     leaveNow: "\u51FA\u767C\u53BB\u4E0B\u4E00\u7AD9",
@@ -169,9 +176,10 @@
     dayDone: "\u4ECA\u5929\u8D70\u5B8C\u4E86",
     late: (min) => `\u843D\u5F8C ${min} \u5206`,
     early: (min) => `\u4E0D\u6025\uFF0C\u9084\u6709 ${min} \u5206`,
-    waitOpen: (min) => `\u7B49\u958B\u9580 ${min} \u5206`,
+    waitOpen: (min) => `\u7B49\u958B\u9580 ${min} \u5206\uFF08\u7B97\u7559\u767D\uFF09`,
     firstLeg: (time, t) => `${time} \u51FA\u9580\uFF0C${t}`,
     hardLimit: (name, hm3) => `${name} ${hm3} \u95DC\u9580\uFF0C\u9019\u6A23\u8D70\u6703\u8D95\u4E0D\u4E0A`,
+    hardLimitDark: (name, hm3) => `${name} ${hm3} \u5929\u9ED1\uFF0C\u9019\u6A23\u8D70\u6703\u8D95\u4E0D\u4E0A`,
     proposals: "\u63A5\u4E0B\u4F86\u53EF\u4EE5\u9019\u6A23\u8D70",
     takeThis: "\u7167\u9019\u500B\u8D70",
     keepGoing: "\u7167\u539F\u672C\u7684\u8D70",
@@ -183,7 +191,8 @@
     rateTitle: (name) => `${name} \u600E\u9EBC\u6A23\uFF1F`,
     rateSkip: "\u7565\u904E",
     stars: ["", "\u8E29\u96F7", "\u7559\u8457", "\u9806\u8DEF\u624D\u6392", "\u5099\u6848", "\u512A\u5148", "\u5FC5\u53BB"],
-    restInserted: "\u5F15\u64CE\u63D2\u7684\u4F11\u606F\u7AD9\uFF0C\u4E0D\u60F3\u4F11\u606F\u53EF\u4EE5\u7565\u904E",
+    restInsertedNow: "\u5F15\u64CE\u63D2\u7684\u4F11\u606F\u7AD9\uFF0C\u4E0D\u60F3\u4F11\u606F\u53EF\u4EE5\u7565\u904E",
+    openMaps: "Google Maps \u8DEF\u7DDA",
     // 設定
     settingsTitle: "\u9019\u56DB\u500B\u6578\u5B57\u4F60\u65C5\u9014\u4E2D\u6703\u60F3\u52D5",
     walkBudget: "\u4E00\u5929\u8D70\u8DEF\u4E0A\u9650\uFF08\u5206\u9418\uFF09",
@@ -549,6 +558,82 @@
     }
   };
 
+  // src/geo/sun.js
+  var rad = (d) => d * Math.PI / 180;
+  var deg = (r) => r * 180 / Math.PI;
+  function julianDayNumber(dateStr) {
+    const [y, m, d] = String(dateStr).split("-").map(Number);
+    const a = Math.floor((14 - m) / 12);
+    const yy = y + 4800 - a;
+    const mm = m + 12 * a - 3;
+    return d + Math.floor((153 * mm + 2) / 5) + 365 * yy + Math.floor(yy / 4) - Math.floor(yy / 100) + Math.floor(yy / 400) - 32045;
+  }
+  function sunTimes(dateStr, lat, lng, utcOffsetMin = 0) {
+    const jd = julianDayNumber(dateStr) - utcOffsetMin / 1440;
+    const jc = (jd - 2451545) / 36525;
+    const L0 = ((280.46646 + jc * (36000.76983 + jc * 3032e-7)) % 360 + 360) % 360;
+    const M = 357.52911 + jc * (35999.05029 - 1537e-7 * jc);
+    const e = 0.016708634 - jc * (42037e-9 + 1267e-10 * jc);
+    const C = Math.sin(rad(M)) * (1.914602 - jc * (4817e-6 + 14e-6 * jc)) + Math.sin(rad(2 * M)) * (0.019993 - 101e-6 * jc) + Math.sin(rad(3 * M)) * 289e-6;
+    const omega = 125.04 - 1934.136 * jc;
+    const appLong = L0 + C - 569e-5 - 478e-5 * Math.sin(rad(omega));
+    const obliq = 23 + (26 + (21.448 - jc * (46.815 + jc * (59e-5 - jc * 1813e-6))) / 60) / 60 + 256e-5 * Math.cos(rad(omega));
+    const decl = deg(Math.asin(Math.sin(rad(obliq)) * Math.sin(rad(appLong))));
+    const y = Math.tan(rad(obliq / 2)) ** 2;
+    const eqTime = 4 * deg(y * Math.sin(2 * rad(L0)) - 2 * e * Math.sin(rad(M)) + 4 * e * y * Math.sin(rad(M)) * Math.cos(2 * rad(L0)) - 0.5 * y * y * Math.sin(4 * rad(L0)) - 1.25 * e * e * Math.sin(2 * rad(M)));
+    const cosHA = Math.cos(rad(90.833)) / (Math.cos(rad(lat)) * Math.cos(rad(decl))) - Math.tan(rad(lat)) * Math.tan(rad(decl));
+    const ha = deg(Math.acos(Math.max(-1, Math.min(1, cosHA))));
+    const noonMin = 720 - 4 * lng - eqTime + utcOffsetMin;
+    return { sunriseMin: noonMin - 4 * ha, sunsetMin: noonMin + 4 * ha };
+  }
+  function daylightWindow(dateStr, at, marginMin = 30, utcOffsetMin = 0) {
+    const { sunriseMin, sunsetMin } = sunTimes(dateStr, at.lat, at.lng, utcOffsetMin);
+    return { startMin: sunriseMin + marginMin, endMin: sunsetMin - marginMin };
+  }
+
+  // src/rules/daylight.js
+  var daylight_default = {
+    id: "daylight",
+    kind: "hard",
+    reads: ["stop.poi.daylightOnly", "stop.startMin", "stop.endMin", "day.date", "country.utcOffsetMin"],
+    defaults: {},
+    apply(ctx) {
+      if (ctx.stop.poi.daylightOnly !== true) return "ok";
+      const w = windowOf(ctx);
+      if (!w) return "ok";
+      const { startMin, endMin } = ctx.stop;
+      if (startMin >= w.endMin) return "never";
+      if (startMin < w.startMin) return "no";
+      return endMin <= w.endMin ? "ok" : "no";
+    },
+    warn(ctx) {
+      const name = ctx.stop.poi.name_zh;
+      const w = windowOf(ctx);
+      if (!w) return `${name} \u53EA\u80FD\u767D\u5929\u53BB`;
+      const margin = marginOf(ctx);
+      if (ctx.stop.startMin >= w.endMin) return `${name} \u53EA\u80FD\u767D\u5929\u53BB\uFF0C\u65E5\u843D ${minToHm(w.endMin + margin)}\uFF0C${minToHm(ctx.stop.startMin)} \u5230\u7684\u6642\u5019\u5929\u5DF2\u7D93\u9ED1\u4E86`;
+      if (ctx.stop.startMin < w.startMin) return `${name} \u53EA\u80FD\u767D\u5929\u53BB\uFF0C\u65E5\u51FA ${minToHm(w.startMin - margin)}\uFF0C${minToHm(ctx.stop.startMin)} \u5230\u7684\u6642\u5019\u5929\u9084\u6C92\u4EAE`;
+      return `${name} \u53EA\u80FD\u767D\u5929\u53BB\uFF0C\u65E5\u843D ${minToHm(w.endMin + margin)}\uFF0C\u9019\u6A23\u5F85\u6703\u5F85\u5230\u5929\u9ED1`;
+    }
+  };
+  var marginOf = (ctx) => ctx.settings?.daylightMarginMin ?? 30;
+  var isNum = (v) => Number.isFinite(v);
+  function windowOf(ctx) {
+    const at = positionOf(ctx);
+    if (!at) return null;
+    return daylightWindow(ctx.day.date, at, marginOf(ctx), ctx.country.utcOffsetMin);
+  }
+  function positionOf(ctx) {
+    const poi = ctx.stop.poi;
+    if (isNum(poi.lat) && isNum(poi.lng)) return { lat: poi.lat, lng: poi.lng };
+    const zones = ctx.kb?.zones ?? {};
+    const zone = poi.zoneId ? zones[poi.zoneId] : null;
+    if (zone && isNum(zone.lat) && isNum(zone.lng)) return { lat: zone.lat, lng: zone.lng };
+    const all = Object.values(zones).filter((z) => isNum(z?.lat) && isNum(z?.lng));
+    if (!all.length) return null;
+    return { lat: all.reduce((s, z) => s + z.lat, 0) / all.length, lng: all.reduce((s, z) => s + z.lng, 0) / all.length };
+  }
+
   // src/rules/walk-budget.js
   var walk_budget_default = {
     id: "walk-budget",
@@ -687,6 +772,22 @@
     }
   };
 
+  // src/rules/wait-at-door.js
+  var wait_at_door_default = {
+    id: "wait-at-door",
+    kind: "soft",
+    reads: ["stop.waitMin"],
+    defaults: { freeMin: 15, perMin: 1, capMin: 60 },
+    apply(ctx) {
+      if (ctx.stop.fixedWindow) return 0;
+      const over = ctx.stop.waitMin - ctx.params.freeMin;
+      return over > 0 ? Math.min(ctx.params.capMin, over * ctx.params.perMin) : 0;
+    },
+    warn(ctx) {
+      return `\u5230 ${ctx.stop.poi.name_zh} \u8981\u5728\u9580\u53E3\u7B49 ${Math.round(ctx.stop.waitMin)} \u5206`;
+    }
+  };
+
   // src/rules/anchor.js
   var anchor_default = {
     id: "anchor",
@@ -762,7 +863,7 @@
     for (const [slot, [from, to]] of Object.entries(ctx.country.mealSlots)) {
       const a = hmToMin(from);
       const b = hmToMin(to);
-      const hit = ctx.sequence.some((s) => s.poi.recovery && EATING.has(s.poi.category) && overlapMin(s.startMin, s.endMin, a, b) > 0);
+      const hit = ctx.sequence.some((s) => !s.insertedBy && s.poi.recovery && EATING.has(s.poi.category) && overlapMin(s.startMin, s.endMin, a, b) > 0);
       if (!hit) out.push(slot);
     }
     return out;
@@ -779,7 +880,7 @@
     apply(ctx) {
       if (ctx.day.type !== "normal" || ctx.day.nightSlotOff) return 0;
       const [from, to] = ctx.country.nightSlot.map(hmToMin);
-      const hit = ctx.sequence.some((s) => NIGHT2.has(s.poi.category) && overlapMin(s.startMin, s.endMin, from, to) > 0);
+      const hit = ctx.sequence.some((s) => !s.insertedBy && NIGHT2.has(s.poi.category) && overlapMin(s.startMin, s.endMin, from, to) > 0);
       return hit ? 0 : ctx.params.missMin;
     },
     warn() {
@@ -803,6 +904,7 @@
     max_stops_default,
     same_type_day_default,
     early_day_default,
+    daylight_default,
     // 軟約束（站）
     walk_budget_default,
     walk_run_default,
@@ -812,6 +914,7 @@
     backtrack_default,
     zone_exit_default,
     noon_urban_default,
+    wait_at_door_default,
     // 整天
     anchor_default,
     designated_default,
@@ -853,6 +956,9 @@
       compressMinDwell: 20,
       restSoonMin: 30,
       walkVsRideMaxWalkMin: 30,
+      daylightMarginMin: 30,
+      restPoolMax: 6,
+      restInsertMaxPerDay: 2,
       _\u539F\u8A71: {
         maxShopRunMin: "#103\uFF08\u984C\u76EE\u5BEB 240 \u4ED6\u7B54\u53EF\u4EE5\uFF09",
         walkBudgetMin: "#114\uFF08\u5148\u7559\uFF09",
@@ -898,6 +1004,9 @@
         weight: 1,
         maxAfternoonStops: 1
       },
+      daylight: {
+        weight: 1
+      },
       "walk-budget": {
         weight: 1,
         perMinOver: 1
@@ -934,6 +1043,12 @@
         from: "11:30",
         to: "14:30",
         penaltyMin: 20
+      },
+      "wait-at-door": {
+        weight: 1,
+        freeMin: 15,
+        perMin: 1,
+        capMin: 60
       },
       anchor: {
         weight: 1
@@ -1054,8 +1169,9 @@
   }
 
   // src/engine/core.js
-  var PRIORITY_VALUE = Object.freeze({ must: 180, want: 90, maybe: 45 });
+  var PRIORITY_VALUE = Object.freeze({ must: 180, want: 90, maybe: 45, rest: 0 });
   function candidateValue(c) {
+    if (c.priority === "rest") return PRIORITY_VALUE.rest;
     const base = PRIORITY_VALUE[c.priority] ?? PRIORITY_VALUE.maybe;
     const rating = c.poi?.my?.rating;
     const bonus = rating === 6 ? 60 : rating === 5 ? 30 : 0;
@@ -1072,6 +1188,7 @@
   function planDay({ candidates, day, home, legFn: legFn2, rules, settings, country, kb, options = {} }) {
     const maxNodes = options.maxNodes ?? 2e5;
     const maxMs = options.maxMs ?? 800;
+    const maxOptional = settings.restInsertMaxPerDay ?? 2;
     const explain = Boolean(options.explain);
     const started = Date.now();
     const cands = orderCandidates(candidates.map((c, i) => ({ ...c, _i: i, value: candidateValue(c), dwellMin: c.dwellMin ?? c.poi.dwellMin ?? settings.defaultDwellMin ?? 60 })));
@@ -1100,12 +1217,14 @@
       const prev = seq.length ? seq[seq.length - 1] : null;
       const prevPoi = prev ? prev.poi : home;
       const prevEnd = prev ? prev.endMin : day.window.startMin;
+      const optionalPlaced = seq.reduce((n, s) => n + (s.optional ? 1 : 0), 0);
       const nowDead = [];
       for (const c of remaining) {
         if (nowDead.includes(c._i)) continue;
+        if (c.optional && optionalPlaced >= maxOptional) continue;
         const leg = withBacktrack(normalizeLeg(legFn2(prevPoi, c.poi)), seq, home, c.poi, legFn2);
         const placed = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev });
-        const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i };
+        const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i, optional: Boolean(c.optional), insertedBy: c.insertedBy ?? null };
         const ctx = { ...dayCtxBase, stop, prev, next: null, leg, acc, sequence: seq };
         const r = evaluateStop(ctx, rules);
         if (r.verdict === "never") {
@@ -1133,10 +1252,12 @@
         const prevPoi = prev ? prev.poi : home;
         const prevEnd = prev ? prev.endMin : day.window.startMin;
         let pick = null;
+        const optionalPlaced = seq.reduce((n, s) => n + (s.optional ? 1 : 0), 0);
         for (const c of remaining) {
+          if (c.optional && optionalPlaced >= maxOptional) continue;
           const leg = withBacktrack(normalizeLeg(legFn2(prevPoi, c.poi)), seq, home, c.poi, legFn2);
           const placed = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev });
-          const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i };
+          const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i, optional: Boolean(c.optional), insertedBy: c.insertedBy ?? null };
           const r = evaluateStop({ ...dayCtxBase, stop, prev, next: null, leg, acc, sequence: seq }, rules);
           if (r.verdict !== "ok") continue;
           const gain = c.value - r.penaltyMin;
@@ -1153,7 +1274,7 @@
     }
     if (!best) best = { total: 0, complete: false, seq: [], path: [], dayEval: evaluateDay({ ...dayCtxBase, sequence: [], acc: emptyAcc(rules.dims) }, rules), acc: emptyAcc(rules.dims) };
     const placedIdx = new Set(best.seq.map((s) => s.candidateIndex));
-    const dropped = cands.filter((c) => !placedIdx.has(c._i)).map((c) => ({ poi: c.poi, priority: c.priority, reason: dead.get(c._i) ?? "\u6642\u9593\u6216\u5206\u6578\u6392\u4E0D\u9032" }));
+    const dropped = cands.filter((c) => !placedIdx.has(c._i) && !c.optional).map((c) => ({ poi: c.poi, priority: c.priority, reason: dead.get(c._i) ?? "\u6642\u9593\u6216\u5206\u6578\u6392\u4E0D\u9032" }));
     const stopPenalty = best.path.reduce((s, p) => s + p.penaltyMin, 0);
     const warnings = [
       ...best.path.flatMap((p) => p.warnings),
@@ -1195,102 +1316,6 @@
     }
     return out;
   }
-
-  // src/engine/trip.js
-  function dayWindow(day, index, settings) {
-    const [start, end] = (settings.dayWindow ?? ["09:00", "24:00"]).map(hmToMin);
-    let startMin = start;
-    if (day.earlyDay && day.departHM) startMin = hmToMin(day.departHM);
-    else if (!day.earlyDay && day.type === "normal" && index + 1 >= (settings.lateStartFromDay ?? 3) && !day.dayTrip) startMin = hmToMin(settings.lateStartHM ?? "11:00");
-    if (day.type === "arrival" && day.arriveMin != null) startMin = Math.max(startMin, day.arriveMin + (settings.arrivalBufferMin ?? 60));
-    let endMin = end;
-    if (day.type === "departure" && day.departAirportMin != null) endMin = Math.min(endMin, day.departAirportMin - (settings.departureBufferMin ?? 180));
-    return { startMin, endMin };
-  }
-  function regionZonesOf({ home, candidates, anchorPoi }) {
-    const z = new Set([home?.zoneId, anchorPoi?.zoneId, ...candidates.map((c) => c.poi.zoneId)].filter(Boolean));
-    return [...z];
-  }
-  function planTrip({ trip, pois, rules, settings, country, kb, legFn: legFn2, options = {} }) {
-    const out = [];
-    const warnings = [];
-    let prevTheme = null;
-    let prevType = null;
-    trip.days.forEach((d, index) => {
-      const home = resolveHome(trip, d.date);
-      const candidates = (d.picks ?? []).map((p) => {
-        const poi = pois[p.poiId];
-        if (!poi) {
-          warnings.push({ code: "pick-unknown", date: d.date, msg: `${d.date} \u7684 ${p.poiId} \u4E0D\u5728\u77E5\u8B58\u5EAB` });
-          return null;
-        }
-        return { poi, priority: p.priority ?? "want", dwellMin: p.dwellMin, fixedWindow: p.fixedWindow ?? null, designated: (d.designated ?? []).includes(p.poiId), isAnchor: d.anchor?.poiId === p.poiId || Boolean(d.anchor?.poiIds?.includes(p.poiId)) };
-      }).filter(Boolean);
-      const anchorPoi = d.anchor?.poiId ? pois[d.anchor.poiId] : d.anchor?.poiIds?.length ? pois[d.anchor.poiIds[0]] : null;
-      const themeCategory = d.anchor?.theme ?? null;
-      const day = {
-        date: d.date,
-        type: d.type ?? "normal",
-        earlyDay: Boolean(d.earlyDay),
-        party: trip.party ?? 1,
-        dayTripNext: prevType === "daytrip" || Boolean(trip.days[index - 1]?.dayTrip),
-        themeCategory,
-        prevThemeCategory: prevTheme,
-        anchorPoiId: anchorPoi?.id ?? null,
-        anchorName: anchorPoi?.name_zh ?? d.anchor?.theme ?? null,
-        designated: d.designated ?? [],
-        regionZones: regionZonesOf({ home, candidates, anchorPoi }),
-        window: dayWindow(d, index, settings),
-        nightSlotOff: Boolean(d.nightSlotOff) || Boolean(trip.days[index + 1]?.earlyDay)
-      };
-      const plan = planDay({ candidates, day, home, legFn: legFn2, rules, settings, country, kb, options });
-      out.push({ date: d.date, day, plan });
-      prevTheme = themeCategory;
-      prevType = d.dayTrip ? "daytrip" : d.type ?? "normal";
-    });
-    return { days: out, warnings };
-  }
-  function resolveHome(trip, date) {
-    const bases = trip.homeBases ?? [];
-    const hit = bases.find((b) => (!b.fromDate || b.fromDate <= date) && (!b.toDate || date <= b.toDate)) ?? bases[0];
-    return hit?.poi ?? { id: "home", name_zh: "\u4F4F\u5BBF", zoneId: null };
-  }
-
-  // src/engine/swap.js
-  function swapCandidates({ plan, stopId, pool, legFn: legFn2, date, settings = {} }) {
-    const seq = plan.sequence;
-    const i = seq.findIndex((s) => s.poi.id === stopId);
-    if (i < 0) return [];
-    const cur = seq[i];
-    const prev = seq[i - 1] ?? null;
-    const next = seq[i + 1] ?? null;
-    const maxDetour = settings.swapDetourMaxMin ?? 10;
-    const eating = /* @__PURE__ */ new Set(["food", "bar", "cafe"]);
-    const sameType = (p) => eating.has(cur.poi.category) ? eating.has(p.category) : p.category === cur.poi.category;
-    const inPlan = new Set(seq.map((s) => s.poi.id));
-    const out = [];
-    for (const c of pool) {
-      const poi = c.poi ?? c;
-      if (poi.id === cur.poi.id || inPlan.has(poi.id) || !sameType(poi)) continue;
-      const a = prev ? legMin(legFn2(prev.poi, poi)) : 0;
-      const b = next ? legMin(legFn2(poi, next.poi)) : 0;
-      const base = prev && next ? legMin(legFn2(prev.poi, next.poi)) : 0;
-      const detourMin = Math.max(0, a + b - base);
-      if (detourMin > maxDetour) continue;
-      const iv = openIntervals(poi, date);
-      const open = iv === null ? null : iv.some(([o, cl]) => cur.startMin >= o && cur.startMin + (poi.dwellMin ?? cur.dwellMin) <= cl);
-      if (open === false) continue;
-      out.push({ poi, detourMin, open });
-    }
-    out.sort((x, y) => x.detourMin - y.detourMin);
-    return out;
-  }
-  function applySwap(day, fromPoiId, toPoi, priority = "want") {
-    const picks = (day.picks ?? []).map((p) => p.poiId === fromPoiId ? { ...p, poiId: toPoi.id, priority: p.priority ?? priority } : p);
-    const swapped = [...day.swapped ?? [], { from: fromPoiId, to: toPoi.id, at: (/* @__PURE__ */ new Date()).toISOString() }];
-    return { ...day, picks, swapped };
-  }
-  var legMin = (l) => (l?.walkMin ?? 0) + (l?.rideMin ?? 0);
 
   // src/geo/matrix.js
   var R = 6371e3;
@@ -1335,6 +1360,128 @@
     return legFn2;
   }
   var hasCoords = (p) => Number.isFinite(p?.lat) && Number.isFinite(p?.lng);
+
+  // src/engine/trip.js
+  var REST_TRIGGER_RULES = /* @__PURE__ */ new Set(["walk-run", "wait-at-door"]);
+  function dayWindow(day, index, settings) {
+    const [start, end] = (settings.dayWindow ?? ["09:00", "24:00"]).map(hmToMin);
+    let startMin = start;
+    if (day.earlyDay && day.departHM) startMin = hmToMin(day.departHM);
+    else if (!day.earlyDay && day.type === "normal" && index + 1 >= (settings.lateStartFromDay ?? 3) && !day.dayTrip) startMin = hmToMin(settings.lateStartHM ?? "11:00");
+    if (day.type === "arrival" && day.arriveMin != null) startMin = Math.max(startMin, day.arriveMin + (settings.arrivalBufferMin ?? 60));
+    let endMin = end;
+    if (day.type === "departure" && day.departAirportMin != null) endMin = Math.min(endMin, day.departAirportMin - (settings.departureBufferMin ?? 180));
+    return { startMin, endMin };
+  }
+  function regionZonesOf({ home, candidates, anchorPoi }) {
+    const z = new Set([home?.zoneId, anchorPoi?.zoneId, ...candidates.map((c) => c.poi.zoneId)].filter(Boolean));
+    return [...z];
+  }
+  function planTrip({ trip, pois, rules, settings, country, kb, legFn: legFn2, restPool = [], options = {} }) {
+    const out = [];
+    const warnings = [];
+    let prevTheme = null;
+    let prevType = null;
+    const pickedAnywhere = new Set(trip.days.flatMap((d) => [...(d.picks ?? []).map((p) => p.poiId), d.anchor?.poiId, ...d.anchor?.poiIds ?? []]).filter(Boolean));
+    trip.days.forEach((d, index) => {
+      const home = resolveHome(trip, d.date);
+      const candidates = (d.picks ?? []).map((p) => {
+        const poi = pois[p.poiId];
+        if (!poi) {
+          warnings.push({ code: "pick-unknown", date: d.date, msg: `${d.date} \u7684 ${p.poiId} \u4E0D\u5728\u77E5\u8B58\u5EAB` });
+          return null;
+        }
+        return { poi, priority: p.priority ?? "want", dwellMin: p.dwellMin, fixedWindow: p.fixedWindow ?? null, designated: (d.designated ?? []).includes(p.poiId), isAnchor: d.anchor?.poiId === p.poiId || Boolean(d.anchor?.poiIds?.includes(p.poiId)) };
+      }).filter(Boolean);
+      const anchorPoi = d.anchor?.poiId ? pois[d.anchor.poiId] : d.anchor?.poiIds?.length ? pois[d.anchor.poiIds[0]] : null;
+      const themeCategory = d.anchor?.theme ?? null;
+      const day = {
+        date: d.date,
+        type: d.type ?? "normal",
+        earlyDay: Boolean(d.earlyDay),
+        party: trip.party ?? 1,
+        dayTripNext: prevType === "daytrip" || Boolean(trip.days[index - 1]?.dayTrip),
+        themeCategory,
+        prevThemeCategory: prevTheme,
+        anchorPoiId: anchorPoi?.id ?? null,
+        anchorName: anchorPoi?.name_zh ?? d.anchor?.theme ?? null,
+        designated: d.designated ?? [],
+        regionZones: regionZonesOf({ home, candidates, anchorPoi }),
+        window: dayWindow(d, index, settings),
+        nightSlotOff: Boolean(d.nightSlotOff) || Boolean(trip.days[index + 1]?.earlyDay)
+      };
+      let plan = planDay({ candidates, day, home, legFn: legFn2, rules, settings, country, kb, options });
+      const triggered = plan.warnings.some((w) => REST_TRIGGER_RULES.has(w.ruleId));
+      if (triggered && rejectedRest(d.removed)) {
+        plan = { ...plan, warnings: plan.warnings.map((w) => REST_TRIGGER_RULES.has(w.ruleId) ? { ...w, hint: true } : w) };
+      } else if (triggered) {
+        const rests = restCandidates({ restPool, candidates, day, removed: d.removed, pickedAnywhere, home, settings });
+        if (rests.length) {
+          const withRests = planDay({ candidates: [...candidates, ...rests], day, home, legFn: legFn2, rules, settings, country, kb, options });
+          if (withRests.complete && !plan.complete || withRests.complete === plan.complete && withRests.score > plan.score) plan = withRests;
+        }
+      }
+      out.push({ date: d.date, day, plan });
+      prevTheme = themeCategory;
+      prevType = d.dayTrip ? "daytrip" : d.type ?? "normal";
+    });
+    return { days: out, warnings };
+  }
+  function restCandidates({ restPool = [], candidates = [], day, removed = [], pickedAnywhere = /* @__PURE__ */ new Set(), home = null, settings = {} }) {
+    if (!restPool.length) return [];
+    const removedIds = new Set(removed.map((r) => r.poiId));
+    const center = centroidOf(candidates.map((c) => c.poi)) ?? (hasCoords2(home) ? { lat: home.lat, lng: home.lng } : null);
+    const distance = (p) => center && hasCoords2(p) ? haversineM(center, p) : Infinity;
+    return restPool.filter((p) => p && p.recovery === true && p.category !== "onsen" && (day.regionZones ?? []).includes(p.zoneId) && !pickedAnywhere.has(p.id) && !removedIds.has(p.id)).map((p) => ({ p, d: distance(p) })).sort((a, b) => a.d === b.d ? 0 : a.d < b.d ? -1 : 1).slice(0, settings.restPoolMax ?? 6).map(({ p }) => ({ poi: p, priority: "rest", optional: true, insertedBy: "engine", dwellMin: p.dwellMin ?? Math.max(settings.restResetMin ?? 30, 30) }));
+  }
+  var hasCoords2 = (p) => Number.isFinite(p?.lat) && Number.isFinite(p?.lng);
+  var rejectedRest = (removed = []) => removed.some((r) => r?.insertedBy === "engine");
+  function centroidOf(list) {
+    const pts = list.filter(hasCoords2);
+    if (!pts.length) return null;
+    return { lat: pts.reduce((s, p) => s + p.lat, 0) / pts.length, lng: pts.reduce((s, p) => s + p.lng, 0) / pts.length };
+  }
+  function resolveHome(trip, date) {
+    const bases = trip.homeBases ?? [];
+    const hit = bases.find((b) => (!b.fromDate || b.fromDate <= date) && (!b.toDate || date <= b.toDate)) ?? bases[0];
+    return hit?.poi ?? { id: "home", name_zh: "\u4F4F\u5BBF", zoneId: null };
+  }
+
+  // src/engine/swap.js
+  function swapCandidates({ plan, stopId, pool, legFn: legFn2, date, settings = {} }) {
+    const seq = plan.sequence;
+    const i = seq.findIndex((s) => s.poi.id === stopId);
+    if (i < 0) return [];
+    const cur = seq[i];
+    const prev = seq[i - 1] ?? null;
+    const next = seq[i + 1] ?? null;
+    const maxDetour = settings.swapDetourMaxMin ?? 10;
+    const eating = /* @__PURE__ */ new Set(["food", "bar", "cafe"]);
+    const sameType = (p) => eating.has(cur.poi.category) ? eating.has(p.category) : p.category === cur.poi.category;
+    const inPlan = new Set(seq.map((s) => s.poi.id));
+    const out = [];
+    for (const c of pool) {
+      const poi = c.poi ?? c;
+      if (poi.id === cur.poi.id || inPlan.has(poi.id) || !sameType(poi)) continue;
+      const a = prev ? legMin(legFn2(prev.poi, poi)) : 0;
+      const b = next ? legMin(legFn2(poi, next.poi)) : 0;
+      const base = prev && next ? legMin(legFn2(prev.poi, next.poi)) : 0;
+      const detourMin = Math.max(0, a + b - base);
+      if (detourMin > maxDetour) continue;
+      const iv = openIntervals(poi, date);
+      const open = iv === null ? null : iv.some(([o, cl]) => cur.startMin >= o && cur.startMin + (poi.dwellMin ?? cur.dwellMin) <= cl);
+      if (open === false) continue;
+      out.push({ poi, detourMin, open });
+    }
+    out.sort((x, y) => x.detourMin - y.detourMin);
+    return out;
+  }
+  function applySwap(day, fromPoiId, toPoi, priority = "want") {
+    const picks = (day.picks ?? []).map((p) => p.poiId === fromPoiId ? { ...p, poiId: toPoi.id, priority: p.priority ?? priority } : p);
+    const swapped = [...day.swapped ?? [], { from: fromPoiId, to: toPoi.id, at: (/* @__PURE__ */ new Date()).toISOString() }];
+    return { ...day, picks, swapped };
+  }
+  var legMin = (l) => (l?.walkMin ?? 0) + (l?.rideMin ?? 0);
 
   // src/data/migrations.js
   var DB_NAME = "trip-pilot";
@@ -1682,6 +1829,12 @@
     }
   };
 
+  // src/derive/daylight.json
+  var daylight_default2 = {
+    _\u8AAA\u660E: "\u767D\u5929\u7AD9\uFF1A\u6C92\u6709\u71DF\u696D\u6642\u6BB5\uFF08hours \u662F null\uFF09\u53C8\u662F\u9019\u4E9B\u5E97\u578B\u7684\u7AD9\uFF0C\u63A8\u6210\u53EA\u80FD\u767D\u5929\u53BB\uFF08daylightOnly\uFF09\uFF0C\u7531 rules/daylight.js \u64CB\u5728\u300C\u65E5\u51FA+30 \u5230\u65E5\u843D\u221230\u300D\u4E4B\u5916\uFF08\u539F\u8A71 #159\u300C\u9019\u985E\u578B\u7684\u9650\u5236\u5728\u767D\u5929\u5C31\u597D\u4E86 \u665A\u4E0A\u9ED1\u6F06\u6F06\u7684 \u8981\u600E\u9EBC\u53C3\u89C0\u300D\uFF09\u3002\u5883\u5167\u81EA\u7531\u53C3\u62DC\u7684\u795E\u793E\u5BFA\u9662\u3001\u9748\u5EDF\u3001\u5EAD\u5712\u3001\u4E00\u65E5\u904A\u7684\u6236\u5916\u666F\u9EDE\u90FD\u7B97\uFF1B\u6709\u6642\u6BB5\u7684\u7AD9\u4EA4\u7D66 hours \u898F\u5247\u3001\u4E0D\u5728\u9019\u88E1\u3002\u77E5\u8B58\u5EAB\u660E\u5BEB daylightOnly\uFF08\u542B false\uFF09\u512A\u5148\u65BC\u63A8\u5C0E\u3002",
+    categories: ["shrine", "temple", "mausoleum", "garden", "daytrip"]
+  };
+
   // src/derive/hours.js
   var DOW3 = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
   var DAY_CHAR = { \u4E00: 0, \u4E8C: 1, \u4E09: 2, \u56DB: 3, \u4E94: 4, \u516D: 5, \u65E5: 6, \u6708: 0, \u706B: 1, \u6C34: 2, \u6728: 3, \u91D1: 4, \u571F: 5 };
@@ -1809,7 +1962,7 @@
   }
 
   // src/data/schema.js
-  var DERIVE = { category: category_default, walk: walkFactor_default, recovery: recovery_default, dwell: dwell_default };
+  var DERIVE = { category: category_default, walk: walkFactor_default, recovery: recovery_default, dwell: dwell_default, daylight: daylight_default2 };
   var CATEGORIES = Object.freeze([
     "shrine",
     "temple",
@@ -1924,6 +2077,7 @@
       poi.hours = null;
       warnings.push({ code: "hours-missing", poiId: poi.id, msg: "\u6C92\u6709\u71DF\u696D\u6642\u9593" });
     }
+    poi.daylightOnly = typeof raw.daylightOnly === "boolean" ? raw.daylightOnly : poi.hours === null && (derive.daylight?.categories ?? []).includes(category);
     if (!(Number.isFinite(raw.lat) && Number.isFinite(raw.lng))) {
       poi.lat = null;
       poi.lng = null;
@@ -2048,7 +2202,7 @@
   }));
   var HOME = { id: "home", name_zh: "Comfort Hotel \u4ED9\u53F0\u897F\u53E3", zoneId: "station" };
   var KB = { zones: { station: { environment: "urban" }, ichibancho: { environment: "urban" }, honcho: { environment: "urban" }, kokubuncho: { environment: "urban" }, "aoba-castle": { environment: "urban" }, hachiman: { environment: "urban" } } };
-  var COUNTRY = { mealSlots: { lunch: ["11:30", "13:30"], dinner: ["18:00", "20:30"] }, nightSlot: ["20:00", "24:00"], climate: { summerMonths: [6, 7, 8, 9] } };
+  var COUNTRY = { mealSlots: { lunch: ["11:30", "13:30"], dinner: ["18:00", "20:30"] }, nightSlot: ["20:00", "24:00"], climate: { summerMonths: [6, 7, 8, 9] }, utcOffsetMin: 540 };
   var WALK = { station: { ichibancho: 12, honcho: 15, kokubuncho: 15 }, ichibancho: { honcho: 8, kokubuncho: 6 }, honcho: { kokubuncho: 10 } };
   var RIDE = { station: { "aoba-castle": { ride: 25, walk: 8 }, hachiman: { ride: 30, walk: 5 } }, "aoba-castle": { hachiman: { ride: 15, walk: 5 }, ichibancho: { ride: 20, walk: 5 } }, hachiman: { ichibancho: { ride: 20, walk: 5 }, kokubuncho: { ride: 20, walk: 5 } } };
   function legFn(from, to) {
@@ -2091,6 +2245,7 @@
     return {
       id: "demo-sendai-2026-08",
       cityId: "sendai",
+      cityName: "\u4ED9\u53F0",
       name: "\u4ED9\u53F0\u793A\u7BC4\uFF088/13\u30018/17\uFF09",
       party: 1,
       homeBases: [{ poi: HOME }],
@@ -2099,6 +2254,61 @@
         { date: "2026-08-17", type: "normal", anchor: { theme: "vintage", poiIds: [POIS.Utah.id] }, designated: [POIS["\u304A\u3084\u307E"].id, POIS["\u30D0\u30F3\u30B6\u30A4"].id], picks: CANDS_0817.map(pick) }
       ]
     };
+  }
+
+  // src/ui/maps.js
+  var SEARCH = "https://www.google.com/maps/search/?api=1";
+  var DIR = "https://www.google.com/maps/dir/?api=1";
+  var TRUSTED = /* @__PURE__ */ new Set(["exact", "address", "manual"]);
+  var isNum2 = (v) => Number.isFinite(v);
+  function coordQuery(poi) {
+    if (!poi || !isNum2(poi.lat) || !isNum2(poi.lng)) return null;
+    const conf = poi.coordConfidence;
+    if (conf != null && !TRUSTED.has(conf)) return null;
+    return `${poi.lat.toFixed(5)},${poi.lng.toFixed(5)}`;
+  }
+  function placeQuery(poi, cityName = "") {
+    const byCoord = coordQuery(poi);
+    if (byCoord) return byCoord;
+    if (typeof poi?.maps_query === "string" && poi.maps_query.trim()) return poi.maps_query.trim();
+    const name = String(poi?.name_local || poi?.name_zh || "").trim();
+    const city = String(cityName ?? "").trim();
+    return [name, city].filter(Boolean).join(" ");
+  }
+  function placeUrl(poi, cityName = "") {
+    return `${SEARCH}&query=${encodeURIComponent(placeQuery(poi, cityName))}`;
+  }
+  function routeUrl({ from = null, to, mode = "walk", cityName = "" }) {
+    const origin = from ? `&origin=${encodeURIComponent(placeQuery(from, cityName))}` : "";
+    return `${DIR}${origin}&destination=${encodeURIComponent(placeQuery(to, cityName))}&travelmode=${mode === "ride" ? "transit" : "walking"}`;
+  }
+  function legMode(leg) {
+    return leg?.mode === "ride" || (leg?.rideMin ?? 0) > 0 ? "ride" : "walk";
+  }
+  function tripCityName(state2) {
+    return state2?.packMeta?.city?.name_zh ?? state2?.trip?.cityName ?? state2?.trip?.cityId ?? "";
+  }
+
+  // src/ui/daylight.js
+  var isNum3 = (v) => Number.isFinite(v);
+  function darkBeforeMin(poi, date, { zones = {}, marginMin = 30, utcOffsetMin = null } = {}) {
+    if (poi?.daylightOnly !== true || !date || !isNum3(utcOffsetMin)) return null;
+    const at = positionOf2(poi, zones);
+    if (!at) return null;
+    return Math.floor(daylightWindow(date, at, marginMin, utcOffsetMin).endMin);
+  }
+  function darkBeforeMinOf(poi, date, state2) {
+    return darkBeforeMin(poi, date, {
+      zones: state2?.kb?.zones ?? {},
+      marginMin: state2?.settings?.daylightMarginMin ?? 30,
+      utcOffsetMin: state2?.country?.utcOffsetMin ?? null
+    });
+  }
+  function positionOf2(poi, zones) {
+    if (isNum3(poi.lat) && isNum3(poi.lng)) return { lat: poi.lat, lng: poi.lng };
+    const zone = poi.zoneId ? zones?.[poi.zoneId] : null;
+    if (zone && isNum3(zone.lat) && isNum3(zone.lng)) return { lat: zone.lat, lng: zone.lng };
+    return null;
   }
 
   // src/ui/planner.js
@@ -2118,10 +2328,12 @@
     const block = el("section", { class: "day" }, [
       el("header", { class: "day-head" }, [el("h2", { text: dateLabel(d.date) }), el("p", { class: "muted", text: anchorLine })]),
       el("p", { class: "muted small", text: TEXT.dayScore(plan.score, plan.penaltyMin) }),
+      openSlotLine(plan, state2),
       firstLegLine(plan, d, state2)
     ]);
-    plan.sequence.forEach((s, i) => block.append(stopCard(s, i, plan, d, state2, actions)));
-    if (dayWarnings.length) block.append(el("ul", { class: "warn-list" }, dayWarnings.map((w) => el("li", { text: w.msg }))));
+    const seenCumulative = /* @__PURE__ */ new Set();
+    plan.sequence.forEach((s, i) => block.append(stopCard(s, i, plan, d, state2, actions, seenCumulative)));
+    if (dayWarnings.length) block.append(warnList(dayWarnings));
     if (plan.dropped.length) {
       block.append(el("details", { class: "dropped" }, [
         el("summary", { text: `${TEXT.dropped}\uFF1A${plan.dropped.length}` }),
@@ -2130,23 +2342,48 @@
     }
     return block;
   }
+  function openSlotLine(plan, state2) {
+    const used = Math.max(0, Math.round(plan.sequence.reduce((s, x) => s + (x.waitMin ?? 0), 0)));
+    const left = Math.max(0, (state2.settings.openSlotMinPerDay ?? 90) - used);
+    return el("p", { class: "muted small", text: TEXT.openSlotLine(left, used) });
+  }
   function firstLegLine(plan, d, state2) {
     const first = plan.sequence[0];
     if (!first) return null;
-    const leg = state2.legFn(resolveHome(state2.trip, d.date), first.poi);
+    const home = resolveHome(state2.trip, d.date);
+    const leg = state2.legFn(home, first.poi);
     const legText = leg.rideMin > 0 ? TEXT.rideTo(leg.walkMin, leg.rideMin) : TEXT.walkTo(leg.walkMin);
     const travel = (leg.walkMin ?? 0) + (leg.rideMin ?? 0) + (leg.waitMin ?? 0);
-    return el("p", { class: "leg muted small", text: `\u2193 ${TEXT.firstLeg(hm(first.arriveMin - travel), legText)}${waitText(first)}` });
+    return el("p", { class: "leg muted small" }, [
+      `\u2193 ${TEXT.firstLeg(hm(first.arriveMin - travel), legText)}${waitText(first)}`,
+      routeLink({ from: coordQuery(home) ? home : null, to: first.poi, leg, state: state2 })
+    ]);
   }
   function waitText(stop) {
-    return stop?.waitMin > 5 ? `\uFF0C${TEXT.waitOpen(stop.waitMin)}` : "";
+    return stop?.waitMin > 5 ? `\uFF0C${TEXT.waitOpen(Math.round(stop.waitMin))}` : "";
   }
-  function stopCard(s, i, plan, d, state2, actions) {
+  function warnList(warns) {
+    return el("ul", { class: "warn-list" }, warns.map((w) => el("li", { class: w.hint ? "hint" : null, text: w.msg })));
+  }
+  function routeLink({ from, to, leg, state: state2 }) {
+    return el("a", { href: routeUrl({ from, to, mode: legMode(leg), cityName: tripCityName(state2) }), target: "_blank", rel: "noopener" }, TEXT.routeLink);
+  }
+  var CUMULATIVE_RULES = /* @__PURE__ */ new Set(["walk-budget", "walk-run", "shop-run"]);
+  function stopCard(s, i, plan, d, state2, actions, seenCumulative = /* @__PURE__ */ new Set()) {
     const poi = s.poi;
     const next = plan.sequence[i + 1];
     const legNext = next ? state2.legFn(poi, next.poi) : null;
     const closes = closeHm(poi, d.date);
-    const warns = plan.warnings.filter((w) => w.poiId === poi.id && w.code !== "skipped-missing");
+    const dark = closes ? null : darkBeforeMinOf(poi, d.date, state2);
+    const limitText = closes ? TEXT.closesAt(closes) : dark != null ? TEXT.darkBefore(hm(dark)) : "";
+    const warns = plan.warnings.filter((w) => {
+      if (w.poiId !== poi.id || w.code === "skipped-missing" || w.ruleId === "wait-at-door") return false;
+      if (CUMULATIVE_RULES.has(w.ruleId)) {
+        if (seenCumulative.has(w.ruleId)) return false;
+        seenCumulative.add(w.ruleId);
+      }
+      return true;
+    });
     const card = el("article", { class: `card${s.isAnchor ? " anchor" : ""}${poi.recovery ? " rest" : ""}` }, [
       el("div", { class: "row" }, [
         el("span", { class: "time", text: `${hm(s.startMin)}\u2013${hm(s.endMin)}` }),
@@ -2154,16 +2391,20 @@
         poi.item ? el("span", { class: "cat item", text: poi.item }) : null
       ]),
       el("h3", { text: poi.name_zh }),
-      el("p", { class: "muted small", text: [poi.guide?.intro ?? poi.highlight ?? "", closes ? TEXT.closesAt(closes) : ""].filter(Boolean).join("\u3000") }),
-      warns.length ? el("ul", { class: "warn-list" }, warns.map((w) => el("li", { text: w.msg }))) : null,
+      el("p", { class: "muted small", text: [poi.guide?.intro ?? poi.highlight ?? "", limitText].filter(Boolean).join("\u3000") }),
+      warns.length ? warnList(warns) : null,
+      s.insertedBy === "engine" ? el("p", { class: "muted small", text: TEXT.restInserted }) : null,
       el("div", { class: "actions" }, [
-        el("button", { class: "btn", type: "button", onclick: () => toggleSwap(card, s, plan, d, state2, actions) }, TEXT.swap),
-        s.designated || s.isAnchor ? null : el("button", { class: "btn quiet", type: "button", onclick: () => actions.removeStop(d.date, poi.id) }, TEXT.remove)
+        // 引擎插的站不在 picks 裡，「換一家」接不上；「不去了」會記進 day.removed，下次重排就不再插＝拒絕（原話 #126）
+        // 引擎插的站不是 designated 也不是 anchor（core 只從候選帶這兩個旗標），所以「不去了」照這個條件一定會出現
+        s.insertedBy === "engine" ? null : el("button", { class: "btn", type: "button", onclick: () => toggleSwap(card, s, plan, d, state2, actions) }, TEXT.swap),
+        s.designated || s.isAnchor ? null : el("button", { class: "btn quiet", type: "button", onclick: () => actions.removeStop(d.date, poi.id, s.insertedBy) }, TEXT.remove),
+        el("a", { class: "btn quiet", href: placeUrl(poi, tripCityName(state2)), target: "_blank", rel: "noopener" }, TEXT.mapLink)
       ])
     ]);
     if (legNext) {
       const legText = legNext.rideMin > 0 ? TEXT.rideTo(legNext.walkMin, legNext.rideMin) : TEXT.walkTo(legNext.walkMin);
-      card.append(el("p", { class: "leg muted small", text: `\u2193 ${legText}${waitText(next)}` }));
+      card.append(el("p", { class: "leg muted small" }, [`\u2193 ${legText}${waitText(next)}`, routeLink({ from: poi, to: next.poi, leg: legNext, state: state2 })]));
     }
     return card;
   }
@@ -2383,18 +2624,24 @@
     const leg = state2.legFn(from, next.poi);
     const legText = leg.rideMin > 0 ? TEXT.rideTo(leg.walkMin, leg.rideMin) : TEXT.walkTo(leg.walkMin);
     const closes = closeMin(next.poi, date);
+    const dark = closes == null ? darkBeforeMinOf(next.poi, date, state2) : null;
+    const limitMin = closes ?? dark;
     const lateMin = nowMin + leg.walkMin + leg.rideMin - next.startMin;
     const arriveMin = nowMin + leg.walkMin + leg.rideMin;
-    const threatened = closes != null && arriveMin + Math.min(next.dwellMin, 30) > closes;
+    const threatened = limitMin != null && arriveMin + Math.min(next.dwellMin, 30) > limitMin;
     const status = lateMin > (state2.settings.lateThresholdMin ?? 15) ? TEXT.late(lateMin) : lateMin < -5 ? TEXT.early(-lateMin) : "";
     nodes.push(el("section", { class: "card big next" }, [
       el("p", { class: "muted small", text: TEXT.nextStop + (status ? `\u3000${status}` : "") }),
       el("h2", { text: next.poi.name_zh }),
-      el("p", { class: "big-line", text: `${legText}${closes != null ? `\u3000${TEXT.closesAt(hm(closes))}` : ""}` }),
+      el("p", { class: "big-line", text: `${legText}${closes != null ? `\u3000${TEXT.closesAt(hm(closes))}` : dark != null ? `\u3000${TEXT.darkBefore(hm(dark))}` : ""}` }),
       el("p", { class: "muted small", text: `${hm(next.startMin)} \u5230\uFF0C\u5F85 ${next.dwellMin} \u5206` }),
-      next.insertedBy === "engine" ? el("p", { class: "muted small", text: TEXT.restInserted }) : null
+      next.insertedBy === "engine" ? el("p", { class: "muted small", text: TEXT.restInsertedNow }) : null,
+      // 路線深連結：不帶 origin（Google Maps 用現在位置），搭車段 transit、其餘 walking（原話 #157）
+      el("div", { class: "actions" }, [
+        el("a", { class: "btn", href: routeUrl({ to: next.poi, mode: legMode(leg), cityName: tripCityName(state2) }), target: "_blank", rel: "noopener" }, TEXT.openMaps)
+      ])
     ]));
-    if (threatened) nodes.push(proposalsBlock({ state: state2, actions, date, planned, seq, idx, nowMin, next, closes }));
+    if (threatened) nodes.push(proposalsBlock({ state: state2, actions, date, planned, seq, idx, nowMin, limitText: closes != null ? TEXT.hardLimit(next.poi.name_zh, hm(closes)) : TEXT.hardLimitDark(next.poi.name_zh, hm(dark)) }));
     nodes.push(el("button", { class: "btn primary huge", type: "button", onclick: () => leave({ state: state2, actions, seq, idx, prev: next }) }, TEXT.leaveNow));
     nodes.push(el("details", { class: "resync" }, [
       el("summary", { text: TEXT.arrivedHere }),
@@ -2417,12 +2664,12 @@
       actions.setField({ index: idx + 1, ratings });
     }
   }
-  function proposalsBlock({ state: state2, actions, date, planned, seq, idx, nowMin, next, closes }) {
-    const remaining = seq.slice(idx).map((s) => ({ poi: s.poi, priority: s.priority ?? "want", dwellMin: s.dwellMin, designated: s.designated, isAnchor: s.isAnchor, fixedWindow: s.fixedWindow }));
+  function proposalsBlock({ state: state2, actions, date, planned, seq, idx, nowMin, limitText }) {
+    const remaining = seq.slice(idx).map((s) => ({ poi: s.poi, priority: s.priority ?? "want", dwellMin: s.dwellMin, designated: s.designated, isAnchor: s.isAnchor, fixedWindow: s.fixedWindow, optional: Boolean(s.optional), insertedBy: s.insertedBy ?? null }));
     const here = idx > 0 ? seq[idx - 1].poi : resolveHome(state2.trip, date);
     const { proposals } = replanDay({ day: planned.day, remaining, here, nowMin, rules: state2.rules, settings: state2.settings, country: state2.country, kb: state2.kb, legFn: state2.legFn, pool: state2.pool });
     const block = el("section", { class: "card warn" }, [
-      el("p", { class: "warn-line", text: TEXT.hardLimit(next.poi.name_zh, hm(closes)) }),
+      el("p", { class: "warn-line", text: limitText }),
       el("h3", { text: TEXT.proposals })
     ]);
     for (const p of proposals) {
@@ -2497,7 +2744,7 @@
   // src/ui/pool.js
   function renderPool({ state: state2 }) {
     const plannedOn = /* @__PURE__ */ new Map();
-    for (const [date, d] of Object.entries(state2.plans)) for (const s of d.plan.sequence) plannedOn.set(s.poi.id, date);
+    for (const [date, d] of Object.entries(state2.plans)) for (const s of d.plan.sequence) if (!s.insertedBy) plannedOn.set(s.poi.id, date);
     const groups = /* @__PURE__ */ new Map();
     for (const c of state2.pool) {
       const cat = c.poi.category;
@@ -2590,7 +2837,7 @@
   function replanAll() {
     buildSettings();
     if (!state.trip) return;
-    const r = planTrip({ trip: state.trip, pois: state.pois, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, legFn: state.legFn });
+    const r = planTrip({ trip: state.trip, pois: state.pois, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, legFn: state.legFn, restPool: Object.values(state.pois) });
     state.plans = Object.fromEntries(r.days.map((d) => [d.date, d]));
     render();
   }
@@ -2601,11 +2848,11 @@
     Object.assign(day, applySwap(day, fromPoiId, toPoi));
     replanAll();
   }
-  function removeStop(date, poiId) {
+  function removeStop(date, poiId, insertedBy = null) {
     const day = state.trip.days.find((d) => d.date === date);
     if (!day) return;
     day.picks = (day.picks ?? []).filter((p) => p.poiId !== poiId);
-    day.removed = [...day.removed ?? [], { poiId, at: (/* @__PURE__ */ new Date()).toISOString() }];
+    day.removed = [...day.removed ?? [], { poiId, at: (/* @__PURE__ */ new Date()).toISOString(), ...insertedBy ? { insertedBy } : {} }];
     replanAll();
   }
   async function applyPackJson(json, { persist = true } = {}) {
@@ -2706,7 +2953,7 @@
   }
 
   // src/main.js
-  var VERSION = true ? "202610110044-259e20b4" : "dev";
+  var VERSION = true ? "202610120351-3bd0a22d" : "dev";
   function showUpdateBanner(registration) {
     if (document.querySelector(".banner")) return;
     const banner = el("div", { class: "banner", role: "status" }, [
