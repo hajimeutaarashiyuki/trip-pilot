@@ -80,7 +80,9 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
       if (nowDead.includes(c._i)) continue;
       if (c.optional && optionalPlaced >= maxOptional) continue;
       const leg = withBacktrack(normalizeLeg(legFn(prevPoi, c.poi)), seq, home, c.poi, legFn);
-      const placed = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev });
+      // first：當天第一站開門前到就改成晚點出門（schedule.js）。現場改案（day.resumed）是從當下接著排，人已經在外面，
+      // 第一個剩下的站等開門是真的在門口等，照站與站之間算、讓 wait-at-door 罰——不然引擎會把第一站推到 17:00 才開的酒吧、中間空四小時（2026-10-12 試走包 8/13 12:50 實測）
+      const placed = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev && !day.resumed });
       const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i, optional: Boolean(c.optional), insertedBy: c.insertedBy ?? null, gap: c.gap ?? null };
       const ctx = { ...dayCtxBase, stop, prev, next: null, leg, acc, sequence: seq };
       const r = evaluateStop(ctx, rules);
@@ -113,7 +115,7 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
       for (const c of remaining) {
         if (c.optional && optionalPlaced >= maxOptional) continue;
         const leg = withBacktrack(normalizeLeg(legFn(prevPoi, c.poi)), seq, home, c.poi, legFn);
-        const placed = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev });
+        const placed = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev && !day.resumed });
         const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i, optional: Boolean(c.optional), insertedBy: c.insertedBy ?? null, gap: c.gap ?? null };
         const r = evaluateStop({ ...dayCtxBase, stop, prev, next: null, leg, acc, sequence: seq }, rules);
         if (r.verdict !== 'ok') continue;

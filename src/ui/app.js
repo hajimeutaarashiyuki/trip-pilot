@@ -14,6 +14,7 @@ import { renderPlanner } from './planner.js';
 import { renderNow } from './now.js';
 import { renderSettings } from './settings.js';
 import { renderPool } from './pool.js';
+import { mergeField, pickFieldDate } from './ratings.js';
 
 const SETTINGS_KEY = 'trip-pilot:settings';
 const FIELD_KEY = 'trip-pilot:field';
@@ -24,7 +25,7 @@ export const state = {
   packRules: null, packMeta: null, packStatus: '',
   route: '#/plan',
   device: loadJSON(SETTINGS_KEY, {}),
-  field: loadJSON(FIELD_KEY, { date: null, index: 0, simulate: false, simNowMin: null, ratings: {} }),
+  field: loadJSON(FIELD_KEY, { date: null, index: 0, simulate: false, simNowMin: null, ratings: {}, progress: {} }),
 };
 
 function loadJSON(key, fallback) { try { const v = JSON.parse(localStorage.getItem(key) ?? 'null'); return v ?? fallback; } catch { return fallback; } }
@@ -51,7 +52,7 @@ export function loadDemo() {
   state.kb = demo.KB;
   state.legFn = demo.legFn;
   state.pool = Object.values(demo.POIS).map((poi) => ({ poi }));
-  if (!state.field.date) state.field.date = state.trip.days[0].date;
+  syncFieldDate();
   replanAll();
 }
 
@@ -67,8 +68,16 @@ export function loadFromPack(packResult) {
   buildSettings();
   state.legFn = makeLegFn({ walk: pack.walk?.pairs ?? {}, settings: state.settings, zoneLinks: pack.zones?.links ?? {} });
   state.pool = pois.map((poi) => ({ poi }));
-  if (!state.field.date) state.field.date = state.trip.days[0].date;
+  syncFieldDate();
   replanAll();
+}
+
+/** 現場頁的日期要是這趟的一天（boot 先填了今天、或換了旅程就不是）：不是就換成今天／第一天，進度照那天的 progress 接（T13）。 */
+function syncFieldDate() {
+  const date = pickFieldDate(state.field, state.trip.days.map((d) => d.date), todayStr());
+  if (date === state.field.date) return;
+  state.field = mergeField(state.field, { date });
+  saveJSON(FIELD_KEY, state.field);
 }
 
 export function replanAll() {
@@ -129,8 +138,9 @@ export function saveDevice(partial) {
   replanAll();
 }
 
+/** 現場狀態：index 是選的那天走到第幾站，progress[date] 按日期記著（換日期接那天的進度，不歸零；T13）。 */
 export function setField(partial) {
-  state.field = { ...state.field, ...partial };
+  state.field = mergeField(state.field, partial);
   saveJSON(FIELD_KEY, state.field);
   render();
 }

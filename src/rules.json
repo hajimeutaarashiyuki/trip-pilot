@@ -18,6 +18,7 @@
     "dayTripNextWalkFactor": 0.85,
     "dayTripWalkFactor": 0.7,
     "openSlotMinPerDay": 90,
+    "openSlotSkipBelowMin": 60,
     "lateThresholdMin": 15,
     "walkingMPerMin": 80,
     "detourFactor": 1.3,

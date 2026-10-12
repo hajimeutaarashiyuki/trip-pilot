@@ -24,7 +24,7 @@ function dayBlock(d, planned, state, actions) {
   const block = el('section', { class: 'day' }, [
     el('header', { class: 'day-head' }, [el('h2', { text: dateLabel(d.date) }), el('p', { class: 'muted', text: anchorLine })]),
     el('p', { class: 'muted small', text: TEXT.dayScore(plan.score, plan.penaltyMin) }),
-    openSlotLine(plan, state),
+    openSlotLine(plan, day),
     firstLegLine(plan, d, state),
   ]);
   // 累積型警告（今天走路會到 N 分、連跑）每站都會再響一次，只在第一次超過的那站寫
@@ -40,11 +40,16 @@ function dayBlock(d, planned, state, actions) {
   return block;
 }
 
-/** 留白：每天留的 openSlotMinPerDay 扣掉站與站之間等開門的分鐘（原話 #155「當成留白 但也要罰」；DESIGN §8）。 */
-function openSlotLine(plan, state) {
+/**
+ * 留白行（profile §8、DESIGN §4、§8）：這天的留白已從時窗尾端扣掉（trip.js dayWindow，排在最後），站與站之間等開門的分鐘算用掉（原話 #155「當成留白 但也要罰」）；
+ * departure 日或這天設 0 寫「這天沒留白」；時窗太短沒扣的（抵達日很晚落地）寫出來，不假裝有留。
+ */
+function openSlotLine(plan, day) {
+  const raw = day.windowRaw ?? day.window;
+  if (day.openSlotSkipped) return el('p', { class: 'muted small', text: TEXT.openSlotSkipped(raw.endMin - raw.startMin) });
+  if (!(day.openSlotMin > 0)) return el('p', { class: 'muted small', text: TEXT.openSlotNone });
   const used = Math.max(0, Math.round(plan.sequence.reduce((s, x) => s + (x.waitMin ?? 0), 0)));
-  const left = Math.max(0, (state.settings.openSlotMinPerDay ?? 90) - used);
-  return el('p', { class: 'muted small', text: TEXT.openSlotLine(left, used) });
+  return el('p', { class: 'muted small', text: TEXT.openSlotLine(day.openSlotMin, used) });
 }
 
 /** 出門那一段：幾點出門、從住宿到第一站走幾分（原本只畫站與站之間，第一段看不到）；路線從住宿出發，住宿沒座標就不帶起點。 */

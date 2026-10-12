@@ -7,8 +7,12 @@ import cutTail from './cut-tail.js';
 import swapAlt from './swap-alt.js';
 import moveDay from './move-day.js';
 import slowDown from './slow-down.js';
+import restOnly from './rest-only.js';
+import endDay from './end-day.js';
 
 export const STRATEGIES = Object.freeze([compress, cutTail, swapAlt, moveDay, slowDown]);
+/** 「累了／腳痛」那顆鍵（原話 #115、DESIGN §1.4 策略 5）只跑降速的三個深淺：只坐一下、坐一下再少走路、回住宿；每案都是休息，由他選（總則 5）。 */
+export const TIRED_STRATEGIES = Object.freeze([restOnly, slowDown, endDay]);
 
 /**
  * replanDay({ day, remaining, here, nowMin, rules, settings, country, kb, legFn, pool, strategies, options })

@@ -117,6 +117,19 @@ test('太晚出門（late-departure）：第一站 11:30 才開的店不再把�
   assert.deepEqual(only.breakdown.stops[0].items.filter((i) => i.ruleId === 'late-departure').map((i) => i.minutes), [60]);
 });
 
+test('現場改案（day.resumed）從當下接著排：第一個剩下的站等開門算真的在門口等（wait-at-door 罰），不像出門那樣改成晚點出門；late-departure 不罰', () => {
+  const late = { poi: poi('晚開的店', { walkFactor: 0, hours: { thu: [['17:00', '23:00']] } }), priority: 'want' };
+  const base = { candidates: [late], home, legFn: flatLeg, rules, settings, country, kb };
+  const out = planDay({ ...base, day: day({ window: { startMin: 15 * 60, endMin: 24 * 60 } }) });
+  assert.equal(out.sequence[0].waitMin, 0, '出門前：改成 16:50 出門，不在門口等');
+  const resumed = planDay({ ...base, day: day({ resumed: true, window: { startMin: 15 * 60, endMin: 24 * 60 } }) });
+  assert.equal(resumed.sequence[0].arriveMin, 15 * 60 + 10, '15:00 從現在位置走 10 分就到');
+  assert.equal(resumed.sequence[0].startMin, 17 * 60);
+  assert.equal(resumed.sequence[0].waitMin, 110);
+  assert.ok(resumed.warnings.some((w) => w.ruleId === 'wait-at-door'), '在門口等 110 分要被 wait-at-door 罰');
+  assert.ok(!resumed.warnings.some((w) => w.ruleId === 'late-departure'));
+});
+
 test('落選理由：在某條分支排進去過的站是分數取捨，不拿硬約束那句（例如天黑）當理由', () => {
   // 三站都排得進但只准 2 站：第三站是分數取捨，不是「排不進」
   const cands = [{ poi: poi('A'), priority: 'must' }, { poi: poi('B'), priority: 'want' }, { poi: poi('C'), priority: 'maybe' }];

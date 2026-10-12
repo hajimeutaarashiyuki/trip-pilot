@@ -1,7 +1,7 @@
-// T6：五種改案策略各出一案，交給核心重排；用 8/13 下午落後的情境。
+// T6：五種改案策略各出一案，交給核心重排；用 8/13 下午落後的情境。T12：「累了／腳痛」只跑降速那組（TIRED_STRATEGIES）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { replanDay, STRATEGIES } from '../../src/strategies/index.js';
+import { replanDay, STRATEGIES, TIRED_STRATEGIES } from '../../src/strategies/index.js';
 import { loadRules } from '../../src/rules/index.js';
 import { BUILTIN } from '../../src/rules/builtin.js';
 import rulesJson from '../../src/rules.json' with { type: 'json' };
@@ -55,4 +55,46 @@ test('壓縮只縮非指定站；降速先插最近的恢復站再砍要走路�
 
   const w = byId['swap-alt'].apply(input);
   assert.equal(w, null, '最遠的站是指定站（must）不換；其他沒有備案 → 不出案');
+});
+
+test('累了／腳痛只跑降速那組：至少一案；插的恢復站標引擎插的、釘在現在出發就到的時刻排最前面；回住宿那案是空的、分數最低排最後', () => {
+  const { proposals, all } = replanDay({ ...input, strategies: TIRED_STRATEGIES });
+  assert.ok(proposals.length >= 1 && proposals.length <= 3, `回 ${proposals.length} 案`);
+  const withRest = all.filter((p) => p.plan.sequence.some((s) => s.insertedBy === 'engine' && s.poi.recovery));
+  assert.ok(withRest.length >= 1, '要有含引擎插的恢復站的案');
+  for (const p of withRest) {
+    const first = p.plan.sequence[0];
+    assert.equal(first.insertedBy, 'engine', `${p.id}：恢復站要排在最前面（先坐一下）：${p.plan.sequence.map((s) => s.poi.name_zh).join('→')}`);
+    assert.equal(first.startMin, 15 * 60 + 8, '15:00 從 Elbe 走 8 分就到、不等');
+    assert.equal(first.waitMin, 0);
+    assert.equal(first.optional, true, '排不進不算落選');
+    assert.equal(first.priority, 'want', '他按了累了，這站是要的（價值不是 0）');
+    assert.ok(p.changes.some((c) => c.action === 'insert-rest' && c.poiId === first.poi.id));
+  }
+  const end = all.find((p) => p.id === 'end-day');
+  assert.deepEqual(end.plan.sequence, []);
+  assert.ok(end.changes.length === remaining.length && end.changes.every((c) => c.action === 'cut'), '回住宿：剩下的全記成砍掉，畫面才寫得出少掉什麼');
+  assert.equal(proposals[proposals.length - 1].id, 'end-day', '回住宿分數最低、排最後');
+
+  // 17:00：一隆（6 分）、汐谷（8 分）都開了 → 不插新的，最近的一隆釘到最前面（先坐一下）；只坐一下那案不出
+  const later = replanDay({ ...input, nowMin: 17 * 60, strategies: TIRED_STRATEGIES });
+  assert.ok(!later.all.some((p) => p.id === 'rest-only'));
+  const slow = later.all.find((p) => p.id === 'slow-down');
+  assert.equal(slow.plan.sequence[0].poi.id, POIS['たん焼き一隆'].id, `先坐一下要是真的先：${slow.plan.sequence.map((s) => s.poi.name_zh).join('→')}`);
+  assert.equal(slow.plan.sequence[0].startMin, 17 * 60 + 6);
+  assert.deepEqual(slow.plan.sequence[0].fixedWindow, { startMin: 17 * 60 + 6, pinned: true }, '釘的時刻帶 pinned，現場頁再重排時會拿掉');
+  assert.ok(!slow.changes.some((c) => c.action === 'insert-rest'));
+});
+
+test('只坐一下：剩下的站裡 30 分內有恢復站進得去就不出案；挑的恢復站要在到達時有開、待得完', () => {
+  const restOnly = TIRED_STRATEGIES.find((s) => s.id === 'rest-only');
+  // 15:00：一隆、汐谷都 17:00 才開 → 沒有 30 分內進得去的恢復站 → 插最近的咖啡廳，其他站都留著
+  const r = restOnly.apply(input);
+  assert.ok(r && r.candidates[0].insertedBy === 'engine' && r.candidates[0].poi.cafeLike);
+  assert.equal(r.candidates.length, remaining.length + 1, '站都留著');
+  assert.deepEqual(r.candidates[0].fixedWindow, { startMin: 15 * 60 + 8, pinned: true });
+  // 17:00：汐谷開了 → 30 分內有恢復站 → 不出案
+  assert.equal(restOnly.apply({ ...input, nowMin: 17 * 60 }), null);
+  // 19:00、剩下的沒有恢復站、pool 只有 18:00 就關的火星の庭 → 到了沒開 → 挑不到、不出案
+  assert.equal(restOnly.apply({ ...input, nowMin: 19 * 60, remaining: remaining.filter((c) => !c.poi.recovery), pool: [{ poi: POIS['火星の庭'] }] }), null);
 });

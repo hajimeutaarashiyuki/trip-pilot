@@ -14,7 +14,14 @@ export const REST_TRIGGER_RULES = new Set(['walk-run', 'wait-at-door', 'late-dep
 /** 觸發規則 → 它插的站的種類；拒絕過哪一種就不再插那一種、那條警告降成提示 */
 const TRIGGER_KIND = Object.freeze({ 'walk-run': 'rest', 'wait-at-door': 'filler', 'late-departure': 'filler' });
 
-/** 一天的時窗：預設 settings.dayWindow；晚出門日（旅程第 lateStartFromDay 天起、非一日遊）起點改 lateStartHM；早起日由 day.earlyDay 自帶出門時刻。 */
+/**
+ * 一天的時窗：預設 settings.dayWindow；晚出門日（旅程第 lateStartFromDay 天起、非一日遊）起點改 lateStartHM；早起日由 day.earlyDay 自帶出門時刻；
+ * 抵達日起點不早於落地＋緩衝、離境日終點不晚於起飛－緩衝。
+ * 留白從時窗尾端扣（profile §8「每天留 90 分鐘」、DESIGN §4 days[].openSlotMin）：每天的落後額度 day.openSlotMin ?? settings.openSlotMinPerDay，
+ * 排程時從收工時刻扣掉＝排在最後；departure 日一律 0（那天的尾端是飛機）。
+ * 扣完整天只剩 settings.openSlotSkipBelowMin（預設 60）分或更少就不扣、記警告 open-slot-skipped（推導：抵達日很晚落地那種，扣了就沒得排）。
+ * 回 { startMin, endMin（扣過的收工時刻，硬規則 window 看這個）, raw: { startMin, endMin }（原時窗，給畫面與夜間站）, openSlotMin（真的扣掉的分鐘）, warnings }
+ */
 export function dayWindow(day, index, settings) {
   const [start, end] = (settings.dayWindow ?? ['09:00', '24:00']).map(hmToMin);
   let startMin = start;
@@ -23,7 +30,15 @@ export function dayWindow(day, index, settings) {
   if (day.type === 'arrival' && day.arriveMin != null) startMin = Math.max(startMin, day.arriveMin + (settings.arrivalBufferMin ?? 60));
   let endMin = end;
   if (day.type === 'departure' && day.departAirportMin != null) endMin = Math.min(endMin, day.departAirportMin - (settings.departureBufferMin ?? 180));
-  return { startMin, endMin };
+  const raw = { startMin, endMin };
+  const wanted = day.type === 'departure' ? 0 : Math.max(0, Number(day.openSlotMin ?? settings.openSlotMinPerDay ?? 90) || 0);
+  const warnings = [];
+  let openSlotMin = wanted;
+  if (wanted > 0 && endMin - wanted <= startMin + (settings.openSlotSkipBelowMin ?? 60)) {
+    openSlotMin = 0;
+    warnings.push({ code: 'open-slot-skipped', msg: `時窗只有 ${endMin - startMin} 分鐘，留白 ${wanted} 分沒從時窗扣` });
+  }
+  return { startMin, endMin: endMin - openSlotMin, raw, openSlotMin, warnings };
 }
 
 /** 當日區域（第一版）：據點的 Zone ＋ 主行程的 Zone ＋ 所有候選的 Zone；之後換成據點圈 ∪ 錨點圈 ∪ 走廊。 */
@@ -34,9 +49,11 @@ export function regionZonesOf({ home, candidates, anchorPoi }) {
 
 /**
  * planTrip({ trip, pois, rules, settings, country, kb, legFn, restPool, options }) → { days: [{ date, day, plan }], warnings }
- * - trip.days[]: { date, type, earlyDay, departHM?, dayTrip?, anchor?: { poiId } | { theme, poiIds[] }, picks: [{ poiId, priority, dwellMin?, fixedWindow? }], designated?: [poiId], nightSlotOff?, removed?: [{ poiId, insertedBy?, priority? }] }
+ * - trip.days[]: { date, type, earlyDay, departHM?, dayTrip?, openSlotMin?, anchor?: { poiId } | { theme, poiIds[] }, picks: [{ poiId, priority, dwellMin?, fixedWindow? }], designated?: [poiId], nightSlotOff?, removed?: [{ poiId, insertedBy?, priority? }] }
  *   removed 帶 insertedBy 'engine' ＝ 他拒絕過引擎插的站：那天不再插同一種（priority 'rest' 恢復站／'filler' 填站；沒記 priority 的舊資料當恢復站）
  *   （profile §2.4 細則「拒絕＝跳過，不觸發改案、不罰、當天不再重插，連跑警告降成提示」；原話 #126 拒絕的是恢復，拒絕一家填站不等於拒絕恢復）
+ *   openSlotMin：這天的留白分鐘（缺＝settings.openSlotMinPerDay；departure 日 0），dayWindow 從收工時刻扣掉
+ * - 每天的 day 上下文：window 是扣過留白的時窗（硬規則 window、搜尋用）、windowRaw 原時窗（畫面、夜間站）、openSlotMin 真的扣掉的分鐘、openSlotSkipped 時窗太短沒扣（整趟 warnings 另有一條 open-slot-skipped）
  * - pois：{ [poiId]: poi }（已 normalize）
  * - restPool：引擎可插的站的來源（已規範化的 POI 陣列，可空；畫面與報告傳整個知識庫），每天由 restCandidates（恢復站）與 fillCandidates（填空檔，任何站）篩
  */
@@ -58,13 +75,17 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
     // 主行程：單站型用那站；主題型用骨架店的第一家當顯示名（畫面不得露出 theme 鍵值）
     const anchorPoi = d.anchor?.poiId ? pois[d.anchor.poiId] : (d.anchor?.poiIds?.length ? pois[d.anchor.poiIds[0]] : null);
     const themeCategory = d.anchor?.theme ?? null;
+    const win = dayWindow(d, index, settings);
+    for (const w of win.warnings) warnings.push({ ...w, date: d.date, msg: `${d.date} ${w.msg}` });
     const day = {
       date: d.date, type: d.type ?? 'normal', earlyDay: Boolean(d.earlyDay), dayTrip: Boolean(d.dayTrip), party: trip.party ?? 1,
       dayTripNext: prevType === 'daytrip' || Boolean(trip.days[index - 1]?.dayTrip),
       themeCategory, prevThemeCategory: prevTheme,
       anchorPoiId: anchorPoi?.id ?? null, anchorName: anchorPoi?.name_zh ?? d.anchor?.theme ?? null,
       designated: d.designated ?? [], regionZones: regionZonesOf({ home, candidates, anchorPoi }),
-      window: dayWindow(d, index, settings), nightSlotOff: Boolean(d.nightSlotOff) || Boolean(trip.days[index + 1]?.earlyDay),
+      window: { startMin: win.startMin, endMin: win.endMin }, windowRaw: win.raw, openSlotMin: win.openSlotMin,
+      openSlotSkipped: win.warnings.some((w) => w.code === 'open-slot-skipped'),
+      nightSlotOff: Boolean(d.nightSlotOff) || Boolean(trip.days[index + 1]?.earlyDay),
     };
     // 先照他勾的排；走路連跑破表（插恢復站）或等開門超過留白（填空檔）才把那種站加進候選重排一次，有比較好才採用。
     // 不每天都加：價值 0 的候選不受上界剪枝，試走包的 8/15 一加就從 276 節點變 6 萬節點、撞 800 ms 預算（2026-10-11 實測），結果還一樣。

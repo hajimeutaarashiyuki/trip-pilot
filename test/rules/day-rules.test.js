@@ -37,6 +37,7 @@ test('meal-slots：午晚餐各缺一個罰 20；night-slot：normal 日 20:00 �
   assert.equal(run('night-slot', ctx(null, { sequence: [lunch, night] })), 0, '18:45–20:15 跨到 20:00 算有');
   assert.equal(run('night-slot', ctx(null, { sequence: [lunch, dinner] })), 10);
   assert.equal(run('night-slot', ctx(null, { sequence: [lunch, late] })), 0);
+  assert.equal(run('night-slot', ctx(null, { sequence: [lunch, late], day: { window: { startMin: 540, endMin: 22 * 60 + 30 }, windowRaw: { startMin: 540, endMin: 1440 } } })), 0, '留白扣掉後收工 22:30，20:30–22:00 的 bar 仍算夜間站（讀 country.nightSlot，不讀 day.window）');
   assert.equal(run('night-slot', ctx(null, { sequence: [lunch], day: { type: 'arrival' } })), 0);
   assert.equal(run('night-slot', ctx(null, { sequence: [lunch], day: { nightSlotOff: true } })), 0, '早起日前一晚取消');
 });
