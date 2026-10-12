@@ -28,7 +28,7 @@ export const TEXT = {
   darkBefore: (hm) => `天黑 ${hm} 前`,
   mapLink: '地圖',
   routeLink: '路線',
-  restInserted: '引擎插的休息站，不要就按『不去了』',
+  restInserted: '引擎插的恢復站，不要就按『不去了』',
   fillerInserted: '引擎排進來填空檔的站，不要就按『不去了』',
 
   // 現場
@@ -53,7 +53,7 @@ export const TEXT = {
   rateTitle: (name) => `${name} 怎麼樣？`,
   rateSkip: '略過',
   stars: ['', '踩雷', '留著', '順路才排', '備案', '優先', '必去'],
-  restInsertedNow: '引擎插的休息站，不想休息可以略過',
+  restInsertedNow: '引擎插的恢復站，不想休息可以略過',
   fillerInsertedNow: '引擎排進來填空檔的站，不想去可以略過',
   openMaps: 'Google Maps 路線',
 

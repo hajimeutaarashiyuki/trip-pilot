@@ -1,9 +1,9 @@
 // 桌機上的打包檔伺服器：手機（tailscale 連回桌機）按「更新」就是來這裡抓 pack.json。只讀 packs/ 這一個資料夾，只有 GET／HEAD。
 // 掛法：tailscale serve --bg --set-path /trip-pilot http://127.0.0.1:18810
 //   → 手機用 https://<桌機>.ts.net/trip-pilot/pack.json；App 在 GitHub Pages，所以要給 CORS（tailnet 內才連得到，開 * 沒關係）。
-// 用法：node tools/serve-packs.mjs [--dir ../packs] [--port 18810]
+// 用法：node tools/serve-packs.mjs [--dir ../packs] [--port 18810] [--log <檔>]（--log：開機排程沒有 stdout，寫到檔）
 import http from 'node:http';
-import { stat, readFile } from 'node:fs/promises';
+import { stat, readFile, appendFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -18,6 +18,8 @@ const args = process.argv.slice(2);
 const opt = (name, fallback) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : fallback; };
 const port = Number(opt('--port', DEFAULT_PORT));
 const dir = path.resolve(here, opt('--dir', DEFAULT_DIR));
+const logFile = opt('--log', null);
+const log = (line) => { console.log(line); if (logFile) appendFile(logFile, line + '\n').catch(() => {}); };
 const TYPES = { '.json': 'application/json; charset=utf-8', '.txt': 'text/plain; charset=utf-8' };
 
 const server = http.createServer(async (req, res) => {
@@ -35,11 +37,11 @@ const server = http.createServer(async (req, res) => {
     const body = await readFile(file);
     res.writeHead(200, { ...cors, 'Content-Type': TYPES[path.extname(file)] ?? 'application/octet-stream', 'Content-Length': body.length, 'Last-Modified': s.mtime.toUTCString() });
     res.end(req.method === 'HEAD' ? undefined : body);
-    console.log(`${new Date().toISOString()} ${req.method} ${req.url} 200 ${body.length}`);
+    log(`${new Date().toISOString()} ${req.method} ${req.url} 200 ${body.length}`);
   } catch {
     res.writeHead(404, cors); res.end('not found');
-    console.log(`${new Date().toISOString()} ${req.method} ${req.url} 404`);
+    log(`${new Date().toISOString()} ${req.method} ${req.url} 404`);
   }
 });
 
-server.listen(port, '127.0.0.1', () => console.log(`packs 伺服器 http://127.0.0.1:${port}/pack.json ← ${dir}`));
+server.listen(port, '127.0.0.1', () => log(`${new Date().toISOString()} packs 伺服器 http://127.0.0.1:${port}/pack.json ← ${dir}`));
