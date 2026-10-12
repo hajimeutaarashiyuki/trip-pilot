@@ -122,7 +122,7 @@ export function restCandidates({ restPool = [], candidates = [], day, exclude = 
  * 早上的空檔只能靠這條觸發）：gap＝時窗起點 → 第一站開門，中點取住宿與第一站
  * （openIntervals 找到達後第一個營業區間的開門；沒有結構化時段就用它排定的開始時刻）；不到 settings.fillMinGapMin（預設 15）分的空檔不填。
  * 候選：restPool 裡不是交通、活動、錢湯的站，在當日區域內、不在 exclude 裡（任何一天勾的、按過不去了的、前幾天插過的）、
- * 當天在那段空檔內有開（沒有結構化時段視為有開；當天休息跳過；有時段就要跟空檔有交集），沒開的不佔 fillPoolMax 名額；
+ * 空檔開始時就已經開門（原話 #164：填站不能自己再等一次開門；沒有結構化時段視為有開；當天休息跳過），沒開的不佔 fillPoolMax 名額；
  * 依到「等開門那站與它前一站（沒有就住宿）中點」的直線距離取最近 settings.fillPoolMax 家。
  * 候選帶 gap（規則 filler-gap 擋在空檔外的排法）與 dwellMin = min(店的停留, 空檔長度 − fillMinGapMin)（留給兩段移動），裁完不到 fillMinGapMin 的不拿、不佔名額；
  * 價值 0（priority 'filler'）、optional、insertedBy 'engine'，可拒絕。
@@ -142,7 +142,7 @@ export function fillCandidates({ restPool = [], candidates = [], day, exclude = 
     if (gapMin < minGap) continue;
     const mid = centroidOf([waiting.poi, before?.poi ?? home].filter(Boolean)) ?? centroidOf(candidates.map((c) => c.poi));
     const distance = (p) => (mid && hasCoords(p) ? haversineM(mid, p) : Infinity);
-    pool.filter((p) => openDuring(p, day.date, gap))
+    pool.filter((p) => openFrom(p, day.date, gap.startMin, minGap))
       .map((p) => ({ p, d: distance(p) })).sort((a, b) => (a.d === b.d ? 0 : a.d < b.d ? -1 : 1)).slice(0, settings.fillPoolMax ?? 6)
       .forEach(({ p }) => {
         if (out.has(p.id)) return;
@@ -163,11 +163,11 @@ function opensAt(stop, date) {
   return open != null && open > stop.arriveMin ? open : stop.startMin;
 }
 
-/** 這家店當天在那段空檔內有沒有開：沒有結構化時段視為有開；當天休息沒開；有時段就要跟空檔有交集。 */
-function openDuring(poi, date, gap) {
+/** 這家店在空檔開始時就已經開門、而且至少再開 minGap 分：填站自己不能再等一次開門（原話 #164「禁」）。沒有結構化時段視為有開；當天休息沒開。 */
+function openFrom(poi, date, atMin, minGap) {
   const intervals = openIntervals(poi, date);
   if (intervals === null) return true;
-  return intervals.some(([open, close]) => overlapMin(open, close, gap.startMin, gap.endMin) > 0);
+  return intervals.some(([open, close]) => open <= atMin && close >= atMin + minGap);
 }
 
 const hasCoords = (p) => Number.isFinite(p?.lat) && Number.isFinite(p?.lng);

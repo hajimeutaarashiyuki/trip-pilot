@@ -99,7 +99,7 @@ test('late-departure：只罰當天第一站、比時窗起點晚超過 60 分�
   assert.match(warnOf('late-departure', ctx({ ...stop('第一站', { startMin: 11 * 60 + 30 }), arriveMin: 11 * 60 + 30 }, { leg: { walkMin: 5, rideMin: 20, climbMin: 0 } })), /^今天 11:05 才出門，比預設晚 125 分$/, '出門時刻＝到第一站減移動');
   // 罰的是出門時刻：第一段車 60＋走 10、09:00 出門 10:10 到，不罰（10-12 對抗審查：原本罰的是第一站開始時刻）
   assert.equal(run('late-departure', ctx({ ...stop('第一站', { startMin: 10 * 60 + 10 }), arriveMin: 10 * 60 + 10 }, { prev: null, sequence: [], leg: { walkMin: 10, rideMin: 60, climbMin: 0 } })), 0, '準時出門、第一段 70 分不罰');
-  assert.equal(run('late-departure', ctx(stop('第一站', { startMin: 11 * 60 + 30 }), { prev: null, sequence: [], day: { type: 'departure' } })), 0, '離境日不算');
+  assert.equal(run('late-departure', ctx(stop('第一站', { startMin: 11 * 60 + 30 }), { prev: null, sequence: [], day: { type: 'departure' } })), 60, '飛機日也算：他說飛機日不算晚出門日（原話 #162）');
   assert.equal(run('late-departure', ctx({ ...stop('花火', { startMin: 19 * 60, category: 'event', walkFactor: 0 }), fixedWindow: { startMin: 19 * 60 + 30, arriveEarlyMin: 30 } }, { prev: null, sequence: [] })), 0, '固定時段的站當第一站不算');
 });
 
@@ -134,4 +134,12 @@ test('walk-budget：一日遊本身 ×0.7（原話 #160，跟早起日同值）�
   const dt = ctx(stop('x'), { acc: { 'dim-walk': 120 }, day: { dayTrip: true } });
   assert.equal(run('walk-budget', dt), 120 - 150 * 0.7, '一日遊非早起日的預算是 150×0.7');
   assert.match(warnOf('walk-budget', dt), /超過上限 105/);
+});
+
+test('filler-gap：填站自己還要等開門就 never（原話 #164「禁」）', () => {
+  const gap = { startMin: 600, endMin: 720 };
+  const base = { ...stop('藥妝店', { startMin: 610, dwellMin: 30, category: 'drugstore', walkFactor: 0 }), priority: 'filler', optional: true, insertedBy: 'engine', gap };
+  assert.equal(run('filler-gap', ctx({ ...base, waitMin: 0 })), 'ok');
+  assert.equal(run('filler-gap', ctx({ ...base, waitMin: 10 })), 'never');
+  assert.match(warnOf('filler-gap', ctx({ ...base, waitMin: 10 })), /再等開門 10 分/);
 });
