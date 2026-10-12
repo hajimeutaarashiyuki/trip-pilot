@@ -169,6 +169,7 @@
     mapLink: "\u5730\u5716",
     routeLink: "\u8DEF\u7DDA",
     restInserted: "\u5F15\u64CE\u63D2\u7684\u4F11\u606F\u7AD9\uFF0C\u4E0D\u8981\u5C31\u6309\u300E\u4E0D\u53BB\u4E86\u300F",
+    fillerInserted: "\u5F15\u64CE\u6392\u9032\u4F86\u586B\u7A7A\u6A94\u7684\u7AD9\uFF0C\u4E0D\u8981\u5C31\u6309\u300E\u4E0D\u53BB\u4E86\u300F",
     // 現場
     nextStop: "\u4E0B\u4E00\u7AD9",
     leaveNow: "\u51FA\u767C\u53BB\u4E0B\u4E00\u7AD9",
@@ -192,6 +193,7 @@
     rateSkip: "\u7565\u904E",
     stars: ["", "\u8E29\u96F7", "\u7559\u8457", "\u9806\u8DEF\u624D\u6392", "\u5099\u6848", "\u512A\u5148", "\u5FC5\u53BB"],
     restInsertedNow: "\u5F15\u64CE\u63D2\u7684\u4F11\u606F\u7AD9\uFF0C\u4E0D\u60F3\u4F11\u606F\u53EF\u4EE5\u7565\u904E",
+    fillerInsertedNow: "\u5F15\u64CE\u6392\u9032\u4F86\u586B\u7A7A\u6A94\u7684\u7AD9\uFF0C\u4E0D\u60F3\u53BB\u53EF\u4EE5\u7565\u904E",
     openMaps: "Google Maps \u8DEF\u7DDA",
     // 設定
     settingsTitle: "\u9019\u56DB\u500B\u6578\u5B57\u4F60\u65C5\u9014\u4E2D\u6703\u60F3\u52D5",
@@ -360,6 +362,7 @@
   function budgetMultiplier(day, settings) {
     const m = [1];
     if (day?.earlyDay) m.push(settings.earlyDayWalkFactor ?? 0.7);
+    if (day?.dayTrip) m.push(settings.dayTripWalkFactor ?? 0.7);
     if ((day?.party ?? 1) >= 2) m.push(settings.partyWalkFactor ?? 0.85);
     if (day?.dayTripNext) m.push(settings.dayTripNextWalkFactor ?? 0.85);
     return Math.min(...m);
@@ -514,13 +517,15 @@
     reads: ["sequence"],
     defaults: {},
     apply(ctx) {
+      if (ctx.stop.optional) return "ok";
       const max = ctx.settings.maxStopsPerDay ?? 8;
-      return ctx.sequence.length + 1 <= max ? "ok" : "never";
+      return pickedCount(ctx.sequence) + 1 <= max ? "ok" : "never";
     },
     warn(ctx) {
-      return `\u4ECA\u5929\u5DF2\u7D93 ${ctx.sequence.length} \u7AD9\uFF0C\u4E0A\u9650 ${ctx.settings.maxStopsPerDay ?? 8}`;
+      return `\u4ECA\u5929\u5DF2\u7D93 ${pickedCount(ctx.sequence)} \u7AD9\uFF0C\u4E0A\u9650 ${ctx.settings.maxStopsPerDay ?? 8}`;
     }
   };
+  var pickedCount = (sequence) => sequence.filter((s) => !s.optional).length;
 
   // src/rules/same-type-day.js
   var same_type_day_default = {
@@ -788,6 +793,48 @@
     }
   };
 
+  // src/rules/late-departure.js
+  var late_departure_default = {
+    id: "late-departure",
+    kind: "soft",
+    reads: [],
+    defaults: { freeMin: 60, perMin: 1, capMin: 60 },
+    apply(ctx) {
+      if (ctx.prev || (ctx.sequence?.length ?? 0) > 0 || ctx.day.resumed) return 0;
+      if (ctx.stop.fixedWindow) return 0;
+      const over = departMin(ctx) - ctx.day.window.startMin - ctx.params.freeMin;
+      return over > 0 ? Math.min(ctx.params.capMin, over * ctx.params.perMin) : 0;
+    },
+    warn(ctx) {
+      const depart = departMin(ctx);
+      return `\u4ECA\u5929 ${minToHm(depart)} \u624D\u51FA\u9580\uFF0C\u6BD4\u9810\u8A2D\u665A ${Math.round(depart - ctx.day.window.startMin)} \u5206`;
+    }
+  };
+  function departMin(ctx) {
+    const leg = ctx.leg ?? {};
+    const travel = (leg.walkMin ?? 0) + (leg.rideMin ?? 0) + (leg.waitMin ?? 0);
+    return (ctx.stop.arriveMin ?? ctx.stop.startMin) - travel;
+  }
+
+  // src/rules/filler-gap.js
+  var filler_gap_default = {
+    id: "filler-gap",
+    kind: "hard",
+    reads: [],
+    defaults: {},
+    apply(ctx) {
+      const gap = ctx.stop.gap;
+      if (ctx.stop.priority !== "filler" || !gap) return "ok";
+      if ((ctx.stop.waitMin ?? 0) > 0) return "never";
+      return ctx.stop.startMin < gap.startMin || ctx.stop.endMin > gap.endMin ? "never" : "ok";
+    },
+    warn(ctx) {
+      const gap = ctx.stop.gap;
+      if ((ctx.stop.waitMin ?? 0) > 0) return `${ctx.stop.poi.name_zh} \u586B\u9032\u53BB\u9084\u8981\u518D\u7B49\u958B\u9580 ${Math.round(ctx.stop.waitMin)} \u5206`;
+      return `${ctx.stop.poi.name_zh} \u4E0D\u5728\u7A7A\u6A94\u5167\uFF08${minToHm(gap.startMin)}\u2013${minToHm(gap.endMin)}\uFF09`;
+    }
+  };
+
   // src/rules/anchor.js
   var anchor_default = {
     id: "anchor",
@@ -905,6 +952,7 @@
     same_type_day_default,
     early_day_default,
     daylight_default,
+    filler_gap_default,
     // 軟約束（站）
     walk_budget_default,
     walk_run_default,
@@ -915,6 +963,7 @@
     zone_exit_default,
     noon_urban_default,
     wait_at_door_default,
+    late_departure_default,
     // 整天
     anchor_default,
     designated_default,
@@ -942,6 +991,7 @@
       earlyDayAfterHM: "13:00",
       partyWalkFactor: 0.85,
       dayTripNextWalkFactor: 0.85,
+      dayTripWalkFactor: 0.7,
       openSlotMinPerDay: 90,
       lateThresholdMin: 15,
       walkingMPerMin: 80,
@@ -958,11 +1008,14 @@
       walkVsRideMaxWalkMin: 30,
       daylightMarginMin: 30,
       restPoolMax: 6,
+      fillPoolMax: 6,
       restInsertMaxPerDay: 2,
+      fillMinGapMin: 15,
       _\u539F\u8A71: {
         maxShopRunMin: "#103\uFF08\u984C\u76EE\u5BEB 240 \u4ED6\u7B54\u53EF\u4EE5\uFF09",
         walkBudgetMin: "#114\uFF08\u5148\u7559\uFF09",
-        sameTypeMaxPerDay: "#123\u3001#143"
+        sameTypeMaxPerDay: "#123\u3001#143",
+        dayTripWalkFactor: "#160\uFF08\u8DDF\u65E9\u8D77\u65E5\u540C\u503C 0.7\uFF0C\u53D6\u6700\u56B4\uFF09"
       }
     },
     rules: {
@@ -1049,6 +1102,15 @@
         freeMin: 15,
         perMin: 1,
         capMin: 60
+      },
+      "late-departure": {
+        weight: 1,
+        freeMin: 60,
+        perMin: 1,
+        capMin: 60
+      },
+      "filler-gap": {
+        weight: 1
       },
       anchor: {
         weight: 1
@@ -1169,9 +1231,9 @@
   }
 
   // src/engine/core.js
-  var PRIORITY_VALUE = Object.freeze({ must: 180, want: 90, maybe: 45, rest: 0 });
+  var PRIORITY_VALUE = Object.freeze({ must: 180, want: 90, maybe: 45, rest: 0, filler: 0 });
   function candidateValue(c) {
-    if (c.priority === "rest") return PRIORITY_VALUE.rest;
+    if (c.priority === "rest" || c.priority === "filler") return 0;
     const base = PRIORITY_VALUE[c.priority] ?? PRIORITY_VALUE.maybe;
     const rating = c.poi?.my?.rating;
     const bonus = rating === 6 ? 60 : rating === 5 ? 30 : 0;
@@ -1194,6 +1256,7 @@
     const cands = orderCandidates(candidates.map((c, i) => ({ ...c, _i: i, value: candidateValue(c), dwellMin: c.dwellMin ?? c.poi.dwellMin ?? settings.defaultDwellMin ?? 60 })));
     const stats = { nodes: 0, truncated: false, ms: 0 };
     const dead = /* @__PURE__ */ new Map();
+    const placedEver = /* @__PURE__ */ new Set();
     let best = null;
     const dayCtxBase = { day, settings, country, kb };
     function tryEnd(seq, acc, score, path) {
@@ -1211,7 +1274,7 @@
       }
       tryEnd(seq, acc, score, path);
       if (!remaining.length) return;
-      const slots = Math.max(0, (settings.maxStopsPerDay ?? 8) - seq.length);
+      const slots = Math.max(0, (settings.maxStopsPerDay ?? 8) - seq.filter((s) => !s.optional).length);
       const optimistic = score + remaining.slice(0, slots).reduce((s, c) => s + c.value, 0);
       if (best && best.complete && optimistic <= best.total) return;
       const prev = seq.length ? seq[seq.length - 1] : null;
@@ -1224,7 +1287,7 @@
         if (c.optional && optionalPlaced >= maxOptional) continue;
         const leg = withBacktrack(normalizeLeg(legFn2(prevPoi, c.poi)), seq, home, c.poi, legFn2);
         const placed = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev });
-        const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i, optional: Boolean(c.optional), insertedBy: c.insertedBy ?? null };
+        const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i, optional: Boolean(c.optional), insertedBy: c.insertedBy ?? null, gap: c.gap ?? null };
         const ctx = { ...dayCtxBase, stop, prev, next: null, leg, acc, sequence: seq };
         const r = evaluateStop(ctx, rules);
         if (r.verdict === "never") {
@@ -1234,6 +1297,7 @@
         }
         if (r.verdict === "no") continue;
         const nextRemaining = remaining.filter((o) => o._i !== c._i && !nowDead.includes(o._i));
+        placedEver.add(c._i);
         search([...seq, stop], nextRemaining, r.acc, score + c.value - r.penaltyMin, [...path, { stop, penaltyMin: r.penaltyMin, breakdown: r.breakdown, warnings: r.warnings }]);
         if (stats.truncated) return;
       }
@@ -1257,13 +1321,14 @@
           if (c.optional && optionalPlaced >= maxOptional) continue;
           const leg = withBacktrack(normalizeLeg(legFn2(prevPoi, c.poi)), seq, home, c.poi, legFn2);
           const placed = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev });
-          const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i, optional: Boolean(c.optional), insertedBy: c.insertedBy ?? null };
+          const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i, optional: Boolean(c.optional), insertedBy: c.insertedBy ?? null, gap: c.gap ?? null };
           const r = evaluateStop({ ...dayCtxBase, stop, prev, next: null, leg, acc, sequence: seq }, rules);
           if (r.verdict !== "ok") continue;
           const gain = c.value - r.penaltyMin;
           if (!pick || gain > pick.gain || gain === pick.gain && placed.startMin < pick.stop.startMin) pick = { c, stop, r, gain };
         }
         if (!pick || pick.gain <= 0) break;
+        placedEver.add(pick.c._i);
         seq = [...seq, pick.stop];
         acc = pick.r.acc;
         score += pick.gain;
@@ -1274,7 +1339,19 @@
     }
     if (!best) best = { total: 0, complete: false, seq: [], path: [], dayEval: evaluateDay({ ...dayCtxBase, sequence: [], acc: emptyAcc(rules.dims) }, rules), acc: emptyAcc(rules.dims) };
     const placedIdx = new Set(best.seq.map((s) => s.candidateIndex));
-    const dropped = cands.filter((c) => !placedIdx.has(c._i) && !c.optional).map((c) => ({ poi: c.poi, priority: c.priority, reason: dead.get(c._i) ?? "\u6642\u9593\u6216\u5206\u6578\u6392\u4E0D\u9032" }));
+    const nonOptional = cands.filter((c) => !c.optional);
+    const maxStops = settings.maxStopsPerDay ?? 8;
+    const sameTypeMax = settings.sameTypeMaxPerDay ?? 2;
+    const byCat = /* @__PURE__ */ new Map();
+    for (const c of nonOptional) byCat.set(c.poi.category, (byCat.get(c.poi.category) ?? 0) + 1);
+    const reasonFor = (c) => {
+      if (!placedEver.has(c._i)) return dead.get(c._i) ?? "\u6642\u9593\u6216\u5206\u6578\u6392\u4E0D\u9032";
+      if (nonOptional.length > maxStops) return `\u4ECA\u5929\u52FE\u4E86 ${nonOptional.length} \u7AD9\u3001\u4E0A\u9650 ${maxStops}\uFF0C\u5B83\u6392\u5728\u5F8C\u9762`;
+      const n = byCat.get(c.poi.category) ?? 0;
+      if (SAME_TYPE_CATEGORIES.includes(c.poi.category) && day.themeCategory !== c.poi.category && n > sameTypeMax) return `\u540C\u985E\u7684\u5E97\u4E00\u5929\u6700\u591A ${sameTypeMax} \u5BB6\u3001\u52FE\u4E86 ${n} \u5BB6\uFF0C\u5B83\u6392\u5728\u5F8C\u9762`;
+      return "\u6392\u5F97\u9032\uFF0C\u4F46\u6392\u9032\u53BB\u6574\u5929\u7684\u5206\u6578\u53CD\u800C\u4F4E";
+    };
+    const dropped = cands.filter((c) => !placedIdx.has(c._i) && !c.optional).map((c) => ({ poi: c.poi, priority: c.priority, reason: reasonFor(c) }));
     const stopPenalty = best.path.reduce((s, p) => s + p.penaltyMin, 0);
     const warnings = [
       ...best.path.flatMap((p) => p.warnings),
@@ -1362,7 +1439,7 @@
   var hasCoords = (p) => Number.isFinite(p?.lat) && Number.isFinite(p?.lng);
 
   // src/engine/trip.js
-  var REST_TRIGGER_RULES = /* @__PURE__ */ new Set(["walk-run", "wait-at-door"]);
+  var TRIGGER_KIND = Object.freeze({ "walk-run": "rest", "wait-at-door": "filler", "late-departure": "filler" });
   function dayWindow(day, index, settings) {
     const [start, end] = (settings.dayWindow ?? ["09:00", "24:00"]).map(hmToMin);
     let startMin = start;
@@ -1383,6 +1460,8 @@
     let prevTheme = null;
     let prevType = null;
     const pickedAnywhere = new Set(trip.days.flatMap((d) => [...(d.picks ?? []).map((p) => p.poiId), d.anchor?.poiId, ...d.anchor?.poiIds ?? []]).filter(Boolean));
+    const removedAnywhere = new Set(trip.days.flatMap((d) => (d.removed ?? []).map((r) => r?.poiId)).filter(Boolean));
+    const insertedSoFar = /* @__PURE__ */ new Set();
     trip.days.forEach((d, index) => {
       const home = resolveHome(trip, d.date);
       const candidates = (d.picks ?? []).map((p) => {
@@ -1399,6 +1478,7 @@
         date: d.date,
         type: d.type ?? "normal",
         earlyDay: Boolean(d.earlyDay),
+        dayTrip: Boolean(d.dayTrip),
         party: trip.party ?? 1,
         dayTripNext: prevType === "daytrip" || Boolean(trip.days[index - 1]?.dayTrip),
         themeCategory,
@@ -1411,31 +1491,74 @@
         nightSlotOff: Boolean(d.nightSlotOff) || Boolean(trip.days[index + 1]?.earlyDay)
       };
       let plan = planDay({ candidates, day, home, legFn: legFn2, rules, settings, country, kb, options });
-      const triggered = plan.warnings.some((w) => REST_TRIGGER_RULES.has(w.ruleId));
-      if (triggered && rejectedRest(d.removed)) {
-        plan = { ...plan, warnings: plan.warnings.map((w) => REST_TRIGGER_RULES.has(w.ruleId) ? { ...w, hint: true } : w) };
-      } else if (triggered) {
-        const rests = restCandidates({ restPool, candidates, day, removed: d.removed, pickedAnywhere, home, settings });
-        if (rests.length) {
-          const withRests = planDay({ candidates: [...candidates, ...rests], day, home, legFn: legFn2, rules, settings, country, kb, options });
-          if (withRests.complete && !plan.complete || withRests.complete === plan.complete && withRests.score > plan.score) plan = withRests;
-        }
+      const rejected = rejectedKinds(d.removed);
+      const exclude = /* @__PURE__ */ new Set([...pickedAnywhere, ...removedAnywhere, ...insertedSoFar]);
+      const extra = extraCandidates({ restPool, candidates, day, exclude, home, plan, settings, rejected });
+      if (extra.length) {
+        const withExtra = planDay({ candidates: [...candidates, ...extra], day, home, legFn: legFn2, rules, settings, country, kb, options });
+        if (withExtra.complete && !plan.complete || withExtra.complete === plan.complete && withExtra.score > plan.score) plan = withExtra;
       }
+      if (rejected.size) plan = { ...plan, warnings: plan.warnings.map((w) => rejected.has(TRIGGER_KIND[w.ruleId]) ? { ...w, hint: true } : w) };
+      for (const s of plan.sequence) if (s.insertedBy) insertedSoFar.add(s.poi.id);
       out.push({ date: d.date, day, plan });
       prevTheme = themeCategory;
       prevType = d.dayTrip ? "daytrip" : d.type ?? "normal";
     });
     return { days: out, warnings };
   }
-  function restCandidates({ restPool = [], candidates = [], day, removed = [], pickedAnywhere = /* @__PURE__ */ new Set(), home = null, settings = {} }) {
+  function extraCandidates({ restPool = [], candidates = [], day, exclude = /* @__PURE__ */ new Set(), home = null, plan, settings = {}, rejected = /* @__PURE__ */ new Set() }) {
+    const triggered = (ruleId) => (plan?.warnings ?? []).some((w) => w.ruleId === ruleId);
+    const rests = triggered("walk-run") && !rejected.has("rest") ? restCandidates({ restPool, candidates, day, exclude, home, settings }) : [];
+    const fillers = triggered("wait-at-door") && !rejected.has("filler") ? fillCandidates({ restPool, candidates, day, exclude, home, plan, settings }) : [];
+    const seen = new Set(rests.map((c) => c.poi.id));
+    return [...rests, ...fillers.filter((c) => seen.has(c.poi.id) ? false : (seen.add(c.poi.id), true))];
+  }
+  function restCandidates({ restPool = [], candidates = [], day, exclude = /* @__PURE__ */ new Set(), home = null, settings = {} }) {
     if (!restPool.length) return [];
-    const removedIds = new Set(removed.map((r) => r.poiId));
     const center = centroidOf(candidates.map((c) => c.poi)) ?? (hasCoords2(home) ? { lat: home.lat, lng: home.lng } : null);
     const distance = (p) => center && hasCoords2(p) ? haversineM(center, p) : Infinity;
-    return restPool.filter((p) => p && p.recovery === true && p.category !== "onsen" && (day.regionZones ?? []).includes(p.zoneId) && !pickedAnywhere.has(p.id) && !removedIds.has(p.id)).map((p) => ({ p, d: distance(p) })).sort((a, b) => a.d === b.d ? 0 : a.d < b.d ? -1 : 1).slice(0, settings.restPoolMax ?? 6).map(({ p }) => ({ poi: p, priority: "rest", optional: true, insertedBy: "engine", dwellMin: p.dwellMin ?? Math.max(settings.restResetMin ?? 30, 30) }));
+    return restPool.filter((p) => p && p.recovery === true && p.category !== "onsen" && (day.regionZones ?? []).includes(p.zoneId) && !exclude.has(p.id)).map((p) => ({ p, d: distance(p) })).sort((a, b) => a.d === b.d ? 0 : a.d < b.d ? -1 : 1).slice(0, settings.restPoolMax ?? 6).map(({ p }) => ({ poi: p, priority: "rest", optional: true, insertedBy: "engine", dwellMin: p.dwellMin ?? Math.max(settings.restResetMin ?? 30, 30) }));
+  }
+  function fillCandidates({ restPool = [], candidates = [], day, exclude = /* @__PURE__ */ new Set(), home = null, plan, settings = {} }) {
+    if (!restPool.length || !plan?.sequence?.length) return [];
+    const pool = restPool.filter((p) => p && !NO_FILL_CATEGORIES.has(p.category) && (day.regionZones ?? []).includes(p.zoneId) && !exclude.has(p.id));
+    const out = /* @__PURE__ */ new Map();
+    const minGap = settings.fillMinGapMin ?? 15;
+    for (const w of plan.warnings.filter((x) => (x.ruleId === "wait-at-door" || x.ruleId === "late-departure") && x.poiId)) {
+      const i = plan.sequence.findIndex((s) => s.poi.id === w.poiId);
+      if (i < 0) continue;
+      const waiting = plan.sequence[i];
+      const before = i > 0 ? plan.sequence[i - 1] : null;
+      const gap = { startMin: before ? before.endMin : day.window.startMin, endMin: opensAt(waiting, day.date) };
+      const gapMin = gap.endMin - gap.startMin;
+      if (gapMin < minGap) continue;
+      const mid = centroidOf([waiting.poi, before?.poi ?? home].filter(Boolean)) ?? centroidOf(candidates.map((c) => c.poi));
+      const distance = (p) => mid && hasCoords2(p) ? haversineM(mid, p) : Infinity;
+      pool.filter((p) => openFrom(p, day.date, gap.startMin, minGap)).map((p) => ({ p, d: distance(p) })).sort((a, b) => a.d === b.d ? 0 : a.d < b.d ? -1 : 1).slice(0, settings.fillPoolMax ?? 6).forEach(({ p }) => {
+        if (out.has(p.id)) return;
+        const dwellMin = Math.min(p.dwellMin ?? settings.defaultDwellMin ?? 60, gapMin - minGap);
+        if (dwellMin < minGap) return;
+        out.set(p.id, { poi: p, priority: "filler", optional: true, insertedBy: "engine", gap, dwellMin });
+      });
+    }
+    return [...out.values()];
+  }
+  var NO_FILL_CATEGORIES = /* @__PURE__ */ new Set(["logistics", "event", "onsen"]);
+  function opensAt(stop, date) {
+    const open = openIntervals(stop.poi, date)?.find(([, close]) => stop.arriveMin < close)?.[0];
+    return open != null && open > stop.arriveMin ? open : stop.startMin;
+  }
+  function openFrom(poi, date, atMin, minGap) {
+    const intervals = openIntervals(poi, date);
+    if (intervals === null) return true;
+    return intervals.some(([open, close]) => open <= atMin && close >= atMin + minGap);
   }
   var hasCoords2 = (p) => Number.isFinite(p?.lat) && Number.isFinite(p?.lng);
-  var rejectedRest = (removed = []) => removed.some((r) => r?.insertedBy === "engine");
+  function rejectedKinds(removed = []) {
+    const kinds = /* @__PURE__ */ new Set();
+    for (const r of removed) if (r?.insertedBy === "engine") kinds.add(r.priority === "filler" ? "filler" : "rest");
+    return kinds;
+  }
   function centroidOf(list) {
     const pts = list.filter(hasCoords2);
     if (!pts.length) return null;
@@ -2393,12 +2516,13 @@
       el("h3", { text: poi.name_zh }),
       el("p", { class: "muted small", text: [poi.guide?.intro ?? poi.highlight ?? "", limitText].filter(Boolean).join("\u3000") }),
       warns.length ? warnList(warns) : null,
-      s.insertedBy === "engine" ? el("p", { class: "muted small", text: TEXT.restInserted }) : null,
+      // 哪一種引擎插的站看 stop.priority（'filler' 填空檔、'rest' 恢復站），不看店型：恢復型的店也可能是填站
+      s.insertedBy === "engine" ? el("p", { class: "muted small", text: s.priority === "filler" ? TEXT.fillerInserted : TEXT.restInserted }) : null,
       el("div", { class: "actions" }, [
         // 引擎插的站不在 picks 裡，「換一家」接不上；「不去了」會記進 day.removed，下次重排就不再插＝拒絕（原話 #126）
         // 引擎插的站不是 designated 也不是 anchor（core 只從候選帶這兩個旗標），所以「不去了」照這個條件一定會出現
         s.insertedBy === "engine" ? null : el("button", { class: "btn", type: "button", onclick: () => toggleSwap(card, s, plan, d, state2, actions) }, TEXT.swap),
-        s.designated || s.isAnchor ? null : el("button", { class: "btn quiet", type: "button", onclick: () => actions.removeStop(d.date, poi.id, s.insertedBy) }, TEXT.remove),
+        s.designated || s.isAnchor ? null : el("button", { class: "btn quiet", type: "button", onclick: () => actions.removeStop(d.date, poi.id, s.insertedBy, s.priority) }, TEXT.remove),
         el("a", { class: "btn quiet", href: placeUrl(poi, tripCityName(state2)), target: "_blank", rel: "noopener" }, TEXT.mapLink)
       ])
     ]);
@@ -2575,7 +2699,7 @@
         continue;
       }
       if (!out) continue;
-      const day = { ...input.day, ...out.dayPatch ?? {}, window: { ...input.day.window, startMin: input.nowMin, ...out.dayPatch?.window ?? {} } };
+      const day = { ...input.day, resumed: true, ...out.dayPatch ?? {}, window: { ...input.day.window, startMin: input.nowMin, ...out.dayPatch?.window ?? {} } };
       const settings = { ...input.settings, ...out.settingsPatch ?? {} };
       const plan = planDay({ candidates: out.candidates, day, home: input.here, legFn: input.legFn, rules: input.rules, settings, country: input.country, kb: input.kb, options: { maxMs: options.maxMs ?? 300 } });
       proposals.push({ id: s.id, label: s.label, note: out.note, changes: out.changes ?? [], plan });
@@ -2635,7 +2759,7 @@
       el("h2", { text: next.poi.name_zh }),
       el("p", { class: "big-line", text: `${legText}${closes != null ? `\u3000${TEXT.closesAt(hm(closes))}` : dark != null ? `\u3000${TEXT.darkBefore(hm(dark))}` : ""}` }),
       el("p", { class: "muted small", text: `${hm(next.startMin)} \u5230\uFF0C\u5F85 ${next.dwellMin} \u5206` }),
-      next.insertedBy === "engine" ? el("p", { class: "muted small", text: TEXT.restInsertedNow }) : null,
+      next.insertedBy === "engine" ? el("p", { class: "muted small", text: next.priority === "filler" ? TEXT.fillerInsertedNow : TEXT.restInsertedNow }) : null,
       // 路線深連結：不帶 origin（Google Maps 用現在位置），搭車段 transit、其餘 walking（原話 #157）
       el("div", { class: "actions" }, [
         el("a", { class: "btn", href: routeUrl({ to: next.poi, mode: legMode(leg), cityName: tripCityName(state2) }), target: "_blank", rel: "noopener" }, TEXT.openMaps)
@@ -2665,7 +2789,7 @@
     }
   }
   function proposalsBlock({ state: state2, actions, date, planned, seq, idx, nowMin, limitText }) {
-    const remaining = seq.slice(idx).map((s) => ({ poi: s.poi, priority: s.priority ?? "want", dwellMin: s.dwellMin, designated: s.designated, isAnchor: s.isAnchor, fixedWindow: s.fixedWindow, optional: Boolean(s.optional), insertedBy: s.insertedBy ?? null }));
+    const remaining = seq.slice(idx).map((s) => ({ poi: s.poi, priority: s.priority ?? "want", dwellMin: s.dwellMin, designated: s.designated, isAnchor: s.isAnchor, fixedWindow: s.fixedWindow, optional: Boolean(s.optional), insertedBy: s.insertedBy ?? null, gap: s.gap ?? null }));
     const here = idx > 0 ? seq[idx - 1].poi : resolveHome(state2.trip, date);
     const { proposals } = replanDay({ day: planned.day, remaining, here, nowMin, rules: state2.rules, settings: state2.settings, country: state2.country, kb: state2.kb, legFn: state2.legFn, pool: state2.pool });
     const block = el("section", { class: "card warn" }, [
@@ -2848,11 +2972,11 @@
     Object.assign(day, applySwap(day, fromPoiId, toPoi));
     replanAll();
   }
-  function removeStop(date, poiId, insertedBy = null) {
+  function removeStop(date, poiId, insertedBy = null, priority = null) {
     const day = state.trip.days.find((d) => d.date === date);
     if (!day) return;
     day.picks = (day.picks ?? []).filter((p) => p.poiId !== poiId);
-    day.removed = [...day.removed ?? [], { poiId, at: (/* @__PURE__ */ new Date()).toISOString(), ...insertedBy ? { insertedBy } : {} }];
+    day.removed = [...day.removed ?? [], { poiId, at: (/* @__PURE__ */ new Date()).toISOString(), ...insertedBy ? { insertedBy } : {}, ...priority ? { priority } : {} }];
     replanAll();
   }
   async function applyPackJson(json, { persist = true } = {}) {
@@ -2953,7 +3077,7 @@
   }
 
   // src/main.js
-  var VERSION = true ? "202610120351-3bd0a22d" : "dev";
+  var VERSION = true ? "202610121611-f5338aa1" : "dev";
   function showUpdateBanner(registration) {
     if (document.querySelector(".banner")) return;
     const banner = el("div", { class: "banner", role: "status" }, [
