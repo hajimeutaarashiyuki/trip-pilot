@@ -32,6 +32,9 @@ export const TEXT = {
   routeLink: '路線',
   restInserted: '引擎插的恢復站，不要就按『不去了』',
   fillerInserted: '引擎排進來填空檔的站，不要就按『不去了』',
+  appliedLine: '現場改過',
+  appliedLost: '現場改案拿掉的',
+  appliedDropped: '旅程更新過了，現場改過的走法已丟掉，照引擎重排的走',
 
   // 現場
   nextStop: '下一站',
@@ -49,6 +52,11 @@ export const TEXT = {
   keepGoing: '照原本的走',
   proposalEmpty: '（今天到此為止）',
   proposalLost: (names) => `少掉：${names}`,
+  proposalEatsSlack: (n) => `吃掉留白 ${n} 分`,
+  proposalOverSlack: (m) => `超過留白 ${m} 分`,
+  proposalsNone: '沒有跟現在不一樣的走法',
+  skipStop: '略過這站',
+  jumpToday: '切到今天',
   tired: '累了／腳痛',
   tiredTitle: '先坐一下，少走路',
   tiredClose: '先不用',

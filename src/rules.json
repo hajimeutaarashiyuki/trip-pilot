@@ -31,6 +31,7 @@
     "compressFactor": 0.75,
     "compressMinDwell": 20,
     "restSoonMin": 30,
+    "slowDownWalkFactor": 0.7,
     "walkVsRideMaxWalkMin": 30,
     "daylightMarginMin": 30,
     "restPoolMax": 6,

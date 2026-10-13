@@ -5,7 +5,7 @@ import { replanDay, STRATEGIES, TIRED_STRATEGIES } from '../../src/strategies/in
 import { loadRules } from '../../src/rules/index.js';
 import { BUILTIN } from '../../src/rules/builtin.js';
 import rulesJson from '../../src/rules.json' with { type: 'json' };
-import { POIS, HOME, KB, COUNTRY, legFn, DAY_0813 } from '../sendai/fixture.js';
+import { POIS, HOME, KB, COUNTRY, legFn, DAY_0813, DAY_0817 } from '../sendai/fixture.js';
 
 const rules = loadRules(BUILTIN, rulesJson.rules);
 const settings = rulesJson.settings;
@@ -97,4 +97,47 @@ test('只坐一下：剩下的站裡 30 分內有恢復站進得去就不出案�
   assert.equal(restOnly.apply({ ...input, nowMin: 17 * 60 }), null);
   // 19:00、剩下的沒有恢復站、pool 只有 18:00 就關的火星の庭 → 到了沒開 → 挑不到、不出案
   assert.equal(restOnly.apply({ ...input, nowMin: 19 * 60, remaining: remaining.filter((c) => !c.poi.recovery), pool: [{ poi: POIS['火星の庭'] }] }), null);
+});
+
+// T12 對抗審查後補：改案用原時窗（吃留白）、跟目前剩下一模一樣的案不出、降速縮步行
+const BAR = POIS['文化横丁 小酒場'];   // 17:00–24:00、待 90
+const lateDay = { ...DAY_0817, anchorPoiId: null, designated: [], window: { startMin: 11 * 60, endMin: 22 * 60 + 30 }, windowRaw: { startMin: 11 * 60, endMin: 24 * 60 }, openSlotMin: 90 };
+const lateInput = { ...input, day: lateDay, remaining: [{ poi: BAR, priority: 'want' }], here: POIS['TRUE VINTAGE'], nowMin: 21 * 60 + 5, pool: [], strategies: TIRED_STRATEGIES };
+
+test('改案的收工用原時窗（留白是給現場落後吃的）：8/17 21:05 剩 bar，降速那案 21:13–22:43 排得進、記吃掉留白 13 分；回住宿那案 0；沒有原時窗就照扣過的收工', () => {
+  const { proposals, all } = replanDay(lateInput);
+  const slow = all.find((p) => p.id === 'slow-down');
+  assert.ok(slow, '降速那案要出');
+  assert.deepEqual(slow.plan.sequence.map((s) => [s.poi.id, s.startMin, s.endMin]), [[BAR.id, 21 * 60 + 13, 22 * 60 + 43]], '21:05 走 8 分到、待 90、超過扣過留白的收工 22:30 也排得進');
+  assert.equal(slow.eatsSlackMin, 13);
+  assert.ok(!slow.plan.warnings.some((w) => w.ruleId === 'window'), '原時窗 24:00 內，沒有超過收工的警告');
+  assert.equal(all.find((p) => p.id === 'end-day').eatsSlackMin, 0);
+  assert.ok(proposals.some((p) => p.id === 'slow-down'), `清單裡要有降速：${proposals.map((p) => p.id).join('、')}`);
+  // 對照：沒有 windowRaw 的 day（舊形狀）就照 window.endMin 收工，bar 排不進
+  const { all: strict } = replanDay({ ...lateInput, day: { ...lateDay, windowRaw: undefined } });
+  assert.deepEqual(strict.find((p) => p.id === 'slow-down').plan.sequence, []);
+  assert.ok(strict.find((p) => p.id === 'slow-down').plan.dropped.some((d) => d.poi.id === BAR.id && /收工時間 22:30/.test(d.reason)));
+});
+
+test('跟目前剩下的排程一模一樣的案不出（逐站 poiId＋startMin）；remaining 沒帶 startMin 或時刻不同就照出；all 不過濾', () => {
+  const base = { ...input, remaining: [{ poi: POIS['たん焼き一隆'], priority: 'want' }], nowMin: 17 * 60, pool: [], strategies: TIRED_STRATEGIES };
+  const open = replanDay(base);
+  const slow = open.all.find((p) => p.id === 'slow-down');
+  assert.deepEqual(slow.plan.sequence.map((s) => [s.poi.id, s.startMin]), [[POIS['たん焼き一隆'].id, 17 * 60 + 6]]);
+  assert.ok(open.proposals.some((p) => p.id === 'slow-down'), 'remaining 沒帶時刻：照出');
+  const same = replanDay({ ...base, remaining: [{ poi: POIS['たん焼き一隆'], priority: 'want', startMin: 17 * 60 + 6 }] });
+  assert.ok(!same.proposals.some((p) => p.id === 'slow-down'), '序列與時刻都跟現在一樣：不出');
+  assert.ok(same.all.some((p) => p.id === 'slow-down'), 'all 留著給測試看');
+  assert.ok(same.proposals.some((p) => p.id === 'end-day'), '不一樣的案（回住宿）還在');
+  const shifted = replanDay({ ...base, remaining: [{ poi: POIS['たん焼き一隆'], priority: 'want', startMin: 17 * 60 + 30 }] });
+  assert.ok(shifted.proposals.some((p) => p.id === 'slow-down'), '同一站但時刻不同：照出');
+});
+
+test('降速縮步行：走路上限乘 slowDownWalkFactor（150 × 0.7 → 105），一句話寫出來；rules.json 有這個數字', () => {
+  assert.equal(settings.slowDownWalkFactor, 0.7);
+  const s = TIRED_STRATEGIES.find((x) => x.id === 'slow-down').apply(input);
+  assert.equal(s.settingsPatch.walkBudgetMin, 105);
+  assert.match(s.note, /走路上限降到 105 分$/);
+  const custom = TIRED_STRATEGIES.find((x) => x.id === 'slow-down').apply({ ...input, settings: { ...settings, walkBudgetMin: 200, slowDownWalkFactor: 0.5 } });
+  assert.equal(custom.settingsPatch.walkBudgetMin, 100);
 });

@@ -1,7 +1,7 @@
 // T13 評分隔天補：走過沒評的隔天出現；略過的、評過的、今天的不出現；進度按日期記，換日期不歸零。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pendingRatings, mergeField, progressOf, daysBetween, pickFieldDate } from '../../src/ui/ratings.js';
+import { pendingRatings, mergeField, progressOf, daysBetween, pickFieldDate, catchUpFieldDate, skipStopPatch } from '../../src/ui/ratings.js';
 import { TEXT } from '../../src/ui/text.js';
 
 const poi = (id) => ({ id, name_zh: id });
@@ -76,6 +76,33 @@ test('pickFieldDate：是這趟的一天就不動；不是（裝好時填的今�
   assert.equal(pickFieldDate({ date: '2026-10-12' }, dates, '2026-08-17'), '2026-08-17', '今天是旅程日就今天');
   assert.equal(pickFieldDate({ date: null }, dates, '2026-10-12'), '2026-08-13');
   assert.equal(pickFieldDate(null, [], '2026-10-12'), null);
+});
+
+test('catchUpFieldDate（隔天打開 App）：真實模式、今天是旅程日、停在前一天 → 今天；試走模式、今天不是旅程日、已經是今天或更晚都不動', () => {
+  const dates = ['2026-08-13', '2026-08-15', '2026-08-17'];
+  assert.equal(catchUpFieldDate({ date: '2026-08-13', simulate: false }, dates, '2026-08-15'), '2026-08-15');
+  assert.equal(catchUpFieldDate({ date: '2026-08-13' }, dates, '2026-08-17'), '2026-08-17', '隔了幾天也直接到今天');
+  assert.equal(catchUpFieldDate({ date: '2026-08-13', simulate: true }, dates, '2026-08-15'), '2026-08-13', '試走模式不動');
+  assert.equal(catchUpFieldDate({ date: '2026-08-13' }, dates, '2026-08-14'), '2026-08-13', '今天不是旅程日就不動');
+  assert.equal(catchUpFieldDate({ date: '2026-08-15' }, dates, '2026-08-15'), '2026-08-15');
+  assert.equal(catchUpFieldDate({ date: '2026-08-17' }, dates, '2026-08-15'), '2026-08-17', '提前看後面那天不往回切');
+  assert.equal(catchUpFieldDate({ date: null }, dates, '2026-08-15'), null, '沒日期的交給 pickFieldDate');
+  assert.equal(catchUpFieldDate(null, dates, '2026-08-15'), null);
+  // 接上 mergeField：切到今天後 index 接那天的進度
+  const f = mergeField({ date: '2026-08-13', index: 3, progress: { '2026-08-13': 3, '2026-08-15': 1 } }, { date: catchUpFieldDate({ date: '2026-08-13' }, dates, '2026-08-15') });
+  assert.equal(f.date, '2026-08-15'); assert.equal(f.index, 1); assert.equal(f.progress['2026-08-13'], 3);
+});
+
+test('skipStopPatch（略過引擎插的站）：記成略過、進度前進一站、不彈評分；補評卡隔天不問它，但還是問走過沒評的一般站', () => {
+  const field = { date: '2026-08-13', index: 1, ratings: {}, progress: { '2026-08-13': 1 } };
+  const f = mergeField(field, skipStopPatch(field, '2026-08-13', 'b', 'T'));
+  assert.equal(f.index, 2);
+  assert.equal(f.progress['2026-08-13'], 2);
+  assert.deepEqual(f.ratings.b, { skipped: true, at: 'T' });
+  assert.deepEqual(keys(pendingRatings({ plans, field: f, today: '2026-08-14' })), ['2026-08-13:a'], 'a 走過沒評要問、b 略過的不問');
+  // 看的是那天的進度，不是 field.index（選的是別天時）
+  const other = mergeField({ date: '2026-08-14', index: 0, ratings: {}, progress: { '2026-08-13': 2, '2026-08-14': 0 } }, skipStopPatch({ date: '2026-08-14', index: 0, progress: { '2026-08-13': 2 } }, '2026-08-13', 'c', 'T'));
+  assert.equal(other.date, '2026-08-13'); assert.equal(other.index, 3); assert.equal(other.progress['2026-08-13'], 3);
 });
 
 test('daysBetween：隔天 1、前天 2、示範旅程 8/13 → 8/17 是 4、同一天 0', () => {

@@ -23,7 +23,8 @@ function dayBlock(d, planned, state, actions) {
   const dayWarnings = plan.warnings.filter((w) => !w.poiId && w.code !== 'skipped-missing');
   const block = el('section', { class: 'day' }, [
     el('header', { class: 'day-head' }, [el('h2', { text: dateLabel(d.date) }), el('p', { class: 'muted', text: anchorLine })]),
-    el('p', { class: 'muted small', text: TEXT.dayScore(plan.score, plan.penaltyMin) }),
+    // 現場套過改案的那天（plan.applied）：分數是整條序列重算的（走過的＋改案），前面標「現場改過」
+    el('p', { class: 'muted small', text: plan.applied ? `${TEXT.appliedLine}，${TEXT.dayScore(plan.score, plan.penaltyMin)}` : TEXT.dayScore(plan.score, plan.penaltyMin) }),
     openSlotLine(plan, day),
     firstLegLine(plan, d, state),
   ]);

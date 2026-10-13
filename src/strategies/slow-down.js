@@ -1,9 +1,9 @@
-// 降速（累了／腳痛同一顆鍵，原話 #115）：先坐一下，再砍要走路的站（係數 ≥0.5 且非 must），逛店連跑上限減半，縮步行。
+// 降速（累了／腳痛同一顆鍵，原話 #115）：先坐一下，再砍要走路的站（係數 ≥0.5 且非 must），逛店連跑上限減半，縮步行（走路上限 ×slowDownWalkFactor）。
 // 先坐一下＝剩下的站裡 30 分內進得去的恢復站（最近那家）釘到最前面；沒有才從 pool 插一家：有坐下的、現在出發到門口時進得去、
 // 離現在位置最近（咖啡廳最優先，profile §5.9），他可以在畫面上拒絕（原話 #126）。
 // 釘＝fixedWindow 設成「現在出發就到」的時刻、帶 pinned：核心只看分數，不釘的話會把恢復站排到別的位置（2026-10-12 試走包實測：
 // 8/13 12:50 插進來的喫茶被排到 17:51、8/17 13:00 星山珈琲店排在 SEGA-RU 後面），「先坐一下」就不是先了；釘只對這一次改案有效，
-// 現場頁再重排時把 pinned 的拿掉（now.js remainingFrom）。只坐一下（rest-only）共用這裡的挑法。
+// 現場頁再重排時把 pinned 的拿掉（ui/applied.js remainingFrom）。只坐一下（rest-only）共用這裡的挑法。
 import { openIntervals } from '../engine/time.js';
 
 /** 剩下的恢復站有沒有一家「現在起 soonMin 分內進得去」的；hours 不明的當進得去。 */
@@ -93,15 +93,17 @@ export default {
         changes.push({ poiId: inserted.poi.id, action: 'insert-rest' });
       }
     }
-    // 一句話要對得上真的做了什麼：坐哪裡（插的／釘的／留著的／沒有）＋砍了沒
+    // 縮步行（DESIGN §1.4 策略 5）：走路上限乘 settings.slowDownWalkFactor（預設 0.7，跟早起日同值），重排時 walk-budget 就會把走路多的站往後擺或砍掉
+    const walkBudgetMin = Math.floor((settings.walkBudgetMin ?? 150) * (settings.slowDownWalkFactor ?? 0.7));
+    // 一句話要對得上真的做了什麼：坐哪裡（插的／釘的／留著的／沒有）＋砍了沒＋走路上限
     const sat = Boolean(inserted || pinned);
     const sit = inserted ? '先找最近的地方坐一下' : pinned ? '先去坐下來的那站' : hasRest ? '坐下來的那站留著' : '附近沒有進得去的恢復站';
     const rest = cut ? `${sat ? '，再' : '；'}砍掉要走路的站，逛店也少一半` : '；剩下的沒有要走路的站，逛店少一半';
     return {
       candidates,
       changes,
-      settingsPatch: { maxShopRunCount: Math.max(1, Math.floor((settings.maxShopRunCount ?? 4) / 2)), maxShopRunMin: Math.floor((settings.maxShopRunMin ?? 240) / 2) },
-      note: sit + rest,
+      settingsPatch: { maxShopRunCount: Math.max(1, Math.floor((settings.maxShopRunCount ?? 4) / 2)), maxShopRunMin: Math.floor((settings.maxShopRunMin ?? 240) / 2), walkBudgetMin },
+      note: `${sit}${rest}，走路上限降到 ${walkBudgetMin} 分`,
     };
   },
 };

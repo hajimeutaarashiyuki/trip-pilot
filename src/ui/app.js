@@ -14,7 +14,8 @@ import { renderPlanner } from './planner.js';
 import { renderNow } from './now.js';
 import { renderSettings } from './settings.js';
 import { renderPool } from './pool.js';
-import { mergeField, pickFieldDate } from './ratings.js';
+import { mergeField, pickFieldDate, catchUpFieldDate } from './ratings.js';
+import { restoreApplied, withoutApplied } from './applied.js';
 
 const SETTINGS_KEY = 'trip-pilot:settings';
 const FIELD_KEY = 'trip-pilot:field';
@@ -86,7 +87,19 @@ export function replanAll() {
   // restPool：整個知識庫都給引擎挑恢復站（trip.js 會篩成當日區域內、沒勾、沒拒絕的幾家）；示範資料也一樣
   const r = planTrip({ trip: state.trip, pois: state.pois, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, legFn: state.legFn, restPool: Object.values(state.pois) });
   state.plans = Object.fromEntries(r.days.map((d) => [d.date, d]));
+  // 現場套過的改案（field.applied）活過重排與重開：打包相同就還原整條序列、整天重算；不同（手機更新了新打包）就丟掉並在那天警告一行
+  const restored = restoreApplied({ plans: state.plans, applied: state.field.applied, packAt: state.packMeta?.generatedAt ?? null, pois: state.pois, trip: state.trip, legFn: state.legFn, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb });
+  state.plans = restored.plans;
+  if (restored.dropped.length) { state.field = mergeField(state.field, { applied: restored.applied }); saveJSON(FIELD_KEY, state.field); }
   render();
+}
+
+/** 他在規劃頁改了那天的勾選（不去了、換一家）：那天現場套過的改案清掉，回到引擎排。 */
+function clearApplied(date) {
+  const applied = withoutApplied(state.field.applied, date);
+  if (applied === state.field.applied) return;
+  state.field = mergeField(state.field, { applied });
+  saveJSON(FIELD_KEY, state.field);
 }
 
 export function swapStop(date, fromPoiId, toPoi) {
@@ -94,6 +107,7 @@ export function swapStop(date, fromPoiId, toPoi) {
   if (!day) return;
   if (!state.pois[toPoi.id]) state.pois[toPoi.id] = toPoi;
   Object.assign(day, applySwap(day, fromPoiId, toPoi));
+  clearApplied(date);
   replanAll();
 }
 
@@ -103,6 +117,7 @@ export function removeStop(date, poiId, insertedBy = null, priority = null) {
   if (!day) return;
   day.picks = (day.picks ?? []).filter((p) => p.poiId !== poiId);
   day.removed = [...(day.removed ?? []), { poiId, at: new Date().toISOString(), ...(insertedBy ? { insertedBy } : {}), ...(priority ? { priority } : {}) }];   // 不算落選（原話 #91）
+  clearApplied(date);
   replanAll();
 }
 
@@ -138,11 +153,22 @@ export function saveDevice(partial) {
   replanAll();
 }
 
-/** 現場狀態：index 是選的那天走到第幾站，progress[date] 按日期記著（換日期接那天的進度，不歸零；T13）。 */
+/** 現場狀態：index 是選的那天走到第幾站，progress[date] 按日期記著（換日期接那天的進度，不歸零；T13）；applied[date] 是現場套過的改案快照。 */
 export function setField(partial) {
   state.field = mergeField(state.field, partial);
   saveJSON(FIELD_KEY, state.field);
   render();
+}
+
+/**
+ * 隔天早上真的打開 App（boot、回前景）：真實模式、今天是旅程的一天、現場頁還停在前一天 → 換到今天，進度接那天的，補評卡（T13）才會自己出現（原話 #134）。
+ * 只在這兩個時刻做，使用中不做；試走模式不動；日期沒變就不重畫（評分的 sheet 不會被收掉）。
+ */
+export function catchUpToday() {
+  if (!state.trip) return;
+  const date = catchUpFieldDate(state.field, state.trip.days.map((d) => d.date), todayStr());
+  if (!date || date === state.field.date) return;
+  setField({ date });
 }
 
 const VIEWS = { '#/plan': renderPlanner, '#/now': renderNow, '#/pool': renderPool, '#/settings': renderSettings };
@@ -184,10 +210,12 @@ export async function boot() {
   apply();
   try {
     const stored = await loadLatestPack();
-    if (stored) { loadFromPack(stored); replanAll(); }
+    if (stored) { loadFromPack(stored); catchUpToday(); }   // loadFromPack 自己會重排；隔天打開就切到今天
   } catch (err) {
     console.warn('讀不到手機裡的旅程', err);
   }
+  // iOS 常殺背景分頁、也常只是切回前景：回前景那一刻再看一次要不要切到今天
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') catchUpToday(); });
 }
 
 /** #/settings?pack=<網址>：我給他的連結，點了網址就寫進裝置設定，不用在手機上打字。 */

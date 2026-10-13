@@ -20,8 +20,9 @@ export async function planPackFile(file, options = {}) {
   const legFn = makeLegFn({ walk: pack.walk?.pairs ?? {}, settings, zoneLinks: pack.zones?.links ?? {} });
   const poiMap = Object.fromEntries(pois.map((p) => [p.id, p]));
   // restPool 給整個知識庫，跟手機上一樣（引擎插的站在報告行尾標「（引擎插）」）
-  const result = planTrip({ trip: pack.trip, pois: poiMap, rules, settings, country: pack.country, kb: { zones: pack.zones?.zones ?? {} }, legFn, restPool: pois, options });
-  return { pack, pois, normalizeWarnings: warnings, result, legFn };
+  const kb = { zones: pack.zones?.zones ?? {} };
+  const result = planTrip({ trip: pack.trip, pois: poiMap, rules, settings, country: pack.country, kb, legFn, restPool: pois, options });
+  return { pack, pois, normalizeWarnings: warnings, result, legFn, rules, settings, kb };
 }
 
 export function formatReport({ pack, result, legFn }) {

@@ -72,14 +72,13 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
     const optimistic = score + remaining.slice(0, slots).reduce((s, c) => s + c.value, 0);
     if (best && best.complete && optimistic <= best.total) return;
     const prev = seq.length ? seq[seq.length - 1] : null;
-    const prevPoi = prev ? prev.poi : home;
     const prevEnd = prev ? prev.endMin : day.window.startMin;
     const optionalPlaced = seq.reduce((n, s) => n + (s.optional ? 1 : 0), 0);
     const nowDead = [];
     for (const c of remaining) {
       if (nowDead.includes(c._i)) continue;
       if (c.optional && optionalPlaced >= maxOptional) continue;
-      const leg = withBacktrack(normalizeLeg(legFn(prevPoi, c.poi)), seq, home, c.poi, legFn);
+      const leg = legBetween(legFn, seq, home, c.poi);
       // first：當天第一站開門前到就改成晚點出門（schedule.js）。現場改案（day.resumed）是從當下接著排，人已經在外面，
       // 第一個剩下的站等開門是真的在門口等，照站與站之間算、讓 wait-at-door 罰——不然引擎會把第一站推到 17:00 才開的酒吧、中間空四小時（2026-10-12 試走包 8/13 12:50 實測）
       const placed = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev && !day.resumed });
@@ -108,13 +107,12 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
     let seq = []; let remaining = cands; let acc = emptyAcc(rules.dims); let score = 0; const path = [];
     for (;;) {
       const prev = seq.length ? seq[seq.length - 1] : null;
-      const prevPoi = prev ? prev.poi : home;
       const prevEnd = prev ? prev.endMin : day.window.startMin;
       let pick = null;
       const optionalPlaced = seq.reduce((n, s) => n + (s.optional ? 1 : 0), 0);
       for (const c of remaining) {
         if (c.optional && optionalPlaced >= maxOptional) continue;
-        const leg = withBacktrack(normalizeLeg(legFn(prevPoi, c.poi)), seq, home, c.poi, legFn);
+        const leg = legBetween(legFn, seq, home, c.poi);
         const placed = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev && !day.resumed });
         const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i, optional: Boolean(c.optional), insertedBy: c.insertedBy ?? null, gap: c.gap ?? null };
         const r = evaluateStop({ ...dayCtxBase, stop, prev, next: null, leg, acc, sequence: seq }, rules);
@@ -165,6 +163,12 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
   };
 }
 
+/** 從序列最後一站（沒有就據點）到 toPoi 的移動段，含折返分鐘：搜尋與整條序列重算（sequence.js）共用，兩邊算出的 leg 才會一樣。 */
+export function legBetween(legFn, seq, home, toPoi) {
+  const prevPoi = seq.length ? seq[seq.length - 1].poi : home;
+  return withBacktrack(normalizeLeg(legFn(prevPoi, toPoi)), seq, home, toPoi, legFn);
+}
+
 /**
  * 折返分鐘：這段走路比「從上上站直接走過來」多出來的部分。順路（上一站在路上）是 0；走回頭路就接近整段。
  * 第一站沒有上上站＝0；搭車段不算。沒座標時 legFn 回區域預設分鐘，差值是 0 或很小，規則不會被誤觸發。
@@ -185,7 +189,7 @@ function normalizeLeg(leg) {
 }
 const num = (v) => (Number.isFinite(v) ? v : 0);
 
-function dedupeWarnings(list) {
+export function dedupeWarnings(list) {
   const seen = new Set(); const out = [];
   for (const w of list) {
     const key = `${w.ruleId}|${w.code}|${w.poiId ?? ''}|${w.msg}`;

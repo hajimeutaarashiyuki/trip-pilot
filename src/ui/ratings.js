@@ -46,6 +46,24 @@ export function pickFieldDate(field, dates, today) {
   return dates.includes(today) ? today : dates[0] ?? null;
 }
 
+/**
+ * 隔天早上真的打開 App（boot、回前景）該停在哪一天：真實模式下今天是旅程的一天、現場頁還停在前一天 → 今天（進度由 mergeField 接那天的）；其他照舊。
+ * 試走模式不動（他在家快轉是選的那天）；使用中不呼叫（原話 #134「到隔天早上再補彈一次」講的是打開 App 那一刻；2026-10-12 對抗審查）。
+ */
+export function catchUpFieldDate(field, dates, today) {
+  if (!field || field.simulate) return field?.date ?? null;
+  if (dates.includes(today) && field.date && field.date < today) return today;
+  return field.date;
+}
+
+/**
+ * 略過引擎插的站（現場頁「略過這站」）：回 setField 用的更新——跟略過評分同一形狀的紀錄（pendingRatings 本來就不問）、那天的進度前進一站；不彈評分。
+ * 一般站沒有這顆（跳過一般站走「我現在在這站」）。
+ */
+export function skipStopPatch(field, date, poiId, at) {
+  return { date, index: progressOf(field, date) + 1, ratings: { ...(field?.ratings ?? {}), [poiId]: { skipped: true, at } } };
+}
+
 /** 兩個 'YYYY-MM-DD' 差幾天（to − from；用 UTC 算，不受夏令時間影響）。 */
 export function daysBetween(from, to) {
   const utc = (s) => { const [y, m, d] = String(s).split('-').map(Number); return Date.UTC(y, m - 1, d); };
