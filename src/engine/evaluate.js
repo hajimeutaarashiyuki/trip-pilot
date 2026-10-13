@@ -43,7 +43,7 @@ function applyHardSoft({ hard, soft }, ctx, scope) {
     const weighted = minutes * rule.weight;
     penaltyMin += weighted;
     breakdown.push({ ruleId: rule.id, minutes, weight: rule.weight, weighted });
-    warnings.push({ ruleId: rule.id, code: 'soft', poiId: ctx.stop?.poi?.id, msg: warnText(rule, ctx) });
+    if (!rule.quiet) warnings.push({ ruleId: rule.id, code: 'soft', poiId: ctx.stop?.poi?.id, msg: warnText(rule, ctx) });   // quiet：每段都有的成本（walk-cost）只進罰分，不出黃字
   }
   return { verdict, penaltyMin, breakdown, warnings };
 }

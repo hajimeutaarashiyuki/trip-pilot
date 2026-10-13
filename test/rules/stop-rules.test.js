@@ -35,7 +35,7 @@ test('same-type-day：非主題日第三家古著 no、主題日 ok；咖啡廳�
   const v = stop('me', { category: 'vintage', walkFactor: 0 });
   assert.equal(run('same-type-day', ctx(v, { acc: { 'dim-cat-count': { vintage: 3 } } })), 'no');
   assert.equal(run('same-type-day', ctx(v, { acc: { 'dim-cat-count': { vintage: 2 } } })), 'ok');
-  assert.equal(run('same-type-day', ctx(v, { acc: { 'dim-cat-count': { vintage: 4 } }, day: { themeCategory: 'vintage' } })), 'ok');
+  assert.equal(run('same-type-day', ctx(v, { acc: { 'dim-cat-count': { vintage: 3 } }, day: { themeCategory: 'vintage' } })), 'ok', '主題日放寬到 3 家（原話 #168 後改）');
   const c = stop('Elbe', { category: 'cafe', cafeLike: true, recovery: true, walkFactor: 0 });
   assert.equal(run('same-type-day', ctx(c, { acc: { 'dim-cat-count': { cafe: 3 } } })), 'no');
   assert.match(warnOf('same-type-day', ctx(c, { acc: { 'dim-cat-count': { cafe: 3 } } })), /咖啡廳已經 2 家/);
@@ -142,4 +142,15 @@ test('filler-gap：填站自己還要等開門就 never（原話 #164「禁」�
   assert.equal(run('filler-gap', ctx({ ...base, waitMin: 0 })), 'ok');
   assert.equal(run('filler-gap', ctx({ ...base, waitMin: 10 })), 'never');
   assert.match(warnOf('filler-gap', ctx({ ...base, waitMin: 10 })), /再等開門 10 分/);
+});
+
+test('walk-cost：每走一分鐘 0.25、不出警告；same-type-day 主題日那一類最多 3 家', () => {
+  assert.equal(run('walk-cost', ctx(stop('A'), { leg: { walkMin: 10, rideMin: 0, climbMin: 0 } })), 2.5);
+  assert.equal(run('walk-cost', ctx(stop('A'), { leg: { walkMin: 0, rideMin: 20, climbMin: 0 } })), 0);
+  const r = evaluateStop(ctx(stop('A'), { leg: { walkMin: 10, rideMin: 0, climbMin: 0 } }), rules);
+  assert.ok(r.penaltyMin >= 2.5 && !r.warnings.some((w) => w.ruleId === 'walk-cost'), '有罰分但不出黃字');
+  const theme = { themeCategory: 'vintage' };
+  assert.equal(run('same-type-day', ctx(stop('第三家', { category: 'vintage' }), { day: theme, acc: { 'dim-cat-count': { vintage: 3 } } })), 'ok');
+  assert.equal(run('same-type-day', ctx(stop('第四家', { category: 'vintage' }), { day: theme, acc: { 'dim-cat-count': { vintage: 4 } } })), 'no');
+  assert.match(warnOf('same-type-day', ctx(stop('第四家', { category: 'vintage' }), { day: theme, acc: { 'dim-cat-count': { vintage: 4 } } })), /主題日/);
 });

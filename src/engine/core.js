@@ -138,11 +138,16 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
   const sameTypeMax = settings.sameTypeMaxPerDay ?? 2;
   const byCat = new Map();
   for (const c of nonOptional) byCat.set(c.poi.category, (byCat.get(c.poi.category) ?? 0) + 1);
+  const placedNonOptional = best.seq.filter((s) => !s.optional).length;
   const reasonFor = (c) => {
     if (!placedEver.has(c._i)) return dead.get(c._i) ?? '時間或分數排不進';
-    if (nonOptional.length > maxStops) return `今天勾了 ${nonOptional.length} 站、上限 ${maxStops}，它排在後面`;
+    // 先看同類上限（主題日 3、非主題日 2），再看名額有沒有真的用滿，都不是才是分數取捨
     const n = byCat.get(c.poi.category) ?? 0;
-    if (SAME_TYPE_CATEGORIES.includes(c.poi.category) && day.themeCategory !== c.poi.category && n > sameTypeMax) return `同類的店一天最多 ${sameTypeMax} 家、勾了 ${n} 家，它排在後面`;
+    if (SAME_TYPE_CATEGORIES.includes(c.poi.category)) {
+      const cap = day.themeCategory === c.poi.category ? (settings.themeDaySameTypeMax ?? 3) : sameTypeMax;
+      if (n > cap) return day.themeCategory === c.poi.category ? `今天是主題日，同類的店最多 ${cap} 家、勾了 ${n} 家，它排在後面` : `同類的店一天最多 ${cap} 家、勾了 ${n} 家，它排在後面`;
+    }
+    if (placedNonOptional >= maxStops && nonOptional.length > maxStops) return `今天勾了 ${nonOptional.length} 站、上限 ${maxStops}，它排在後面`;
     return '排得進，但排進去整天的分數反而低';
   };
   const dropped = cands.filter((c) => !placedIdx.has(c._i) && !c.optional).map((c) => ({ poi: c.poi, priority: c.priority, reason: reasonFor(c) }));
