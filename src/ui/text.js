@@ -61,6 +61,7 @@ export const TEXT = {
   tiredTitle: '先坐一下，少走路',
   tiredClose: '先不用',
   tiredRestInserted: (name) => `插了 ${name} 休息`,
+  tiredRestPinned: (name) => `先去 ${name} 坐一下`,
   simulate: '試走模式',
   simOff: '用真的時間',
   simPlus: (m) => `＋${m} 分`,

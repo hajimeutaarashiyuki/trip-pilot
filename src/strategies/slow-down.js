@@ -32,7 +32,7 @@ function travelTo(legFn, here, poi) {
 
 /**
  * 從 pool 挑一家「現在就去坐」的恢復站：recovery、不在 remaining 裡、現在出發到門口時有開而且待得完、最近（咖啡廳扣 5 分優先一點點）。
- * 回 planDay 的候選：priority want（他按了累了，這站是要的）、optional（排不進不算落選、不佔名額）、insertedBy engine、
+ * 回 planDay 的候選：priority must（他按了累了，坐一下是前提，不能被分數丟掉）、optional（排不進不算落選、不佔名額）、insertedBy engine、
  * fixedWindow 釘在到達時刻（pinned）；挑不到回 null。
  */
 export function pickRestNow({ remaining, here, legFn, pool = [], settings, day, nowMin = 0 }) {
@@ -43,7 +43,7 @@ export function pickRestNow({ remaining, here, legFn, pool = [], settings, day, 
     const dwellMin = c.dwellMin ?? Math.max(settings.restResetMin ?? 30, 30);
     if (!openAt(c.poi, day?.date, nowMin + travel, dwellMin)) continue;
     const score = travel - (c.poi.cafeLike ? 5 : 0);
-    if (score < pickScore) { pickScore = score; pick = { ...c, priority: 'want', optional: true, insertedBy: 'engine', dwellMin, fixedWindow: { startMin: nowMin + travel, pinned: true } }; }
+    if (score < pickScore) { pickScore = score; pick = { ...c, priority: 'must', optional: true, insertedBy: 'engine', dwellMin, fixedWindow: { startMin: nowMin + travel, pinned: true } }; }
   }
   return pick;
 }
@@ -64,7 +64,8 @@ function pinNearestRest(candidates, { here, legFn, settings, day, nowMin }) {
     if (score < bestScore) { bestScore = score; bestTravel = travel; best = c; }
   }
   if (!best) return { candidates, pinned: null };
-  const pinned = { ...best, fixedWindow: { startMin: nowMin + bestTravel, pinned: true } };
+  // priority 改 must：按了累了，坐一下是這次改案的前提，不能被核心為了分數丟掉（10-13 試走包 8/17 15:00 實測：釘了星山卻被丟、卡上還寫「先去坐下來的那站」）
+  const pinned = { ...best, priority: 'must', fixedWindow: { startMin: nowMin + bestTravel, pinned: true } };
   return { candidates: candidates.map((c) => (c === best ? pinned : c)), pinned };
 }
 
@@ -86,6 +87,7 @@ export default {
     let inserted = null; let pinned = null;
     if (hasRest) {
       ({ candidates, pinned } = pinNearestRest(candidates, input));
+      if (pinned) changes.push({ poiId: pinned.poi.id, action: 'pin-rest' });
     } else {
       inserted = pickRestNow(input);
       if (inserted) {

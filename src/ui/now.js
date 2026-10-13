@@ -183,7 +183,7 @@ function proposalsBlock({ state, actions, date, planned, seq, idx, nowMin, title
     block.append(el('div', { class: 'proposal' }, [
       el('strong', { text: p.label }), el('span', { class: 'muted small', text: `　${p.note}` }),
       el('p', { class: 'small', text: p.plan.sequence.map((s) => `${hm(s.startMin)} ${s.poi.name_zh}`).join(' → ') || TEXT.proposalEmpty }),
-      rest ? el('p', { class: 'muted small', text: TEXT.tiredRestInserted(rest.poi.name_zh) }) : null,
+      rest ? el('p', { class: 'muted small', text: rest.pinned ? TEXT.tiredRestPinned(rest.stop.poi.name_zh) : TEXT.tiredRestInserted(rest.stop.poi.name_zh) }) : null,
       lost.length ? el('p', { class: 'muted small', text: TEXT.proposalLost(lost.join('、')) }) : null,
       // 最後一站超過扣過留白的收工＝吃掉留白（留白本來就是給現場落後吃的，profile §8）；留白用完的案照出，句子寫超過多少
       p.eatsSlackMin > 0 ? el('p', { class: 'muted small', text: p.eatsSlackMin > slackMin ? TEXT.proposalOverSlack(p.eatsSlackMin - slackMin) : TEXT.proposalEatsSlack(p.eatsSlackMin) }) : null,
@@ -193,10 +193,11 @@ function proposalsBlock({ state, actions, date, planned, seq, idx, nowMin, title
   return block;
 }
 
-/** 這案插進來、而且真的排進去的恢復站（策略記 insert-rest，核心排不進就不寫「插了 X 休息」）。 */
+/** 這案先去坐的那站：插進來的（insert-rest）或釘到最前面的既有恢復站（pin-rest），而且真的排進去了；排不進就不寫。 */
 function restInsertedIn(p) {
-  const ins = p.changes.find((c) => c.action === 'insert-rest');
-  return ins ? p.plan.sequence.find((s) => s.poi.id === ins.poiId) ?? null : null;
+  const ins = p.changes.find((c) => c.action === 'insert-rest' || c.action === 'pin-rest');
+  const stop = ins ? p.plan.sequence.find((s) => s.poi.id === ins.poiId) : null;
+  return stop ? { stop, pinned: ins.action === 'pin-rest' } : null;
 }
 
 /**

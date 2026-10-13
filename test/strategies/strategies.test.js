@@ -68,7 +68,7 @@ test('累了／腳痛只跑降速那組：至少一案；插的恢復站標引�
     assert.equal(first.startMin, 15 * 60 + 8, '15:00 從 Elbe 走 8 分就到、不等');
     assert.equal(first.waitMin, 0);
     assert.equal(first.optional, true, '排不進不算落選');
-    assert.equal(first.priority, 'want', '他按了累了，這站是要的（價值不是 0）');
+    assert.equal(first.priority, 'must', '他按了累了，坐一下是這次改案的前提，不能被分數丟掉（10-13 改）');
     assert.ok(p.changes.some((c) => c.action === 'insert-rest' && c.poiId === first.poi.id));
   }
   const end = all.find((p) => p.id === 'end-day');
@@ -140,4 +140,15 @@ test('降速縮步行：走路上限乘 slowDownWalkFactor（150 × 0.7 → 105�
   assert.match(s.note, /走路上限降到 105 分$/);
   const custom = TIRED_STRATEGIES.find((x) => x.id === 'slow-down').apply({ ...input, settings: { ...settings, walkBudgetMin: 200, slowDownWalkFactor: 0.5 } });
   assert.equal(custom.settingsPatch.walkBudgetMin, 100);
+});
+
+test('累了：剩下的站裡有恢復站時，降速把它釘到最前面且當 must，核心不會為了分數丟掉它（10-13 試走包實測修）', async () => {
+  const { default: slowDown } = await import('../../src/strategies/slow-down.js');
+  const cafe = { poi: { id: 'cafe', name_zh: '咖啡廳', category: 'cafe', recovery: true, cafeLike: true, walkFactor: 0, hours: null, dwellMin: 40, zoneId: 'town' }, priority: 'maybe', dwellMin: 40 };
+  const shop = { poi: { id: 'shop', name_zh: '店', category: 'vintage', recovery: false, walkFactor: 0, hours: null, dwellMin: 60, zoneId: 'town' }, priority: 'want', dwellMin: 60 };
+  const r = slowDown.apply({ remaining: [shop, cafe], here: { id: 'home', zoneId: 'town' }, legFn: () => ({ walkMin: 5, rideMin: 0, climbMin: 0 }), pool: [], settings: {}, day: { date: '2026-08-13' }, nowMin: 15 * 60 });
+  const pinned = r.candidates.find((c) => c.poi.id === 'cafe');
+  assert.equal(pinned.priority, 'must');
+  assert.ok(pinned.fixedWindow?.pinned && pinned.fixedWindow.startMin === 15 * 60 + 5);
+  assert.ok(r.changes.some((c) => c.action === 'pin-rest' && c.poiId === 'cafe'));
 });
