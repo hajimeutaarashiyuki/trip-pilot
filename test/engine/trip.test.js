@@ -1,7 +1,7 @@
 // 整趟：兩天的旅程，每天各自排；晚出門日從第 3 天起；主題日的前一天主題傳下去；早起日前一晚夜間站取消。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planTrip, dayWindow } from '../../src/engine/trip.js';
+import { planTrip, dayWindow, airportTransitMin } from '../../src/engine/trip.js';
 import { loadRules } from '../../src/rules/index.js';
 import { BUILTIN } from '../../src/rules/builtin.js';
 import rulesJson from '../../src/rules.json' with { type: 'json' };
@@ -25,6 +25,12 @@ test('dayWindow：預設 9–24、留白 90 從尾端扣 → 收工 22:30；第 
   assert.equal(dep.endMin, 12 * 60, '離境日：起飛前 180 分，不扣留白');
   assert.equal(dep.openSlotMin, 0);
   assert.deepEqual(dep.warnings, []);
+  assert.equal(dayWindow({ type: 'arrival', arriveMin: 16 * 60 }, 0, settings, 30).startMin, 17 * 60 + 30, '機場到據點的車程也要算（10-13 七天實驗 F1）');
+  assert.equal(dayWindow({ type: 'departure', departAirportMin: 16 * 60 }, 6, settings, 30).endMin, 12 * 60 + 30);
+  const toHome = (a, b) => (a.zoneId === 'airport' ? { walkMin: 5, rideMin: 25, climbMin: 0, mode: 'ride', source: 'link' } : { walkMin: 5, rideMin: 0, climbMin: 0, mode: 'walk', source: 'zone-default' });
+  assert.equal(airportTransitMin({ legFn: toHome, home: { zoneId: 'sendai-station' }, settings }), 30, 'zones.json 的 airport|據點區 連結：車 25＋走 5');
+  assert.equal(airportTransitMin({ legFn: () => ({ walkMin: 20, rideMin: 0, climbMin: 0, mode: 'walk', source: 'zone-default' }), home: { zoneId: 'sendai-station' }, settings }), 0, '沒有連結就 0，不亂估');
+  assert.equal(airportTransitMin({ legFn: toHome, home: { zoneId: 'airport' }, settings }), 0, '據點就在機場區');
 });
 
 test('dayWindow 留白：days[].openSlotMin 覆寫（0 也算）、settings.openSlotMinPerDay 是預設；departure 日一律 0；扣完整天只剩 60 分或更少就不扣、記 open-slot-skipped', () => {

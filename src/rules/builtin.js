@@ -14,12 +14,14 @@ import earlyDay from './early-day.js';
 import daylight from './daylight.js';
 import walkBudget from './walk-budget.js';
 import walkCost from './walk-cost.js';
+import rideCost from './ride-cost.js';
 import walkRun from './walk-run.js';
 import shopRun from './shop-run.js';
 import cafeAdjacent from './cafe-adjacent.js';
 import recoveryRun from './recovery-run.js';
 import backtrack from './backtrack.js';
 import zoneExit from './zone-exit.js';
+import zoneReentry from './zone-reentry.js';
 import noonUrban from './noon-urban.js';
 import waitAtDoor from './wait-at-door.js';
 import lateDeparture from './late-departure.js';
@@ -36,7 +38,7 @@ export const BUILTIN = Object.freeze([
   // 硬約束（站）
   hours, fixedWindow, windowRule, maxStops, sameTypeDay, earlyDay, daylight, fillerGap,
   // 軟約束（站）
-  walkBudget, walkCost, walkRun, shopRun, cafeAdjacent, recoveryRun, backtrack, zoneExit, noonUrban, waitAtDoor, lateDeparture,
+  walkBudget, walkCost, rideCost, walkRun, shopRun, cafeAdjacent, recoveryRun, backtrack, zoneExit, zoneReentry, noonUrban, waitAtDoor, lateDeparture,
   // 整天
   anchor, designated, itemGap, mealSlots, nightSlot,
 ]);

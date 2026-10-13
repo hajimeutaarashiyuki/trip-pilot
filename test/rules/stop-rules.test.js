@@ -20,6 +20,23 @@ test('hours：營業區間內 ok；開門前 no；全部過了 never；當天休
   assert.equal(r.verdict, 'ok');
 });
 
+test('ride-cost：每搭車一分鐘罰 0.25、quiet；沒搭車 0（10-13 七天實驗：搭車免費時引擎一天來回鹽竈兩趟）', () => {
+  assert.equal(run('ride-cost', ctx(stop('X'), { leg: { walkMin: 5, rideMin: 28, climbMin: 0 } })), 7);
+  assert.equal(run('ride-cost', ctx(stop('X'), { leg: { walkMin: 5, rideMin: 0, climbMin: 0 } })), 0);
+  assert.equal(rules.byId.get('ride-cost').quiet, true);
+});
+
+test('zone-reentry：搭車離開一區再搭車回來罰 60；走路回來不算；第一次到不算（總則 5 同一區來回兩次罰；10-13 七天實驗）', () => {
+  const a = stop('浦霞', { zoneId: 'shiogama' }); const b = stop('埃比昂', { zoneId: 'ichibancho' });
+  const back = stop('鹽竈神社', { zoneId: 'shiogama' });
+  const ride = { walkMin: 17, rideMin: 28, climbMin: 0 };
+  assert.equal(run('zone-reentry', ctx(back, { prev: b, sequence: [a, b], leg: ride })), 60);
+  assert.equal(run('zone-reentry', ctx(back, { prev: b, sequence: [a, b], leg: { walkMin: 6, rideMin: 0, climbMin: 0 } })), 0, '走路回來的隔壁區不算');
+  assert.equal(run('zone-reentry', ctx(b, { prev: a, sequence: [a], leg: ride })), 0, '第一次到一番町');
+  assert.match(warnOf('zone-reentry', ctx(back, { prev: b, sequence: [a, b], leg: ride })), /同一區來回兩次/);
+  assert.equal(run('zone-reentry', ctx(back, { prev: b, sequence: [a, b], leg: ride, day: { homeZoneId: 'shiogama' } })), 0, '回據點所在的區不算，反正要回去');
+});
+
 test('fixed-window、window、max-stops', () => {
   const fw = stop('花火', { category: 'event', walkFactor: 0, startMin: 19 * 60 + 40, dwellMin: 20, fixedWindow: { startMin: 19 * 60 + 30, arriveEarlyMin: 30 } });
   assert.equal(run('fixed-window', ctx(fw)), 'never');
@@ -48,6 +65,9 @@ test('same-type-day：非主題日第三家古著 no、主題日 ok；咖啡廳�
 test('walk-budget：超過才罰、倍率取最嚴；walk-run、shop-run 超過的分鐘', () => {
   assert.equal(run('walk-budget', ctx(stop('x'), { acc: { 'dim-walk': 140 } })), 0);
   assert.equal(run('walk-budget', ctx(stop('x'), { acc: { 'dim-walk': 170 } })), 20);
+  assert.equal(run('walk-budget', ctx(stop('x'), { acc: { 'dim-walk': 170 }, accBefore: { 'dim-walk': 160 } })), 10, '只罰這一站新增的超出（10-13：原本每站重罰整個超出量）');
+  assert.equal(run('walk-budget', ctx(stop('x'), { acc: { 'dim-walk': 170 }, accBefore: { 'dim-walk': 175 } })), 0, '這站沒再多走就不罰');
+  assert.equal(run('walk-run', ctx(stop('x'), { acc: { 'dim-walk-run': 180 }, accBefore: { 'dim-walk-run': 160 } })), 20, '走路連跑同樣只罰新增的');
   const strict = ctx(stop('x'), { acc: { 'dim-walk': 120 }, day: { earlyDay: true, party: 2, dayTripNext: true } });
   assert.equal(run('walk-budget', strict), 120 - 150 * settings.earlyDayWalkFactor, '三個倍率同時中取最嚴的 0.7');
   assert.match(warnOf('walk-budget', strict), /超過上限 105/);
@@ -76,14 +96,15 @@ test('cafe-adjacent、recovery-run、backtrack、zone-exit、noon-urban', () => 
   assert.equal(run('noon-urban', ctx(stop('Utah', { category: 'vintage', walkFactor: 0, startMin: 12 * 60 }))), 0, '站著逛的店不罰');
 });
 
-test('wait-at-door：等開門超過 15 分的部分每分鐘罰 1、封頂 60；15 分內當留白；固定時段的站提早到是卡位不罰；第一站的等待已在排程改成晚出門（waitMin 0）', () => {
+test('wait-at-door：等開門超過 15 分的部分每分鐘罰 1、封頂 60；15 分內當留白；固定時段的站卡位提前量之外的空等照罰；第一站的等待已在排程改成晚出門（waitMin 0）', () => {
   assert.equal(run('wait-at-door', ctx({ ...stop('Elbe'), waitMin: 45 })), 30);
   assert.equal(run('wait-at-door', ctx({ ...stop('Elbe'), waitMin: 10 })), 0);
   assert.equal(run('wait-at-door', ctx({ ...stop('Elbe'), waitMin: 0 })), 0);
   assert.equal(run('wait-at-door', ctx({ ...stop('Elbe'), waitMin: 200 })), 60, '等 200 分罰到 capMin 60 封頂');
   assert.equal(run('wait-at-door', ctx({ ...stop('Elbe'), waitMin: 75 })), 60, '剛好到頂');
   const fireworks = stop('花火', { category: 'event', walkFactor: 0, startMin: 19 * 60, dwellMin: 60, fixedWindow: { startMin: 19 * 60 + 30, arriveEarlyMin: 30 } });
-  assert.equal(run('wait-at-door', ctx({ ...fireworks, waitMin: 200 })), 0, '固定時段（花火）前的空檔不是等開門');
+  assert.equal(run('wait-at-door', ctx({ ...fireworks, waitMin: 200 })), 60, '固定時段（花火）：卡位提前量已在排程裡，比它更早到的空等照罰（10-13 七天實驗 8/16 空等 137 分）');
+  assert.match(warnOf('wait-at-door', ctx({ ...fireworks, waitMin: 40 })), /比卡位時刻還早 40 分，空等/);
   assert.match(warnOf('wait-at-door', ctx({ ...stop('Elbe'), waitMin: 45 })), /^到 Elbe 要在門口等 45 分$/);
 });
 

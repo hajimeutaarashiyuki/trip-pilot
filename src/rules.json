@@ -50,7 +50,8 @@
     "themeDaySameTypeMax": 3,
     "onTheWayDetourMin": 8,
     "onTheWayPoolMax": 4,
-    "onTheWayMaxDwellMin": 45
+    "onTheWayMaxDwellMin": 45,
+    "airportZoneId": "airport"
   },
   "rules": {
     "dim-walk": {
@@ -102,6 +103,10 @@
       "weight": 1,
       "perMin": 0.25
     },
+    "ride-cost": {
+      "weight": 1,
+      "perMin": 0.25
+    },
     "walk-run": {
       "weight": 1,
       "perMinOver": 1
@@ -128,6 +133,10 @@
     "zone-exit": {
       "weight": 1,
       "exitMin": 60
+    },
+    "zone-reentry": {
+      "weight": 1,
+      "reentryMin": 60
     },
     "noon-urban": {
       "weight": 1,

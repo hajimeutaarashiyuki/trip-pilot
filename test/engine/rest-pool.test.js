@@ -259,6 +259,33 @@ test('跨天：前一天插過的店第二天不再插（換下一家）；任�
   assert.ok(!r2.days[1].plan.sequence.some((s) => s.insertedBy), '第一天「不去了」的第二家咖啡廳第二天也不當候選；咖啡廳已在第一天插過');
 });
 
+test('順路站不害人等開門（10-13 七天實驗 8/13）：插在 11:00 才開的第一站前面會讓它在門口等，改插後面；沒營業時間、藥妝店不當順路站', async () => {
+  const { onTheWayCandidates, insertOnTheWay } = await import('../../src/engine/trip.js');
+  const A = poi('A', { hours: { thu: [['11:00', '23:00']] } });
+  const B = poi('B');
+  const C = poi('順路店', { category: 'record', walkFactor: 0, dwellMin: 30 });
+  const walk = { 'home|A': 10, 'home|B': 20, 'A|B': 10, 'home|順路店': 3, '順路店|A': 3, '順路店|B': 3 };
+  const legFn = (a, b) => ({ walkMin: walk[`${a.id}|${b.id}`] ?? walk[`${b.id}|${a.id}`] ?? 10, rideMin: 0, climbMin: 0 });
+  const mkTrip = (picks) => ({ id: 't', party: 1, homeBases: [{ poi: home }], days: [{ date: '2026-08-13', type: 'normal', designated: picks, picks: picks.map((id) => ({ poiId: id, priority: 'must' })) }] });
+  // 只有 A（11:00 才開、當天第一站）：順路店在 home→A 那段是順路，但插進去 A 就得在門口等 84 分 → 不插
+  const one = planTrip({ trip: mkTrip(['A']), pois: { A }, rules, settings, country, kb, legFn, restPool: [] }).days[0];
+  const onway = onTheWayCandidates({ restPool: [C], day: one.day, home, plan: one.plan, legFn, settings });
+  assert.deepEqual(onway.map((c) => c.poi.id), ['順路店'], '順路店是 home→A 那段的順路站');
+  const after = insertOnTheWay({ plan: one.plan, onway, day: one.day, home, legFn, rules, settings, country, kb });
+  assert.deepEqual(ids(after), ['A'], `插在 A 前面會讓 A 在門口等，不插：${ids(after).join('→')}`);
+  // A＋B：順路店插在誰前面都不會害人多等，就插；插完沒有人在門口等更久
+  const two = planTrip({ trip: mkTrip(['A', 'B']), pois: { A, B }, rules, settings, country, kb, legFn, restPool: [C] }).days[0].plan;
+  assert.ok(ids(two).includes('順路店'), `A＋B 的那天順路店要排進去：${ids(two).join('→')}`);
+  assert.ok(two.sequence.find((s) => s.poi.id === '順路店').waitMin === 0, '順路店自己不等開門');
+  assert.ok(ids(two).at(-1) !== '順路店', '不接在最後一站後面');
+  const dayCtx = { regionZones: ['town'] };
+  const noHours = poi('不知道開不開', { category: 'record', walkFactor: 0, dwellMin: 30, hours: null });
+  const drug = poi('藥妝', { category: 'drugstore', walkFactor: 0, dwellMin: 15 });
+  const errand = poi('代購站', { category: 'store', walkFactor: 0, dwellMin: 15, item: 'DKNY香水' });
+  const near = (a, b) => ({ walkMin: a.id === b.id ? 0 : 3, rideMin: 0, climbMin: 0 });
+  assert.deepEqual(onTheWayCandidates({ restPool: [noHours, drug, errand, C], day: dayCtx, home, plan: { sequence: [{ poi: A }] }, legFn: near, settings }).map((c) => c.poi.id), ['順路店'], '沒營業時間的、藥妝店、代購研究的站不當順路站');
+});
+
 test('順路站（原話 #170）：知識庫裡繞路 ≤8 分的店直接排進去、價值低於 maybe；繞遠的不排；按過不去了的那天不再插順路站', async () => {
   const { onTheWayCandidates } = await import('../../src/engine/trip.js');
   const A = poi('A', { lat: 38.26, lng: 140.87 }); const B = poi('B', { lat: 38.26, lng: 140.88 });

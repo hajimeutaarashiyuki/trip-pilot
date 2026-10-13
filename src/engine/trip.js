@@ -17,20 +17,21 @@ const TRIGGER_KIND = Object.freeze({ 'walk-run': 'rest', 'wait-at-door': 'filler
 
 /**
  * 一天的時窗：預設 settings.dayWindow；晚出門日（旅程第 lateStartFromDay 天起、非一日遊）起點改 lateStartHM；早起日由 day.earlyDay 自帶出門時刻；
- * 抵達日起點不早於落地＋緩衝、離境日終點不晚於起飛－緩衝。
+ * 抵達日起點不早於落地＋出關緩衝＋機場到據點的車程、離境日終點不晚於起飛－緩衝－車程（airportTransit 由 airportTransitMin 算：
+ * zones.json 的 airport|<據點區> 連結，沒有就 0；10-13 七天實驗 F1：引擎原本當他 17:00 就站在飯店門口，v4 自己也只留 35 分）。
  * 留白從時窗尾端扣（profile §8「每天留 90 分鐘」、DESIGN §4 days[].openSlotMin）：每天的落後額度 day.openSlotMin ?? settings.openSlotMinPerDay，
  * 排程時從收工時刻扣掉＝排在最後；departure 日一律 0（那天的尾端是飛機）。
  * 扣完整天只剩 settings.openSlotSkipBelowMin（預設 60）分或更少就不扣、記警告 open-slot-skipped（推導：抵達日很晚落地那種，扣了就沒得排）。
  * 回 { startMin, endMin（扣過的收工時刻，硬規則 window 看這個）, raw: { startMin, endMin }（原時窗，給畫面與夜間站）, openSlotMin（真的扣掉的分鐘）, warnings }
  */
-export function dayWindow(day, index, settings) {
+export function dayWindow(day, index, settings, airportTransit = 0) {
   const [start, end] = (settings.dayWindow ?? ['09:00', '24:00']).map(hmToMin);
   let startMin = start;
   if (day.earlyDay && day.departHM) startMin = hmToMin(day.departHM);
   else if (!day.earlyDay && day.type === 'normal' && index + 1 >= (settings.lateStartFromDay ?? 3) && !day.dayTrip) startMin = hmToMin(settings.lateStartHM ?? '11:00');
-  if (day.type === 'arrival' && day.arriveMin != null) startMin = Math.max(startMin, day.arriveMin + (settings.arrivalBufferMin ?? 60));
+  if (day.type === 'arrival' && day.arriveMin != null) startMin = Math.max(startMin, day.arriveMin + (settings.arrivalBufferMin ?? 60) + airportTransit);
   let endMin = end;
-  if (day.type === 'departure' && day.departAirportMin != null) endMin = Math.min(endMin, day.departAirportMin - (settings.departureBufferMin ?? 180));
+  if (day.type === 'departure' && day.departAirportMin != null) endMin = Math.min(endMin, day.departAirportMin - (settings.departureBufferMin ?? 180) - airportTransit);
   const raw = { startMin, endMin };
   const wanted = day.type === 'departure' ? 0 : Math.max(0, Number(day.openSlotMin ?? settings.openSlotMinPerDay ?? 90) || 0);
   const warnings = [];
@@ -40,6 +41,14 @@ export function dayWindow(day, index, settings) {
     warnings.push({ code: 'open-slot-skipped', msg: `時窗只有 ${endMin - startMin} 分鐘，留白 ${wanted} 分沒從時窗扣` });
   }
   return { startMin, endMin: endMin - openSlotMin, raw, openSlotMin, warnings };
+}
+
+/** 機場到據點的分鐘：legFn 查 settings.airportZoneId（預設 'airport'）那一區到據點區的搭車連結（車程＋轉乘走路）；沒有連結、據點就在機場區都回 0。 */
+export function airportTransitMin({ legFn, home, settings = {} }) {
+  const zone = settings.airportZoneId ?? 'airport';
+  if (!legFn || !home?.zoneId || home.zoneId === zone) return 0;
+  const leg = legFn({ id: '__airport', name_zh: '機場', zoneId: zone }, home);
+  return leg && leg.source === 'link' ? (leg.rideMin ?? 0) + (leg.walkMin ?? 0) : 0;
 }
 
 /** 當日區域（第一版）：據點的 Zone ＋ 主行程的 Zone ＋ 所有候選的 Zone；之後換成據點圈 ∪ 錨點圈 ∪ 走廊。 */
@@ -76,14 +85,14 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
     // 主行程：單站型用那站；主題型用骨架店的第一家當顯示名（畫面不得露出 theme 鍵值）
     const anchorPoi = d.anchor?.poiId ? pois[d.anchor.poiId] : (d.anchor?.poiIds?.length ? pois[d.anchor.poiIds[0]] : null);
     const themeCategory = d.anchor?.theme ?? null;
-    const win = dayWindow(d, index, settings);
+    const win = dayWindow(d, index, settings, d.type === 'arrival' || d.type === 'departure' ? airportTransitMin({ legFn, home, settings }) : 0);
     for (const w of win.warnings) warnings.push({ ...w, date: d.date, msg: `${d.date} ${w.msg}` });
     const day = {
       date: d.date, type: d.type ?? 'normal', earlyDay: Boolean(d.earlyDay), dayTrip: Boolean(d.dayTrip), party: trip.party ?? 1,
       dayTripNext: prevType === 'daytrip' || Boolean(trip.days[index - 1]?.dayTrip),
       themeCategory, prevThemeCategory: prevTheme,
       anchorPoiId: anchorPoi?.id ?? null, anchorName: anchorPoi?.name_zh ?? d.anchor?.theme ?? null,
-      designated: d.designated ?? [], regionZones: regionZonesOf({ home, candidates, anchorPoi }),
+      designated: d.designated ?? [], regionZones: regionZonesOf({ home, candidates, anchorPoi }), homeZoneId: home?.zoneId ?? null,
       window: { startMin: win.startMin, endMin: win.endMin }, windowRaw: win.raw, openSlotMin: win.openSlotMin,
       openSlotSkipped: win.warnings.some((w) => w.code === 'open-slot-skipped'),
       nightSlotOff: Boolean(d.nightSlotOff) || Boolean(trip.days[index + 1]?.earlyDay),
@@ -135,13 +144,27 @@ export function insertOnTheWay({ plan, onway = [], day, home, legFn, rules, sett
   if (!onway.length || !plan?.sequence) return plan;
   const maxOptional = settings.restInsertMaxPerDay ?? 2;
   const evaluate = (sequence) => evaluateSequence({ sequence, day, home, legFn, rules, settings, country, kb });
+  const waitSum = (s) => s.reduce((n, x) => n + (x.waitMin ?? 0), 0);
+  const maxDetour = settings.onTheWayDetourMin ?? 8;
+  const walkOnly = (leg) => leg && (leg.rideMin ?? 0) === 0 ? (leg.walkMin ?? 0) : null;
   let seq = plan.sequence; let best = evaluate(seq); let changed = false;
   for (const c of onway) {
     if (seq.filter((s) => s.optional).length >= maxOptional) break;
     const stop = { poi: c.poi, dwellMin: c.dwellMin, priority: c.priority, optional: true, insertedBy: 'engine', isAnchor: false, designated: false, fixedWindow: null, gap: null, detourMin: c.detourMin };
+    // 只插在它真的順路的那一段（兩邊都走路、繞路 ≤ onTheWayDetourMin）：候選是看某一段算出來的，位置換了就不是順路
+    // （10-13 七天實驗：8/15 BILLY'S ENT 被塞進兩段搭車之間、8/18 古著屋 JAM 被接在最後一站後面走回頭路）；最後一站之後沒有「下一站」，不插
+    const onWayAt = (i) => {
+      const prevPoi = i ? seq[i - 1].poi : home; const nextPoi = seq[i].poi;
+      const direct = walkOnly(legFn(prevPoi, nextPoi)); const w1 = walkOnly(legFn(prevPoi, c.poi)); const w2 = walkOnly(legFn(c.poi, nextPoi));
+      return direct != null && w1 != null && w2 != null && w1 + w2 - direct <= maxDetour;
+    };
     let bestTrial = null;
-    for (let i = 0; i <= seq.length; i++) {
+    for (let i = 0; i < seq.length; i++) {
+      if (!onWayAt(i)) continue;
       const trial = retimeSequence({ sequence: [...seq.slice(0, i), stop, ...seq.slice(i)], day, home, legFn });
+      // 順路站自己不等開門，也不能害後面的站等：插在 11:00 才開的第一站前面，等於把「太晚出門」換成「在門口等 81 分」，
+      // 分數上差不多、人卻站在門口（10-13 七天實驗 8/13）。填站同一條（原話 #164）。
+      if ((trial[i].waitMin ?? 0) > 0 || waitSum(trial) > waitSum(seq)) continue;
       const ev = evaluate(trial);
       if (ev.breakdown.stops.some((s) => s.verdict !== 'ok')) continue;
       if (ev.score > best.score && (!bestTrial || ev.score > bestTrial.ev.score)) bestTrial = { trial, ev };
@@ -155,7 +178,8 @@ export function insertOnTheWay({ plan, onway = [], day, home, legFn, rules, sett
 /**
  * 順路站（原話 #170：「如果有順路的話 直接就排行程進去就可以…主行程決定活動區域和路線 而不是決定當天的主題性」）：
  * 第一趟排出來的每一段走路（住宿→第一站也算），知識庫裡繞路 ≤ settings.onTheWayDetourMin（預設 8）分鐘的站就是順路——
- * 繞路＝走到它再走到下一站，比直接走多出的分鐘；搭車段不算順路。候選：在當日區域、不在 exclude、不是交通／活動／錢湯；
+ * 繞路＝走到它再走到下一站，比直接走多出的分鐘；搭車段不算順路。候選：在當日區域、不在 exclude、不是交通／活動／錢湯，
+ * 也不是藥妝／電器／outlet／百貨（NO_ONWAY_CATEGORIES，推導）、營業時間要有（不知道開不開的不插）、不是代購研究的站（有 item）；
  * 依繞路分鐘取最近 settings.onTheWayPoolMax（預設 4）家；價值 PRIORITY_VALUE.onway（預設 30，低於 maybe 的 45）、optional、insertedBy engine，
  * 同類上限、站數、逛店連跑等規則照管，他不要就按「不去了」（記 priority 'onway'，那天不再插順路站）。
  */
@@ -163,7 +187,7 @@ export function onTheWayCandidates({ restPool = [], day, exclude = new Set(), ho
   if (!restPool.length || !plan?.sequence?.length) return [];
   const maxDetour = settings.onTheWayDetourMin ?? 8;
   // 順路站是「值得逛」的店，不拿恢復站（咖啡廳、餐廳、酒吧由恢復站與填站的邏輯管）
-  const pool = restPool.filter((p) => p && !NO_FILL_CATEGORIES.has(p.category) && p.recovery !== true && (day.regionZones ?? []).includes(p.zoneId) && !exclude.has(p.id));
+  const pool = restPool.filter((p) => p && !NO_ONWAY_CATEGORIES.has(p.category) && p.recovery !== true && p.hours && !p.item && (day.regionZones ?? []).includes(p.zoneId) && !exclude.has(p.id));
   if (!pool.length) return [];
   const walkOnly = (leg) => leg && (leg.rideMin ?? 0) === 0 ? (leg.walkMin ?? 0) : null;
   const stops = [home, ...plan.sequence.map((s) => s.poi)].filter(Boolean);
@@ -217,7 +241,9 @@ export function restCandidates({ restPool = [], candidates = [], day, exclude = 
  */
 export function fillCandidates({ restPool = [], candidates = [], day, exclude = new Set(), home = null, plan, settings = {} }) {
   if (!restPool.length || !plan?.sequence?.length) return [];
-  const pool = restPool.filter((p) => p && !NO_FILL_CATEGORIES.has(p.category) && (day.regionZones ?? []).includes(p.zoneId) && !exclude.has(p.id));
+  // 代購研究查的站（有 item 品項）是為了買某樣東西才查的，順路購買由代購清單管，不當填站或順路站（推導、待他確認；
+  // 10-13 七天實驗引擎把「藤崎 香氛區（查證結果：未見 DKNY，可略過）」當站塞進 8/17）
+  const pool = restPool.filter((p) => p && !NO_FILL_CATEGORIES.has(p.category) && !p.item && (day.regionZones ?? []).includes(p.zoneId) && !exclude.has(p.id));
   const out = new Map();
   const minGap = settings.fillMinGapMin ?? 15;
   for (const w of plan.warnings.filter((x) => (x.ruleId === 'wait-at-door' || x.ruleId === 'late-departure') && x.poiId)) {
@@ -241,8 +267,12 @@ export function fillCandidates({ restPool = [], candidates = [], day, exclude = 
   return [...out.values()];
 }
 
-// 填空檔不拿的店型（推導；原話只說「任何站都可以」）：交通與資訊（不是地點）、活動（綁日期）、錢湯（要準備，profile §5.9）
-const NO_FILL_CATEGORIES = new Set(['logistics', 'event', 'onsen']);
+// 填空檔不拿的店型（推導；原話只說「任何站都可以」）：交通與資訊（不是地點）、活動（綁日期）、錢湯（要準備，profile §5.9）、
+// 一日遊的複合條目（daytrip：「松島（遊覽船＋瑞巖寺＋圓通院）」那種是研究摘要，不是一個地點；10-13 七天實驗 8/14 引擎把「鹽竈（神社＋壽司）」當站插進去）
+const NO_FILL_CATEGORIES = new Set(['logistics', 'event', 'onsen', 'daytrip']);
+// 順路站不拿的店型（推導，待他確認）：填空檔不拿的三類，再加代購／大店型——順路站是「值得逛」的店（原話 #170 舉的是古著店），
+// 不是順路買個東西；10-13 七天實驗引擎把藥妝店、百貨當順路站塞了五次。藥妝那類走填站（任何站都可以，#161）或他自己勾
+const NO_ONWAY_CATEGORIES = new Set([...NO_FILL_CATEGORIES, 'drugstore', 'electronics', 'outlet', 'department']);
 
 /** 等開門那站的開門時刻：到達後第一個營業區間的開門；拿不到（沒有結構化時段、或那個區間其實已經開了）就用它排定的開始時刻。 */
 function opensAt(stop, date) {

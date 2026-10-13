@@ -42,9 +42,9 @@ test('只算序列、不改順序：拿掉主行程的序列分數變低、多�
   assert.ok(empty.penaltyMin > 0 && empty.score === -empty.penaltyMin);
 });
 
-test('試走包三天：planTrip 排出的序列（含引擎插的填站）重算，分數與罰分跟 planTrip 一樣', { skip: !existsSync(PACK) && '本機沒有 packs/pack.json' }, async () => {
+test('現在的打包檔（packs/pack.json）每一天：planTrip 排出的序列（含引擎插的站）重算，分數與罰分跟 planTrip 一樣', { skip: !existsSync(PACK) && '本機沒有 packs/pack.json' }, async () => {
   const r = await planPackFile(PACK);
-  assert.equal(r.result.days.length, 3);
+  assert.ok(r.result.days.length >= 1, '打包檔至少一天');
   for (const d of r.result.days) {
     const ev = evaluateSequence({ sequence: d.plan.sequence, day: d.day, home: resolveHome(r.pack.trip, d.date), legFn: r.legFn, rules: r.rules, settings: r.settings, country: r.pack.country, kb: r.kb });
     assert.equal(ev.score, d.plan.score, d.date);

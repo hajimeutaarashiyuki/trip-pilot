@@ -87,7 +87,7 @@ test('折返：先去遠的再走回飯店旁的站會罰，引擎改成先近�
   assert.ok(!r.warnings.some((w) => w.code === 'skipped-missing' && /backtrack/.test(w.ruleId ?? w.msg ?? '')), '折返規則有在跑');
 });
 
-test('固定時段的站（花火）前的空檔是卡位不是等開門：不被 wait-at-door 罰掉，照排', () => {
+test('固定時段的站（花火）：提前量以內是卡位，比它更早到的空等照罰、警告寫「空等」，照排', () => {
   const cands = [
     { poi: poi('神社', { hours: { thu: [['09:00', '12:00']] } }), priority: 'want' },
     { poi: poi('花火', { category: 'event', walkFactor: 0, hours: null, dwellMin: 60 }), priority: 'want', fixedWindow: { startMin: 19 * 60 + 30, arriveEarlyMin: 30 } },
@@ -98,7 +98,7 @@ test('固定時段的站（花火）前的空檔是卡位不是等開門：不�
   const fw = r.sequence.find((s) => s.poi.id === '花火');
   assert.equal(fw.startMin, 19 * 60, '提早 30 分到位');
   assert.ok(fw.waitMin > 60, `提早到的空檔算在 waitMin：${fw.waitMin}`);
-  assert.ok(!r.warnings.some((w) => w.ruleId === 'wait-at-door'), '固定時段不算等開門');
+  assert.ok(r.warnings.some((w) => w.ruleId === 'wait-at-door' && /比卡位時刻還早/.test(w.msg)), '卡位提前量之外的空等照罰（10-13 七天實驗 8/16）');
   assert.deepEqual(r.dropped, []);
 });
 
