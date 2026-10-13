@@ -47,7 +47,10 @@
       "sameTypeMaxPerDay": "#123、#143",
       "dayTripWalkFactor": "#160（跟早起日同值 0.7，取最嚴）"
     },
-    "themeDaySameTypeMax": 3
+    "themeDaySameTypeMax": 3,
+    "onTheWayDetourMin": 8,
+    "onTheWayPoolMax": 4,
+    "onTheWayMaxDwellMin": 45
   },
   "rules": {
     "dim-walk": {

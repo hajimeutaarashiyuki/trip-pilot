@@ -32,6 +32,9 @@ export const TEXT = {
   routeLink: '路線',
   restInserted: '引擎插的恢復站，不要就按『不去了』',
   fillerInserted: '引擎排進來填空檔的站，不要就按『不去了』',
+  onTheWayInserted: '順路，引擎排進來的，不要就按『不去了』',
+  undoRemoved: (name, day) => `已把 ${name} 從 ${day} 拿掉`,
+  undo: '復原',
   appliedLine: '現場改過',
   appliedLost: '現場改案拿掉的',
   appliedDropped: '旅程更新過了，現場改過的走法已丟掉，照引擎重排的走',
@@ -75,6 +78,7 @@ export const TEXT = {
   rateLaterSkip: '略過',
   restInsertedNow: '引擎插的恢復站，不想休息可以略過',
   fillerInsertedNow: '引擎排進來填空檔的站，不想去可以略過',
+  onTheWayInsertedNow: '順路排進來的，不想去可以略過',
   openMaps: 'Google Maps 路線',
 
   // 設定

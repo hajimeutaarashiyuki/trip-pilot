@@ -3,6 +3,7 @@
 import { planDay } from './core.js';
 import { hmToMin, openIntervals, overlapMin } from './time.js';
 import { haversineM } from '../geo/matrix.js';
+import { evaluateSequence, retimeSequence } from './sequence.js';
 
 /**
  * 引擎插站的觸發：照他勾的排完後出現這些規則的警告才跑第二趟。
@@ -98,6 +99,12 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
       const withExtra = planDay({ candidates: [...candidates, ...extra], day, home, legFn, rules, settings, country, kb, options });
       if ((withExtra.complete && !plan.complete) || (withExtra.complete === plan.complete && withExtra.score > plan.score)) plan = withExtra;
     }
+    // 順路站（原話 #170）：不進 DFS（價值 30 的候選會把節點吃爆，試走包兩天都撞 800 ms），改成貪婪插入——
+    // 對排好的序列，每家候選試每個位置、整條重定時刻與重算分數，分數有變好、沒撞硬規則才收
+    if (!(rejected.has('filler') || rejected.has('onway'))) {
+      const onway = onTheWayCandidates({ restPool, day, exclude: new Set([...exclude, ...plan.sequence.map((s) => s.poi.id)]), home, plan, legFn, settings });
+      plan = insertOnTheWay({ plan, onway, day, home, legFn, rules, settings, country, kb });
+    }
     if (rejected.size) plan = { ...plan, warnings: plan.warnings.map((w) => (rejected.has(TRIGGER_KIND[w.ruleId]) ? { ...w, hint: true } : w)) };
     for (const s of plan.sequence) if (s.insertedBy) insertedSoFar.add(s.poi.id);
     out.push({ date: d.date, day, plan });
@@ -113,9 +120,68 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
 export function extraCandidates({ restPool = [], candidates = [], day, exclude = new Set(), home = null, plan, settings = {}, rejected = new Set() }) {
   const triggered = (ruleId) => (plan?.warnings ?? []).some((w) => w.ruleId === ruleId);
   const rests = triggered('walk-run') && !rejected.has('rest') ? restCandidates({ restPool, candidates, day, exclude, home, settings }) : [];
-  const fillers = triggered('wait-at-door') && !rejected.has('filler') ? fillCandidates({ restPool, candidates, day, exclude, home, plan, settings }) : [];
+  // 填站與順路站都是「引擎多排一家店」：拒絕過其中一種，那天兩種都不插（推導；拒絕恢復站只管恢復站）
+  const shopRejected = rejected.has('filler') || rejected.has('onway');
+  const fillers = triggered('wait-at-door') && !shopRejected ? fillCandidates({ restPool, candidates, day, exclude, home, plan, settings }) : [];
   const seen = new Set(rests.map((c) => c.poi.id));
   return [...rests, ...fillers.filter((c) => (seen.has(c.poi.id) ? false : (seen.add(c.poi.id), true)))];
+}
+
+/**
+ * 把順路站貪婪插進排好的序列：候選依繞路分鐘排序，每家試每個位置（整條重定時刻、重算整天分數），
+ * 分數變好、沒有站撞硬規則才收；一天的引擎插站（含恢復站、填站）合計不超過 settings.restInsertMaxPerDay。
+ */
+export function insertOnTheWay({ plan, onway = [], day, home, legFn, rules, settings, country, kb }) {
+  if (!onway.length || !plan?.sequence) return plan;
+  const maxOptional = settings.restInsertMaxPerDay ?? 2;
+  const evaluate = (sequence) => evaluateSequence({ sequence, day, home, legFn, rules, settings, country, kb });
+  let seq = plan.sequence; let best = evaluate(seq); let changed = false;
+  for (const c of onway) {
+    if (seq.filter((s) => s.optional).length >= maxOptional) break;
+    const stop = { poi: c.poi, dwellMin: c.dwellMin, priority: c.priority, optional: true, insertedBy: 'engine', isAnchor: false, designated: false, fixedWindow: null, gap: null, detourMin: c.detourMin };
+    let bestTrial = null;
+    for (let i = 0; i <= seq.length; i++) {
+      const trial = retimeSequence({ sequence: [...seq.slice(0, i), stop, ...seq.slice(i)], day, home, legFn });
+      const ev = evaluate(trial);
+      if (ev.breakdown.stops.some((s) => s.verdict !== 'ok')) continue;
+      if (ev.score > best.score && (!bestTrial || ev.score > bestTrial.ev.score)) bestTrial = { trial, ev };
+    }
+    if (bestTrial) { seq = bestTrial.trial; best = bestTrial.ev; changed = true; }
+  }
+  if (!changed) return plan;
+  return { ...plan, sequence: seq, score: best.score, penaltyMin: best.penaltyMin, warnings: best.warnings };
+}
+
+/**
+ * 順路站（原話 #170：「如果有順路的話 直接就排行程進去就可以…主行程決定活動區域和路線 而不是決定當天的主題性」）：
+ * 第一趟排出來的每一段走路（住宿→第一站也算），知識庫裡繞路 ≤ settings.onTheWayDetourMin（預設 8）分鐘的站就是順路——
+ * 繞路＝走到它再走到下一站，比直接走多出的分鐘；搭車段不算順路。候選：在當日區域、不在 exclude、不是交通／活動／錢湯；
+ * 依繞路分鐘取最近 settings.onTheWayPoolMax（預設 4）家；價值 PRIORITY_VALUE.onway（預設 30，低於 maybe 的 45）、optional、insertedBy engine，
+ * 同類上限、站數、逛店連跑等規則照管，他不要就按「不去了」（記 priority 'onway'，那天不再插順路站）。
+ */
+export function onTheWayCandidates({ restPool = [], day, exclude = new Set(), home = null, plan, legFn, settings = {} }) {
+  if (!restPool.length || !plan?.sequence?.length) return [];
+  const maxDetour = settings.onTheWayDetourMin ?? 8;
+  // 順路站是「值得逛」的店，不拿恢復站（咖啡廳、餐廳、酒吧由恢復站與填站的邏輯管）
+  const pool = restPool.filter((p) => p && !NO_FILL_CATEGORIES.has(p.category) && p.recovery !== true && (day.regionZones ?? []).includes(p.zoneId) && !exclude.has(p.id));
+  if (!pool.length) return [];
+  const walkOnly = (leg) => leg && (leg.rideMin ?? 0) === 0 ? (leg.walkMin ?? 0) : null;
+  const stops = [home, ...plan.sequence.map((s) => s.poi)].filter(Boolean);
+  const best = new Map();   // poiId → 最小繞路
+  for (let i = 0; i + 1 < stops.length; i++) {
+    const a = stops[i]; const b = stops[i + 1];
+    const direct = walkOnly(legFn(a, b));
+    if (direct == null) continue;
+    for (const p of pool) {
+      const w1 = walkOnly(legFn(a, p)); const w2 = walkOnly(legFn(p, b));
+      if (w1 == null || w2 == null) continue;
+      const detour = w1 + w2 - direct;
+      if (detour <= maxDetour && detour < (best.get(p.id)?.detour ?? Infinity)) best.set(p.id, { p, detour });
+    }
+  }
+  return [...best.values()].sort((x, y) => x.detour - y.detour).slice(0, settings.onTheWayPoolMax ?? 4)
+    // 順路是看一下，不是待一下午：停留最多 onTheWayMaxDwellMin（預設 45；10-13 試走包把 135 分的商店街整條塞進 8/17）
+    .map(({ p, detour }) => ({ poi: p, priority: 'onway', optional: true, insertedBy: 'engine', detourMin: detour, dwellMin: Math.min(p.dwellMin ?? settings.defaultDwellMin ?? 60, settings.onTheWayMaxDwellMin ?? 45) }));
 }
 
 /**
@@ -196,7 +262,7 @@ const hasCoords = (p) => Number.isFinite(p?.lat) && Number.isFinite(p?.lng);
 /** 這天拒絕過哪幾種引擎插的站（規劃頁「不去了」把 stop.insertedBy 與 priority 記進 removed）；舊資料沒記 priority 的當恢復站。 */
 function rejectedKinds(removed = []) {
   const kinds = new Set();
-  for (const r of removed) if (r?.insertedBy === 'engine') kinds.add(r.priority === 'filler' ? 'filler' : 'rest');
+  for (const r of removed) if (r?.insertedBy === 'engine') kinds.add(r.priority === 'filler' || r.priority === 'onway' ? r.priority : 'rest');
   return kinds;
 }
 

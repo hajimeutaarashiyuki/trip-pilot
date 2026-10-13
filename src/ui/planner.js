@@ -9,6 +9,8 @@ import { darkBeforeMinOf } from './daylight.js';
 
 export function renderPlanner({ state, actions }) {
   const nodes = [el('h1', { text: state.trip.name ?? TEXT.appName })];
+  // 剛按過「不去了」：給一次反悔的機會（原話 #171），下一個動作前都在
+  if (state.undo) nodes.push(el('div', { class: 'undo-bar' }, [el('span', { text: TEXT.undoRemoved(state.undo.name, dateLabel(state.undo.date)) }), el('button', { class: 'btn', type: 'button', onclick: () => actions.undoRemove() }, TEXT.undo)]));
   for (const d of state.trip.days) {
     const planned = state.plans[d.date];
     if (!planned) continue;
@@ -108,7 +110,7 @@ function stopCard(s, i, plan, d, state, actions, seenCumulative = new Set()) {
     el('p', { class: 'muted small', text: [poi.guide?.intro ?? poi.highlight ?? '', limitText].filter(Boolean).join('　') }),
     warns.length ? warnList(warns) : null,
     // 哪一種引擎插的站看 stop.priority（'filler' 填空檔、'rest' 恢復站），不看店型：恢復型的店也可能是填站
-    s.insertedBy === 'engine' ? el('p', { class: 'muted small', text: s.priority === 'filler' ? TEXT.fillerInserted : TEXT.restInserted }) : null,
+    s.insertedBy === 'engine' ? el('p', { class: 'muted small', text: s.priority === 'filler' ? TEXT.fillerInserted : s.priority === 'onway' ? TEXT.onTheWayInserted : TEXT.restInserted }) : null,
     el('div', { class: 'actions' }, [
       // 引擎插的站不在 picks 裡，「換一家」接不上；「不去了」會記進 day.removed，下次重排就不再插＝拒絕（原話 #126）
       // 引擎插的站不是 designated 也不是 anchor（core 只從候選帶這兩個旗標），所以「不去了」照這個條件一定會出現

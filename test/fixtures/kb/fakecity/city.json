@@ -1,0 +1,11 @@
+{
+ "_說明": "測試用的假城市（test/tools/fakecity.test.js）：驗「換城市只動資料不動程式」。座標、區域、容器都是假的；bboxKm 小範圍讓 geocode 的框內才收有東西擋。不要拿去打 Google／OSM、不要建容器。",
+ "id": "fakecity",
+ "name_zh": "假城",
+ "name_local": "偽町",
+ "countryId": "jp",
+ "center": { "lat": 35.0, "lng": 135.0 },
+ "bboxKm": 3,
+ "valhalla": { "region": "asia/japan/kansai", "container": "valhalla-fakecity", "port": 8099 },
+ "notes": "假資料"
+}

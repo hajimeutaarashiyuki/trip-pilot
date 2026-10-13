@@ -1,7 +1,7 @@
 // 查座標的純邏輯（不打網路）：拆複合名、從 area 抽地址、查詢順序、名字比對、區內才收、exact 先收否則留等級最高的。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { splitName, addressesOf, queriesFor, nameMatches, inZone, geocodePoi } from '../../tools/geocode.mjs';
+import { splitName, addressesOf, queriesFor, nameMatches, inZone, geocodePoi, makeLookup } from '../../tools/geocode.mjs';
 
 test('splitName：＋／・與括號都拆，太短的丟掉', () => {
   assert.deepEqual(splitName('ハピナ名掛丁＋クリスロード＋マーブルロードおおまち'), ['ハピナ名掛丁', 'クリスロード', 'マーブルロードおおまち']);
@@ -69,4 +69,29 @@ test('geocodePoi：Google 用店名查到、在區內但名字比不出來 → g
   assert.equal(r.confidence, 'google');
   assert.equal(r.source, 'google');
   assert.ok(seen.some(([, kind, zid]) => kind === 'name' && zid === 'ichibancho'));
+});
+
+test('geocodePoi：候選在 city.json 的框外就跳過（別城的同名店）；lookup 收到那個框；沒給框就不擋', async () => {
+  const bbox = { west: 134.9, south: 34.9, east: 135.1, north: 35.1 };
+  const poi = { name_local: '北町神社', name_zh: '北町神社', area: '北町', maps_query: '北町神社 偽町' };
+  const seen = [];
+  const lookup = async (q, kind, zone, box) => {
+    seen.push(box);
+    return [
+      { lat: 36.0, lng: 135.0, name: '北町神社', display: '北町神社, 別的城', source: 'photon' },   // 框外
+      { lat: 35.01, lng: 135.0, name: '北町神社', display: '北町神社, 偽町', source: 'photon' },
+    ];
+  };
+  const r = await geocodePoi(poi, '偽町', null, lookup, bbox, { delayMs: 0 });
+  assert.equal(r.lat, 35.01);
+  assert.equal(r.confidence, 'exact');
+  assert.ok(seen.length === 1 && seen[0] === bbox);
+  const r2 = await geocodePoi(poi, '偽町', null, lookup, null, { delayMs: 0 });
+  assert.equal(r2.lat, 36.0);
+});
+
+test('makeLookup／geocodePoi：沒有 bbox 或 lookup 就擋下來，不給任何城市的預設框', async () => {
+  assert.throws(() => makeLookup(null), /bbox/);
+  assert.throws(() => makeLookup(null, { west: 1 }), /bbox/);
+  await assert.rejects(() => geocodePoi({ name_zh: 'x' }, '偽町', null, undefined), /lookup/);
 });

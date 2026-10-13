@@ -5,6 +5,19 @@
 import { evaluateStop, evaluateDay } from './evaluate.js';
 import { emptyAcc } from './dims.js';
 import { candidateValue, legBetween, dedupeWarnings } from './core.js';
+import { placeStop } from './schedule.js';
+
+/** 整條序列從頭重定時刻（插站、換位後用）：照 core.js 的 placeStop 鏈，時刻重算、其他欄位照舊。 */
+export function retimeSequence({ sequence, day, home, legFn }) {
+  const out = [];
+  for (const stop of sequence) {
+    const prev = out.length ? out[out.length - 1] : null;
+    const leg = legBetween(legFn, out, home, stop.poi);
+    const placed = placeStop({ prevEndMin: prev ? prev.endMin : day.window.startMin, leg, poi: stop.poi, dwellMin: stop.dwellMin, date: day.date, fixedWindow: stop.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev && !day.resumed });
+    out.push({ ...stop, ...placed });
+  }
+  return out;
+}
 
 /**
  * evaluateSequence({ sequence, day, home, legFn, rules, settings, country, kb })

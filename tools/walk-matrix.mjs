@@ -1,9 +1,12 @@
 // 打本機 Valhalla 的 /sources_to_targets（pedestrian），把一城有座標的站兩兩之間的步行分鐘寫成 walk.json。
+// Valhalla 的埠讀 <城>/city.json 的 valhalla.port（一區一容器一埠）；--url 可覆寫。沒有 city.json 就停。
 // 用法：node tools/walk-matrix.mjs ../kb/sendai [--url http://127.0.0.1:8002] [--batch 50]
 // 輸出：<城>/walk.json  { "<a>|<b>": { "min": 12, "m": 950 } }，雙向各一筆；查不到（Valhalla 回 null）的不寫。
+// 連不上 Valhalla：印怎麼建容器（tools/valhalla/build.mjs）並 exit 1，不寫檔。
 import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { loadCity, valhallaUrl, valhallaHint } from './lib/city.mjs';
 
 export async function matrix({ url, locations, costing = 'pedestrian', options = {} }) {
   const body = { sources: locations, targets: locations, costing, costing_options: { pedestrian: { walking_speed: 5.1, use_hills: 0.5, ...options } }, units: 'kilometers' };
@@ -12,12 +15,26 @@ export async function matrix({ url, locations, costing = 'pedestrian', options =
   return res.json();
 }
 
+/** Valhalla 活著沒：GET /status 回 JSON 且會算 sources_to_targets 才算；連不上、逾時、不是 Valhalla 都回 null。 */
+export async function probeValhalla(url, timeoutMs = 2000) {
+  try {
+    const res = await fetch(`${url}/status`, { signal: AbortSignal.timeout(timeoutMs) });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return Array.isArray(data.available_actions) && data.available_actions.includes('sources_to_targets') ? data : null;
+  } catch { return null; }
+}
+
 async function main() {
   const dir = process.argv[2];
   if (!dir) { console.error('用法：node tools/walk-matrix.mjs <知識庫資料夾> [--url http://127.0.0.1:8002] [--batch 50]'); process.exit(2); }
   const arg = (k, d) => { const i = process.argv.indexOf(k); return i > 0 ? process.argv[i + 1] : d; };
-  const url = arg('--url', 'http://127.0.0.1:8002');
+  const city = loadCity(dir);
+  const url = arg('--url', valhallaUrl(city));
+  if (!url) throw new Error(`${dir}/city.json 沒寫 valhalla.port，也沒給 --url`);
   const batch = Number(arg('--batch', 50));
+  const status = await probeValhalla(url);
+  if (!status) throw new Error(`連不上 Valhalla ${url}。${valhallaHint(city)}`);
   const coords = JSON.parse(await readFile(path.join(dir, 'coords.json'), 'utf8'));
   const ids = Object.keys(coords).filter((id) => coords[id] && Number.isFinite(coords[id].lat));
   const out = {};
@@ -47,7 +64,7 @@ async function main() {
   }
   const outPath = path.join(dir, 'walk.json');
   await writeFile(outPath, JSON.stringify({ _說明: 'Valhalla pedestrian（含坡度）站對站步行分鐘；由 tools/walk-matrix.mjs 產', generatedAt: new Date().toISOString(), pairs: out }, null, 0) + '\n', 'utf8');
-  console.log(`寫入 ${pairs} 對、查不到 ${missing} 對、${ids.length} 站 → ${outPath}`);
+  console.log(`寫入 ${pairs} 對、查不到 ${missing} 對、${ids.length} 站（Valhalla ${url}，${city.valhalla?.container ?? '容器未記'}）→ ${outPath}`);
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main();
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((err) => { console.error(err.message); process.exit(1); });

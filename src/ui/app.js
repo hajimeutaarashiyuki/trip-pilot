@@ -24,6 +24,7 @@ export const state = {
   trip: null, pois: {}, country: null, kb: null, legFn: null,
   rules: null, settings: null, plans: {}, pool: [],
   packRules: null, packMeta: null, packStatus: '',
+  undo: null,   // 最後一次「不去了」的復原資料（一次性）
   route: '#/plan',
   device: loadJSON(SETTINGS_KEY, {}),
   field: loadJSON(FIELD_KEY, { date: null, index: 0, simulate: false, simNowMin: null, ratings: {}, progress: {} }),
@@ -105,6 +106,7 @@ function clearApplied(date) {
 export function swapStop(date, fromPoiId, toPoi) {
   const day = state.trip.days.find((d) => d.date === date);
   if (!day) return;
+  state.undo = null;   // 換了別家就不再提供上一次「不去了」的復原
   if (!state.pois[toPoi.id]) state.pois[toPoi.id] = toPoi;
   Object.assign(day, applySwap(day, fromPoiId, toPoi));
   clearApplied(date);
@@ -115,9 +117,31 @@ export function swapStop(date, fromPoiId, toPoi) {
 export function removeStop(date, poiId, insertedBy = null, priority = null) {
   const day = state.trip.days.find((d) => d.date === date);
   if (!day) return;
+  const pickIndex = (day.picks ?? []).findIndex((p) => p.poiId === poiId);
+  const pick = pickIndex >= 0 ? day.picks[pickIndex] : null;
+  const removedEntry = { poiId, at: new Date().toISOString(), ...(insertedBy ? { insertedBy } : {}), ...(priority ? { priority } : {}) };
   day.picks = (day.picks ?? []).filter((p) => p.poiId !== poiId);
-  day.removed = [...(day.removed ?? []), { poiId, at: new Date().toISOString(), ...(insertedBy ? { insertedBy } : {}), ...(priority ? { priority } : {}) }];   // 不算落選（原話 #91）
+  day.removed = [...(day.removed ?? []), removedEntry];   // 不算落選（原話 #91）
+  // 一次性的復原（原話 #171「如果我按不去了 也要一次性的恢復按鈕 進行第二次確認或反悔的機會」）：記住剛拿掉的，下一個動作前都能按「復原」
+  state.undo = { date, poiId, name: state.pois[poiId]?.name_zh ?? poiId, pick, pickIndex, removedEntry };
   clearApplied(date);
+  replanAll();
+}
+
+/** 復原剛才的「不去了」：勾選站放回原位、removed 那筆拿掉；只對最後一次有效。 */
+export function undoRemove() {
+  const u = state.undo;
+  if (!u) return;
+  const day = state.trip.days.find((d) => d.date === u.date);
+  state.undo = null;
+  if (!day) return;
+  day.removed = (day.removed ?? []).filter((r) => r !== u.removedEntry);
+  if (u.pick && !(day.picks ?? []).some((p) => p.poiId === u.poiId)) {
+    const picks = [...(day.picks ?? [])];
+    picks.splice(Math.min(u.pickIndex, picks.length), 0, u.pick);
+    day.picks = picks;
+  }
+  clearApplied(u.date);
   replanAll();
 }
 
@@ -177,7 +201,7 @@ export function render() {
   const root = document.getElementById('app');
   if (!root) return;
   clear(root);
-  const actions = { swapStop, removeStop, saveDevice, setField, replanAll, updateFromUrl, importFile };
+  const actions = { swapStop, removeStop, undoRemove, saveDevice, setField, replanAll, updateFromUrl, importFile };
   const view = !state.trip && state.route !== '#/settings' ? renderEmpty : (VIEWS[state.route] ?? renderPlanner);
   root.append(el('main', { class: 'view' }, view({ state, actions })));
   root.append(tabBar());

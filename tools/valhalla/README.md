@@ -14,14 +14,24 @@ docker run -d --name valhalla-tohoku -p 8002:8002 \
 docker logs -f valhalla-tohoku      # 看到 "Running valhalla service" 就好了
 ```
 
-換區域：改容器名、資料夾、`tile_urls`（Geofabrik 的分區：台灣 asia/taiwan、關東 asia/japan/kanto…）、埠號。
+## 換區域（一區一容器一埠）
+
+```
+node tools/valhalla/build.mjs --region asia/taiwan --port 8003          # 只印 docker run 指令與衝突檢查（同名容器、埠被占）
+node tools/valhalla/build.mjs --region asia/taiwan --port 8003 --apply  # 真的建：容器 valhalla-taiwan、圖資 valhalla/taiwan/、拉 asia/taiwan-latest.osm.pbf
+docker logs -f valhalla-taiwan                                           # 看到 "Running valhalla service" 就好了
+```
+
+`--region` 是 Geofabrik 的分區路徑（台灣 asia/taiwan、關東 asia/japan/kanto、關西 asia/japan/kansai…）；容器名與資料夾都取最後一段。建完把 `{ "region", "container", "port" }` 寫進該城 `kb/<城>/city.json` 的 `valhalla`，`walk-matrix` 與 `city-pipeline` 就會打那個埠。選埠先避開 WinNAT 排除區（`netsh interface ipv4 show excludedportrange protocol=tcp`，PowerShell 跑）。
 
 ## 每次：產矩陣
 
 ```
-node tools/geocode.mjs ../kb/sendai          # 先有座標：Nominatim 查，查不到留 null；人工補 coords.manual.json
-node tools/walk-matrix.mjs ../kb/sendai      # 打 Valhalla /sources_to_targets，寫 ../kb/sendai/walk.json
+node tools/geocode.mjs ../kb/sendai          # 先有座標：範圍與查詢字尾讀 ../kb/sendai/city.json；查不到留 null；人工補 coords.manual.json
+node tools/walk-matrix.mjs ../kb/sendai      # 打 city.json 記的埠的 /sources_to_targets，寫 ../kb/sendai/walk.json；連不上會印怎麼建容器
 ```
+
+一條指令跑完整條管線（kb-check → geocode → zones-init → walk-matrix → pack）是 `node tools/city-pipeline.mjs ../kb/<城> [trip.json] --apply`，步驟見 `docs/pipeline.md`。
 
 `walk.json` 的形狀：`{ "<poiId>|<poiId>": { "min": 12, "m": 950 } }`，雙向各一筆。引擎 `geo/matrix.js` 先查它，沒有才用直線距離 ×1.3 並記警告。
 

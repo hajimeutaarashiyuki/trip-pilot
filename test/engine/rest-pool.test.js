@@ -258,3 +258,23 @@ test('跨天：前一天插過的店第二天不再插（換下一家）；任�
   assert.equal(r2.days[0].plan.sequence.find((s) => s.insertedBy)?.poi.id, '咖啡廳');
   assert.ok(!r2.days[1].plan.sequence.some((s) => s.insertedBy), '第一天「不去了」的第二家咖啡廳第二天也不當候選；咖啡廳已在第一天插過');
 });
+
+test('順路站（原話 #170）：知識庫裡繞路 ≤8 分的店直接排進去、價值低於 maybe；繞遠的不排；按過不去了的那天不再插順路站', async () => {
+  const { onTheWayCandidates } = await import('../../src/engine/trip.js');
+  const A = poi('A', { lat: 38.26, lng: 140.87 }); const B = poi('B', { lat: 38.26, lng: 140.88 });
+  const C = poi('順路店', { category: 'record', walkFactor: 0, dwellMin: 30 });
+  const D = poi('繞遠店', { category: 'record', walkFactor: 0, dwellMin: 30 });
+  const walk = { 'home|A': 10, 'A|B': 10, 'A|順路店': 3, '順路店|B': 3, 'A|繞遠店': 15, '繞遠店|B': 15, 'home|順路店': 12, 'home|繞遠店': 20, '順路店|home': 12 };
+  const legFn = (a, b) => ({ walkMin: walk[`${a.id}|${b.id}`] ?? walk[`${b.id}|${a.id}`] ?? 10, rideMin: 0, climbMin: 0 });
+  const pois2 = { A, B };
+  const mk = (removed = []) => ({ id: 't', party: 1, homeBases: [{ poi: home }], days: [{ date: '2026-08-13', type: 'normal', designated: ['A', 'B'], picks: [{ poiId: 'A', priority: 'must' }, { poiId: 'B', priority: 'must' }], removed }] });
+  const plan = planTrip({ trip: mk(), pois: pois2, rules, settings, country, kb, legFn, restPool: [C, D] }).days[0].plan;
+  const on = plan.sequence.find((s) => s.poi.id === '順路店');
+  assert.ok(on, `順路店要排進去：${ids(plan).join('→')}`);
+  assert.equal(on.priority, 'onway'); assert.equal(on.insertedBy, 'engine');
+  assert.ok(!ids(plan).includes('繞遠店'), '繞路 20 分的不排');
+  const cands = onTheWayCandidates({ restPool: [C, D], day: { regionZones: ['town'] }, home, plan: { sequence: [{ poi: A }, { poi: B }] }, legFn, settings });
+  assert.deepEqual(cands.map((c) => c.poi.id), ['順路店']);
+  const rejected = planTrip({ trip: mk([{ poiId: '順路店', insertedBy: 'engine', priority: 'onway' }]), pois: pois2, rules, settings, country, kb, legFn, restPool: [C, D] }).days[0].plan;
+  assert.ok(!ids(rejected).includes('順路店'), '拒絕過順路站那天不再插');
+});
