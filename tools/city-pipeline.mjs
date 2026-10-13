@@ -1,8 +1,8 @@
-// 一條指令跑完一城的上線管線：kb-check → geocode → zones-init → walk-matrix → pack（原話 #167：換城市或國家只動資料不動程式）。
+// 一條指令跑完一城的上線管線：kb-check → geocode → zones-init → walk-matrix → pack（總則 7 的工程翻譯：換城市或國家只動資料不動程式；原話 #167「仙台實驗做完之後 還要測試其他城市或國家 所以銜接的資料管線 你這次也要一併做好」）。
 // 用法：node tools/city-pipeline.mjs <知識庫資料夾> [trip.json] [--apply] [--steps kb-check,geocode,zones,matrix,pack]
 //   不帶 --apply：只印每步會做什麼與現況數字（kb-check 本來就唯讀所以照跑；其他步不打網路、不寫檔）。
 //   --apply：真的跑；既有工具用 child_process 跑（不重寫），每步跑完印一行摘要。
-//   geocode 預設只查缺的；沒有 zones.json 時先以無區模式查，zones-init 產出後再 --retry 重查一輪（null 與非 exact 的）。
+//   geocode 預設只查缺的；沒有 zones.json 時先以無區模式查，zones-init 產出後管線停下來，人看過區草案再手動 --retry。
 //   zones-init 只在 zones.json 不存在時跑。walk-matrix 用 city.json 的埠，連不上就跳過並說怎麼建容器。pack 有給 trip.json 才跑。
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -84,7 +84,7 @@ async function main() {
 
   if (want('geocode')) {
     const p = snap.geocodeMissing;
-    const text = `查座標（只查缺的）：會查 ${p.query}、沿用 ${p.keep}、人工 ${p.manual}、不查（交通類）${p.skip}；共 ${snap.pois} 站${zonesMissingAtStart ? '；沒有 zones.json → 先無區模式查，zones-init 產出後再 --retry 重查' : `；區 ${snap.zones} 個`}`;
+    const text = `查座標（只查缺的）：會查 ${p.query}、沿用 ${p.keep}、人工 ${p.manual}、不查（交通類）${p.skip}；共 ${snap.pois} 站${zonesMissingAtStart ? '；沒有 zones.json → 先無區模式查，zones-init 產出後管線停、人看過區草案再手動 --retry' : `；區 ${snap.zones} 個`}`;
     step('geocode', text);
     if (apply) { const r = await run('geocode', [dir]); done('geocode', r.lastLine); snap = snapshot(dir); }
   }
@@ -95,12 +95,13 @@ async function main() {
       step('zones-init', `沒有 zones.json：從 coords.json 有座標的站聚類寫草案（半徑 800 m）；現在有座標 ${snap.coords?.have ?? 0} 站`);
       if (apply) {
         const r = await run('zones', [dir, '--apply']); done('zones-init', r.lastLine); snap = snapshot(dir);
-        if (want('geocode')) {
-          const p = snap.geocodeRetry;
-          step('geocode --retry', `有區了，重查 null 與非 exact 的：會查 ${p.query}、沿用 ${p.keep}`);
-          const r2 = await run('geocode', [dir, '--retry']); done('geocode --retry', r2.lastLine); snap = snapshot(dir);
-        }
-      } else if (want('geocode')) console.log('　之後 geocode --retry 重查 null 與非 exact 的（站數要等草案出來才知道）');
+        // 到這裡停：區草案要人先看過 keywords（docs/pipeline.md §5.3）再重查，不然草案的區一擋會把好命中蓋掉、還花 Google 額度（10-13 對抗審查）
+        const p = snap.geocodeRetry;
+        console.log(`　區草案寫好了，管線到此停：先看 ${path.join(dir, 'zones.json')} 的 keywords，再跑 node tools/geocode.mjs ${dirArg} --retry（會重查 ${p.query} 站，花 Google 額度），然後 --steps matrix,pack`);
+        done('停在區草案', '人看過 zones.json 再手動 geocode --retry');
+        console.log(`\n跑完：\n${summary.map((s) => `- ${s}`).join('\n')}`);
+        return;
+      } else if (want('geocode')) console.log('　之後要人看過區草案再手動 geocode --retry（站數要等草案出來才知道）');
     }
   }
 

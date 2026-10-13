@@ -263,6 +263,10 @@ async function main() {
       continue;
     }
     const r = await geocodePoi(poi, city, zone, lookup, bbox);
+    // 重查（--retry／--force）時新結果比舊的差或根本查不到，就保留舊命中；不然新城市的區草案一擋就把好命中蓋成 null（10-13 對抗審查）
+    const prevHit = cur && cur.confidence ? cur : null;
+    const keepOld = Boolean(prevHit) && (!r || (RANK[r.confidence] ?? -9) < (RANK[prevHit.confidence] ?? -9));
+    if (keepOld) { counts.kept++; console.log(`＝ ${poi.name_zh}：重查沒比較好，保留舊的（${prevHit.confidence}）`); continue; }
     out[poi.id] = r;
     counts[r ? r.confidence : 'none']++;
     console.log(`${r ? MARK[r.confidence] : '×'} ${poi.name_zh}${zone ? `［${zone.id}］` : '［無區］'}${r ? `　${r.lat.toFixed(5)},${r.lng.toFixed(5)}　${r.display.slice(0, 60)}${r.distM != null ? `　距區心 ${r.distM} m` : ''}` : ''}`);

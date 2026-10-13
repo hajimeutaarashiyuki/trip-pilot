@@ -1,4 +1,4 @@
-// 假城市走完整條管線，不打網路、不建容器、不改程式（原話 #167）：
+// 假城市走完整條管線，不打網路、不建容器、不改程式（總則 7；原話 #167 要管線一併做好）：
 // geocode 純函式（假 lookup、city.json 的 bbox）→ zones-init 草案 → 查不到的站區心頂替 → kb-check → buildPack → 手機端 readPack → 引擎排一天。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

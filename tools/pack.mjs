@@ -1,7 +1,7 @@
 // 打包：把一城的知識庫＋座標＋區＋步行矩陣＋一趟旅程＋規則參數＋國家層，打成手機要收的一個 JSON（DESIGN §3.2、計畫 1b T9）。
 // 城市 id／名稱讀 <城>/city.json（沒有就停）；國家層照 city.json 的 countryId 找 kb/country/<id>.json。
 // 用法：node tools/pack.mjs <知識庫資料夾> <trip.json> [--city <畫面用城市名>] [--country <country.json>] [--out <檔案>]
-//   預設輸出 <知識庫資料夾>/../../packs/<tripId>.json，並複製一份成 packs/pack.json（伺服器給手機抓的就是這個）。
+//   預設輸出專案根目錄的 packs/<tripId>.json（由這支檔案的位置推，知識庫放哪都一樣），並複製一份成 packs/pack.json（伺服器給手機抓的就是這個）。
 // 來源唯讀，只寫 packs/。
 import { readFile, writeFile, mkdir, copyFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
@@ -12,6 +12,10 @@ import { buildPack } from '../src/data/pack.js';
 import { zoneOfPoi } from '../src/geo/zones.js';
 import { loadCity } from './lib/city.mjs';
 import rulesJson from '../src/rules.json' with { type: 'json' };
+
+// === 需修改 ===
+const PACKS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'packs');   // 專案根目錄的 packs/
+// === 以上 ===
 
 async function readJson(file) { return existsSync(file) ? JSON.parse(await readFile(file, 'utf8')) : null; }
 
@@ -56,10 +60,10 @@ async function main() {
   if (trip.countryId && trip.countryId !== cityCfg.countryId) console.warn(`旅程寫 countryId ${trip.countryId}、city.json 寫 ${cityCfg.countryId}：照 city.json`);
   const countryFile = opt('--country') ?? path.join(dir, '..', 'country', `${cityCfg.countryId}.json`);
   const country = await readJson(countryFile);
-  if (!country) console.warn(`沒有國家層檔 ${countryFile}：餐段、夜間站、夏季規則會跳過並警告（範本在 kb/country/_template.json）`);
+  if (!country) console.warn(`沒有國家層檔 ${countryFile}：餐段、夜間站、夏季正午、白天站四條規則會跳過並警告（範本在 kb/country/_template.json）`);
   const kb = await loadCityKb(dir);
   const pack = buildPack({ city, country, zones: kb.zones, pois: kb.pois, walk: kb.walk, trip, rulesJson });
-  const outFile = opt('--out') ?? path.join(dir, '..', '..', 'packs', `${trip.id}.json`);
+  const outFile = opt('--out') ?? path.join(PACKS_DIR, `${trip.id}.json`);
   await mkdir(path.dirname(outFile), { recursive: true });
   await writeFile(outFile, JSON.stringify(pack) + '\n', 'utf8');
   const latest = path.join(path.dirname(outFile), 'pack.json');

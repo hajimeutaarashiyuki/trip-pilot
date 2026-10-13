@@ -1,4 +1,4 @@
-// 從 coords.json 有座標的站聚類出 zones.json 草案（原話 #167：新城市先有區，geocode 才能驗位置、引擎才能歸區）。
+// 從 coords.json 有座標的站聚類出 zones.json 草案（推導：新城市先有區，geocode 才能驗位置、引擎才能歸區）。
 // 用法：node tools/zones-init.mjs <知識庫資料夾> [--radius 800] [--apply] [--force]
 //   不帶 --apply 只印摘要與前幾群；--apply 寫 <城>/zones.json（已存在就拒絕，除非 --force）。
 //   聚類與命名的純函式在 src/geo/zones-init.js。區心頂替（confidence: zone）的座標不是真位置，不拿來聚類。

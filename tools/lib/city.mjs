@@ -1,4 +1,4 @@
-// 城市設定：kb/<城>/city.json 一份管一城（原話 #167：換城市或國家只動資料不動程式）。
+// 城市設定：kb/<城>/city.json 一份管一城（總則 7 的工程翻譯：換城市或國家只動資料不動程式；原話 #167「仙台實驗做完之後 還要測試其他城市或國家 所以銜接的資料管線 你這次也要一併做好」）。
 // 形狀：{ id, name_zh, name_local, countryId, center: { lat, lng }, bbox?: { west, south, east, north }, bboxKm?, valhalla?: { region, container, port }, notes }
 //   bbox：查座標只收這個範圍；缺就用 center ± bboxKm（預設 DEFAULT_BBOX_KM）推。
 //   valhalla：一區一容器一埠；walk-matrix 打 http://127.0.0.1:<port>，city-pipeline 連不上時用 region 提示怎麼建。
