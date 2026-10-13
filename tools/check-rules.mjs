@@ -12,7 +12,7 @@ export const RULES_PATH = path.resolve(here, '../src/rules.json');
 
 /** 每列：profile 裡的句型（第一個擷取群是數字）→ rules.json 的設定鍵。 */
 export const CHECKS = [
-  { key: 'themeDaySameTypeMax', pattern: /主題日那一類最多 (\d+) 家/, label: '主題日同類上限' },
+  { key: 'themeDaySameTypeMax', pattern: /主題日那一類放寬到 (\d+) 家/, label: '主題日同類上限' },
   { label: '步行預算', pattern: /步行預算 (\d+) 分／日/, key: 'walkBudgetMin' },
   { label: '走路連跑上限', pattern: /走路連跑上限 (\d+) 分/, key: 'maxWalkRunMin' },
   { label: '逛店連跑家數', pattern: /逛店連跑上限 (\d+) 家或 \d+ 分/, key: 'maxShopRunCount' },
