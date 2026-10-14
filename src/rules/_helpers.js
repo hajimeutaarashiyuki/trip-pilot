@@ -7,6 +7,15 @@ export const SHOP_CATEGORIES = Object.freeze(['vintage', 'record', 'store', 'boo
 /** 非主題日每天上限的三類（原話 #123、#143）。 */
 export const SAME_TYPE_CATEGORIES = Object.freeze(['vintage', 'record', 'cafe']);
 
+/** 那三類的人話名字（same-type-day、item-gap 的 warn 用；警告是畫面文字，不得露出店型鍵）。 */
+export const SAME_TYPE_NAMES = Object.freeze({ vintage: '古著店', record: '唱片行', cafe: '咖啡廳' });
+
+/**
+ * 「為了買而去」的購物類店型（DESIGN §1.5「逛的：百貨、商店街、藥妝掃貨」；電器量販由原話 #55「相機這種比較專門的東西算是在購物日吧」；outlet 由 profile §5.11）：
+ * 非購物日排進去罰（rules/shopping-day.js）、引擎自己插的順路站不拿（engine/trip.js onTheWayCandidates）。10-14 T22。
+ */
+export const SHOPPING_CATEGORIES = Object.freeze(['department', 'arcade', 'drugstore', 'electronics', 'outlet']);
+
 /** 這一站算不算「恢復」：有坐下或吃喝、而且待得夠久。 */
 export function isRecovery(stop, minMin = 0) {
   return Boolean(stop?.poi?.recovery) && (stop.dwellMin ?? 0) >= minMin;

@@ -1,4 +1,4 @@
-// T1 驗收：店型推導、係數、恢復站、停留解析；仙台 150 筆（136＋10-13 加的 13 家 e2e 候選＋縁日拆站）全部通過並把分佈存成 snapshot 對照 profile §2.4。
+// T1 驗收：店型推導、係數、恢復站、停留解析；仙台 151 筆（136＋10-13 加的 13 家 e2e 候選＋縁日拆站＋10-14 T23 的研討會會場）全部通過並把分佈存成 snapshot 對照 profile §2.4。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -47,11 +47,11 @@ test('停留時間解析', () => {
   assert.equal(classifyCategory('交通｜觀光巴士').key, 'logistics');
 });
 
-test('仙台 150 筆全部通過 normalize，分佈進 snapshot', { skip: !existsSync(SENDAI) && '本機沒有 kb/sendai/data.json' }, async (t) => {
+test('仙台 151 筆全部通過 normalize，分佈進 snapshot', { skip: !existsSync(SENDAI) && '本機沒有 kb/sendai/data.json' }, async (t) => {
   const kb = JSON.parse(await readFile(SENDAI, 'utf8'));
   const list = Object.values(kb.categories).flatMap((v) => (Array.isArray(v) ? v : v.items ?? []));
   const { pois, warnings, stats } = normalizeAll(list);
-  assert.equal(pois.length, 150);
+  assert.equal(pois.length, 151);
   assert.ok(pois.every((p) => p.id && p.category && typeof p.walkFactor === 'number'));
   const unknown = warnings.filter((w) => w.code === 'category-unknown');
   // 看不出店型的要列出來，目標是 0；現在有幾筆就是研究要補店型的清單

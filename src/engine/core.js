@@ -4,7 +4,7 @@
 // 硬約束回 never 的候選在這條分支裡整個拿掉（再往後插也不可能）；回 no 的留著，晚一點可能可以。
 // 有節點與時間預算：預算用完就回報目前最好的（anytime），stats.truncated 標 true。
 import { evaluateStop, evaluateDay } from './evaluate.js';
-import { SAME_TYPE_CATEGORIES } from '../rules/_helpers.js';   // 只借同類店型清單寫落選理由，不是規則邏輯
+import { SAME_TYPE_CATEGORIES, SHOP_CATEGORIES } from '../rules/_helpers.js';   // 只借店型清單寫落選理由，不是規則邏輯
 import { emptyAcc } from './dims.js';
 import { placeStop } from './schedule.js';
 import { warnText } from '../rules/index.js';
@@ -34,9 +34,10 @@ function orderCandidates(list) {
 
 /**
  * planDay({ candidates, day, home, legFn, rules, settings, country, kb, options })
- * - candidates: [{ poi, dwellMin?, priority, designated?, isAnchor?, fixedWindow?, optional?, insertedBy?, gap? }]
+ * - candidates: [{ poi, dwellMin?, priority, designated?, isAnchor?, fixedWindow?, optional?, insertedBy?, gap?, errand? }]
  *   optional：排不進不算落選（不進 dropped）、不佔 maxStopsPerDay 名額（rules/max-stops.js）；insertedBy：誰插的（'engine'），排進去的 stop 會帶著；
- *   gap：填站只能落在的那段空檔 { startMin, endMin }（trip.js fillCandidates，規則 filler-gap 擋），其他站 null
+ *   gap：填站只能落在的那段空檔 { startMin, endMin }（trip.js fillCandidates，規則 filler-gap 擋），其他站 null；
+ *   errand：他勾的待辦站（旅程檔 picks[].errand，順路購買，原話 #29）——購物類排在非購物日不罰（rules/shopping-day.js），排進去的 stop 帶著
  * - home: 住宿據點（第一段移動的起點）
  * - legFn(fromPoi, toPoi) → { walkMin, rideMin, climbMin, backtrackMin?, mode }
  * 回 { sequence, score, penaltyMin, warnings, dropped, breakdown, stats }；永遠回得出東西（總則 0）。
@@ -83,7 +84,7 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
       // first：當天第一站開門前到就改成晚點出門（schedule.js）。現場改案（day.resumed）是從當下接著排，人已經在外面，
       // 第一個剩下的站等開門是真的在門口等，照站與站之間算、讓 wait-at-door 罰——不然引擎會把第一站推到 17:00 才開的酒吧、中間空四小時（2026-10-12 試走包 8/13 12:50 實測）
       const placed = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev && !day.resumed });
-      const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i, optional: Boolean(c.optional), insertedBy: c.insertedBy ?? null, gap: c.gap ?? null };
+      const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i, optional: Boolean(c.optional), insertedBy: c.insertedBy ?? null, gap: c.gap ?? null, errand: Boolean(c.errand) };
       const ctx = { ...dayCtxBase, stop, prev, next: null, leg, acc, sequence: seq };
       const r = evaluateStop(ctx, rules);
       if (r.verdict === 'never') {
@@ -94,7 +95,7 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
       if (r.verdict === 'no') continue;
       const nextRemaining = remaining.filter((o) => o._i !== c._i && !nowDead.includes(o._i));
       placedEver.add(c._i);
-      search([...seq, stop], nextRemaining, r.acc, score + c.value - r.penaltyMin, [...path, { stop, penaltyMin: r.penaltyMin, breakdown: r.breakdown, warnings: r.warnings }]);
+      search([...seq, stop], nextRemaining, r.acc, score + c.value - r.penaltyMin, [...path, { stop, penaltyMin: r.penaltyMin, breakdown: r.breakdown, warnings: r.warnings, acc: r.acc }]);
       if (stats.truncated) return;
     }
   }
@@ -115,7 +116,7 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
         if (c.optional && optionalPlaced >= maxOptional) continue;
         const leg = legBetween(legFn, seq, home, c.poi);
         const placed = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev && !day.resumed });
-        const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i, optional: Boolean(c.optional), insertedBy: c.insertedBy ?? null, gap: c.gap ?? null };
+        const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i, optional: Boolean(c.optional), insertedBy: c.insertedBy ?? null, gap: c.gap ?? null, errand: Boolean(c.errand) };
         const r = evaluateStop({ ...dayCtxBase, stop, prev, next: null, leg, acc, sequence: seq }, rules);
         if (r.verdict !== 'ok') continue;
         const gain = c.value - r.penaltyMin;
@@ -124,7 +125,7 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
       if (!pick || pick.gain <= 0) break;
       placedEver.add(pick.c._i);
       seq = [...seq, pick.stop]; acc = pick.r.acc; score += pick.gain;
-      path.push({ stop: pick.stop, penaltyMin: pick.r.penaltyMin, breakdown: pick.r.breakdown, warnings: pick.r.warnings });
+      path.push({ stop: pick.stop, penaltyMin: pick.r.penaltyMin, breakdown: pick.r.breakdown, warnings: pick.r.warnings, acc: pick.r.acc });
       remaining = remaining.filter((o) => o._i !== pick.c._i);
     }
     tryEnd(seq, acc, score, path);
@@ -140,15 +141,20 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
   const byCat = new Map();
   for (const c of nonOptional) byCat.set(c.poi.category, (byCat.get(c.poi.category) ?? 0) + 1);
   const placedNonOptional = best.seq.filter((s) => !s.optional).length;
+  // 排進去的序列裡逛店連跑最長的一段（每步的累積量 dim-shop-run 是規則算的，這裡只讀來寫理由）：主題日那一類沒有家數上限，真正擋下一家的是逛店連跑的罰分（10-14 T25 審查）
+  const shopRun = best.path.reduce((m, p) => { const v = p.acc?.['dim-shop-run']; return v && v.count > m.count ? { count: v.count, min: v.min } : m; }, { count: 0, min: 0 });
+  const maxShopRunCount = settings.maxShopRunCount ?? 4; const maxShopRunMin = settings.maxShopRunMin ?? 240;
   const reasonFor = (c) => {
     if (!placedEver.has(c._i)) return dead.get(c._i) ?? '時間或分數排不進';
-    // 先看同類上限（主題日 3、非主題日 2），再看名額有沒有真的用滿，都不是才是分數取捨
+    // 先看同類上限（非主題日 2；主題日那一類無上限、不會因同類上限落選，原話 #20），再看名額有沒有真的用滿，再看逛店連跑是不是已經到頂，都不是才是分數取捨
     const n = byCat.get(c.poi.category) ?? 0;
-    if (SAME_TYPE_CATEGORIES.includes(c.poi.category)) {
-      const cap = day.themeCategory === c.poi.category ? (settings.themeDaySameTypeMax ?? 3) : sameTypeMax;
-      if (n > cap) return day.themeCategory === c.poi.category ? `今天是主題日，同類的店最多 ${cap} 家、勾了 ${n} 家，它排在後面` : `同類的店一天最多 ${cap} 家、勾了 ${n} 家，它排在後面`;
-    }
+    if (SAME_TYPE_CATEGORIES.includes(c.poi.category) && day.themeCategory !== c.poi.category && n > sameTypeMax) return `同類的店一天最多 ${sameTypeMax} 家、勾了 ${n} 家，它排在後面`;
     if (placedNonOptional >= maxStops && nonOptional.length > maxStops) return `今天勾了 ${nonOptional.length} 站、上限 ${maxStops}，它排在後面`;
+    // 站著逛的店（SHOP_CATEGORIES、走動類不算）再接在最長那段後面會超過 maxShopRunCount 家或 maxShopRunMin 分（藏量大的店照 dim-shop-run 算 deepDigCount 家）
+    const units = c.poi.deepDig ? (settings.deepDigCount ?? 2) : 1;
+    if (SHOP_CATEGORIES.includes(c.poi.category) && !(c.poi.walkFactor > 0) && (shopRun.count + units > maxShopRunCount || shopRun.min + c.dwellMin > maxShopRunMin)) {
+      return `${day.themeCategory === c.poi.category ? '主題日不設家數上限，但' : ''}今天已經連著逛了 ${shopRun.count} 家店、${shopRun.min} 分，中間沒吃點東西或坐一下，它排在後面`;
+    }
     return '排得進，但排進去整天的分數反而低';
   };
   const dropped = cands.filter((c) => !placedIdx.has(c._i) && !c.optional).map((c) => ({ poi: c.poi, priority: c.priority, reason: reasonFor(c) }));

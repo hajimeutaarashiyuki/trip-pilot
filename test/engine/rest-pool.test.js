@@ -177,6 +177,7 @@ test('fillCandidates：每個等開門警告算出空檔（前一站結束→那
     poi('活動', { lng: 140.87506, category: 'event' }),
     poi('交通', { lng: 140.87507, category: 'logistics' }),
     poi('錢湯', { lng: 140.87508, category: 'onsen' }),
+    poi('會場', { lng: 140.87509, category: 'venue' }),   // 研討會會場：只有旅程檔那天勾了才有意義，不當填站（10-14 T23 審查）
   ];
   const exclude = new Set(['已勾', '拒絕過']);
   const out = fillCandidates({ restPool: pool, candidates: [], day, exclude, home, plan, settings: { ...settings, fillPoolMax: 3 } });
@@ -189,7 +190,7 @@ test('fillCandidates：每個等開門警告算出空檔（前一站結束→那
   assert.equal(out[1].dwellMin, settings.defaultDwellMin, '沒寫停留用預設');
   assert.equal(out[2].dwellMin, 105, '停留 200 分裁到空檔 120 減留給移動的 15');
   const more = fillCandidates({ restPool: pool, candidates: [], day, exclude, home, plan, settings: { ...settings, fillPoolMax: 20 } }).map((c) => c.poi.id);
-  assert.deepEqual(more, ['近1', '近2', '近3', '近4', '沒時段'], '沒有結構化時段視為有開；定休、傍晚才開、別區、已勾、拒絕過、活動、交通、錢湯都不拿');
+  assert.deepEqual(more, ['近1', '近2', '近3', '近4', '沒時段'], '沒有結構化時段視為有開；定休、傍晚才開、別區、已勾、拒絕過、活動、交通、錢湯、會場都不拿');
   // 等開門那站沒有結構化時段：空檔結束用它排定的開始時刻
   const B2 = poi('B2', { lng: 140.88, hours: null });
   const plan2 = { sequence: [seq[0], { poi: B2, arriveMin: 605, startMin: 700, endMin: 770, waitMin: 95 }], warnings: [{ ruleId: 'wait-at-door', code: 'soft', poiId: 'B2', msg: '' }] };
@@ -304,4 +305,50 @@ test('順路站（原話 #170）：知識庫裡繞路 ≤8 分的店直接排進
   assert.deepEqual(cands.map((c) => c.poi.id), ['順路店']);
   const rejected = planTrip({ trip: mk([{ poiId: '順路店', insertedBy: 'engine', priority: 'onway' }]), pois: pois2, rules, settings, country, kb, legFn, restPool: [C, D] }).days[0].plan;
   assert.ok(!ids(rejected).includes('順路店'), '拒絕過順路站那天不再插');
+});
+
+test('引擎插站的池（10-14 T22）：curated:false、2 星、落選兩次、unlockWhen、有品項的店三個池都不插（engineMayInsert）；藥妝店不當順路站但可當填站；他自己勾的 curated:false 店照排', async () => {
+  const { onTheWayCandidates, engineMayInsert } = await import('../../src/engine/trip.js');
+  const day = { date: '2026-08-13', regionZones: ['town'], window: { startMin: 540, endMin: 1440 } };
+  const near = (a, b) => ({ walkMin: a.id === b.id ? 0 : 3, rideMin: 0, climbMin: 0 });
+  const blocked = [
+    cafe('挖寶型', { curated: false }), cafe('兩星', { my: { rating: 2 } }), cafe('落選兩次', { poolLosses: 2 }), cafe('未解鎖', { unlockWhen: '牛舌吃無可吃' }), cafe('代購站', { item: 'DKNY香水' }),
+  ];
+  const ok = cafe('咖啡廳');
+  assert.deepEqual(blocked.map(engineMayInsert), [false, false, false, false, false]);
+  for (const p of [ok, cafe('三星', { my: { rating: 3 } }), cafe('落選一次', { poolLosses: 1 }), cafe('選品未知', { curated: 'unknown' }), cafe('選品店', { curated: true })]) assert.equal(engineMayInsert(p), true, p.id);
+  assert.equal(engineMayInsert(null), false);
+  // 恢復站池
+  assert.deepEqual(restCandidates({ restPool: [...blocked, ok], candidates: [{ poi: poi('A') }], day, home, settings }).map((c) => c.poi.id), ['咖啡廳']);
+  // 填站池：藥妝店（購物類）可以當填站（原話 #161 任何站都可以；非購物日由規則 shopping-day 罰掉）；池的門照擋
+  const drug = poi('藥妝', { category: 'drugstore', walkFactor: 0, dwellMin: 15 });
+  const seq = [{ poi: poi('A'), arriveMin: 540, startMin: 540, endMin: 600, waitMin: 0 }, { poi: poi('B', { hours: { thu: [['12:00', '23:00']] } }), arriveMin: 605, startMin: 720, endMin: 790, waitMin: 115 }];
+  const plan = { sequence: seq, warnings: [{ ruleId: 'wait-at-door', code: 'soft', poiId: 'B', msg: '' }] };
+  const shopBlocked = blocked.map((p) => ({ ...p, category: 'store', recovery: false, cafeLike: false }));   // 不是恢復站的版本，驗填站池與順路站池
+  assert.deepEqual(fillCandidates({ restPool: [...shopBlocked, drug, ok], candidates: [], day, home, plan, settings }).map((c) => c.poi.id).sort(), ['咖啡廳', '藥妝']);
+  // 順路站池：購物類（SHOPPING_CATEGORIES）不拿、池的門照擋
+  const shop = (id, category) => poi(id, { category, walkFactor: 0, dwellMin: 30 });
+  const onwayPool = [...shopBlocked, drug, shop('百貨', 'department'), shop('商店街', 'arcade'), shop('電器', 'electronics'), shop('outlet', 'outlet'), shop('伴手禮', 'gift'), shop('順路店', 'record'), shop('會場', 'venue')];
+  assert.deepEqual(onTheWayCandidates({ restPool: onwayPool, day, home, plan: { sequence: [{ poi: poi('A') }] }, legFn: near, settings }).map((c) => c.poi.id).sort(), ['伴手禮', '順路店'], '只拿逛的店；百貨、商店街、藥妝、電器、outlet、會場不當順路站');
+  // 他自己勾的 curated:false 店照排（總則 3「指定行程凌駕偏好」）
+  const jam = poi('古著屋JAM', { category: 'vintage', walkFactor: 0, dwellMin: 30, curated: false });
+  const t = { id: 't', party: 1, homeBases: [{ poi: home }], days: [{ date: '2026-08-13', type: 'normal', picks: [{ poiId: jam.id, priority: 'want' }] }] };
+  const r = planTrip({ trip: t, pois: { [jam.id]: jam }, rules, settings, country, kb, legFn, restPool: [jam] }).days[0].plan;
+  assert.deepEqual(ids(r), ['古著屋JAM']);
+});
+
+test('購物類的填站只在購物日填進去（規則 shopping-day）：同一段等開門空檔，非購物日百貨不填、購物日照填且不出警告', () => {
+  // 一天的旅程：預設那天就是離境日＝購物日；shoppingDays: [] 蓋成沒有購物日
+  const dept = poi('百貨', { category: 'department', walkFactor: 0, dwellMin: 60, lng: 140.8705 });
+  const off = planTrip({ trip: { ...t2, shoppingDays: [] }, pois: p2, rules, settings, country, kb, legFn, restPool: [dept] }).days[0];
+  assert.equal(off.day.shoppingDay, false);
+  assert.ok(!ids(off.plan).includes('百貨'), `非購物日不填百貨：${ids(off.plan).join('→')}`);
+  assert.ok(!off.plan.warnings.some((w) => w.ruleId === 'shopping-day'), '沒填進去就沒有購物日警告');
+  const on = planTrip({ trip: t2, pois: p2, rules, settings, country, kb, legFn, restPool: [dept] }).days[0];
+  assert.equal(on.day.shoppingDay, true, '一天的旅程：那天就是離境日＝購物日');
+  const filled = on.plan.sequence.find((s) => s.poi.id === '百貨');
+  assert.ok(filled && filled.priority === 'filler' && filled.insertedBy === 'engine', `購物日照填：${ids(on.plan).join('→')}`);
+  assert.equal(filled.errand, false);
+  assert.ok(!on.plan.warnings.some((w) => w.ruleId === 'shopping-day'));
+  assert.ok(on.plan.penaltyMin < off.plan.penaltyMin, `購物日填了之後罰分 ${on.plan.penaltyMin} 要低於沒填的 ${off.plan.penaltyMin}`);
 });

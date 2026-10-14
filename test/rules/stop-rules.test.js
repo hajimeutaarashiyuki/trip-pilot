@@ -15,6 +15,10 @@ test('hours：營業區間內 ok；開門前 no；全部過了 never；當天休
   assert.equal(run('hours', ctx(s(21 * 60 + 30))), 'never');
   assert.equal(run('hours', ctx(stop('X', { hours: { mon: [['09:00', '17:00']] }, startMin: 600 }))), 'never', '週四沒開');
   assert.match(warnOf('hours', ctx(s(11 * 60))), /11:00 到的時候不在營業時間內/);
+  // 固定時段的站不看營業時間：研討會會場寫 09:30–19:30，08:50 到場卡位、20:00 散場都 ok（10-14 T23）
+  const pinned = { startMin: 9 * 60 + 30, endMin: 19 * 60 + 30, arriveEarlyMin: 40, afterMin: 30 };
+  assert.equal(run('hours', ctx({ ...s(8 * 60 + 50, 670), fixedWindow: pinned })), 'ok', '固定時段的站營業時間不擋');
+  assert.equal(run('hours', ctx(s(8 * 60 + 50, 670))), 'no', '同一站沒有固定時段就照營業時間判');
   const r = evaluateStop(ctx(stop('巽や', { hours: null })), rules);
   assert.ok(r.warnings.some((w) => w.ruleId === 'hours' && w.code === 'skipped-missing'));
   assert.equal(r.verdict, 'ok');
@@ -41,18 +45,38 @@ test('fixed-window、window、max-stops', () => {
   const fw = stop('花火', { category: 'event', walkFactor: 0, startMin: 19 * 60 + 40, dwellMin: 20, fixedWindow: { startMin: 19 * 60 + 30, arriveEarlyMin: 30 } });
   assert.equal(run('fixed-window', ctx(fw)), 'never');
   assert.equal(run('fixed-window', ctx({ ...fw, startMin: 19 * 60 })), 'ok');
+  // 現場改案（day.resumed）中途：釘起訖的站還沒散就 ok（人在會場裡、或遲到還趕得上後半）；散了才 never；只釘開始的花火遲到照樣錯過；出門前的排程遲到照樣 never（10-14 T23 審查後）
+  const venue = stop('會場', { category: 'venue', walkFactor: 0, startMin: 12 * 60, dwellMin: 480, fixedWindow: { startMin: 9 * 60 + 30, endMin: 19 * 60 + 30, arriveEarlyMin: 40, afterMin: 30 } });
+  assert.equal(run('fixed-window', ctx(venue, { day: { resumed: true } })), 'ok', '12:00 改案、研討會 19:30 才散');
+  assert.equal(run('fixed-window', ctx({ ...venue, startMin: 19 * 60 + 40 }, { day: { resumed: true } })), 'never', '19:40 才到、已經散了');
+  assert.match(warnOf('fixed-window', ctx({ ...venue, startMin: 19 * 60 + 40 }, { day: { resumed: true } })), /19:30 就散了/);
+  assert.equal(run('fixed-window', ctx(venue)), 'never', '出門前排到 12:00 才到＝遲到，不排');
+  assert.equal(run('fixed-window', ctx(fw, { day: { resumed: true } })), 'never', '花火只釘開始，改案中途遲到還是錯過');
   assert.equal(run('window', ctx(stop('夜', { startMin: 23 * 60 + 30, dwellMin: 60 }))), 'never');
   assert.equal(run('window', ctx(stop('夜', { startMin: 22 * 60, dwellMin: 60 }))), 'ok');
+  // 固定時段的站對原時窗比、散場緩衝不算：留白扣掉後收工 22:30，演唱會 19:00–22:15 加緩衝到 22:45 照樣排得進（10-14 T23 審查：之前整天空的）
+  const slack = { window: { startMin: 540, endMin: 22 * 60 + 30 }, windowRaw: { startMin: 540, endMin: 1440 } };
+  const concert = stop('演唱會', { category: 'venue', walkFactor: 0, startMin: 18 * 60 + 20, dwellMin: 265, fixedWindow: { startMin: 19 * 60, endMin: 22 * 60 + 15, arriveEarlyMin: 40, afterMin: 30 } });
+  assert.equal(concert.endMin, 22 * 60 + 45);
+  assert.equal(run('window', ctx(concert, { day: slack })), 'ok', '散場 22:15 在原時窗 24:00 內');
+  assert.equal(run('window', ctx(stop('bar', { startMin: 22 * 60, dwellMin: 45 }), { day: slack })), 'never', '一般的站照扣過留白的收工比');
+  const lateShow = { ...concert, endMin: 24 * 60 + 20, fixedWindow: { ...concert.fixedWindow, endMin: 23 * 60 + 50 } };
+  assert.equal(run('window', ctx(lateShow, { day: slack })), 'ok', '散場 23:50 加緩衝到 00:20：緩衝是不排站的時間，不是人要待到的時刻');
+  assert.equal(run('window', ctx({ ...lateShow, endMin: 24 * 60 + 40, fixedWindow: { ...concert.fixedWindow, endMin: 24 * 60 + 10 } }, { day: slack })), 'never', '散場 00:10 超過原時窗');
+  assert.match(warnOf('window', ctx({ ...lateShow, endMin: 24 * 60 + 40, fixedWindow: { ...concert.fixedWindow, endMin: 24 * 60 + 10 } }, { day: slack })), /會到 24:10，超過今天收工時間 24:00/);
+  const fireworksLate = stop('晚花火', { category: 'event', walkFactor: 0, startMin: 22 * 60, dwellMin: 60, fixedWindow: { startMin: 22 * 60, arriveEarlyMin: 0 } });
+  assert.equal(run('window', ctx(fireworksLate, { day: slack })), 'ok', '只釘開始的固定時段也對原時窗比（22:00–23:00）');
   const eight = Array.from({ length: 8 }, (_, i) => stop(`s${i}`));
   assert.equal(run('max-stops', ctx(stop('第九站'), { sequence: eight })), 'never');
   assert.equal(run('max-stops', ctx(stop('第八站'), { sequence: eight.slice(0, 7) })), 'ok');
 });
 
-test('same-type-day：非主題日第三家古著 no、主題日 ok；咖啡廳同樣；early-day 下午第二個非恢復站 no', () => {
+test('same-type-day：非主題日第三家古著 no、主題日第三家與第四家都 ok（原話 #20 無上限）；咖啡廳同樣；early-day 下午第二個非恢復站 no', () => {
   const v = stop('me', { category: 'vintage', walkFactor: 0 });
   assert.equal(run('same-type-day', ctx(v, { acc: { 'dim-cat-count': { vintage: 3 } } })), 'no');
   assert.equal(run('same-type-day', ctx(v, { acc: { 'dim-cat-count': { vintage: 2 } } })), 'ok');
-  assert.equal(run('same-type-day', ctx(v, { acc: { 'dim-cat-count': { vintage: 3 } }, day: { themeCategory: 'vintage' } })), 'ok', '主題日放寬到 3 家（原話 #168 後改）');
+  assert.equal(run('same-type-day', ctx(v, { acc: { 'dim-cat-count': { vintage: 3 } }, day: { themeCategory: 'vintage' } })), 'ok', '主題日那一類無上限（原話 #20）');
+  assert.equal(run('same-type-day', ctx(v, { acc: { 'dim-cat-count': { vintage: 4 } }, day: { themeCategory: 'vintage' } })), 'ok', '主題日第四家也 ok：家數只由逛店連跑與一天站數管');
   const c = stop('Elbe', { category: 'cafe', cafeLike: true, recovery: true, walkFactor: 0 });
   assert.equal(run('same-type-day', ctx(c, { acc: { 'dim-cat-count': { cafe: 3 } } })), 'no');
   assert.match(warnOf('same-type-day', ctx(c, { acc: { 'dim-cat-count': { cafe: 3 } } })), /咖啡廳已經 2 家/);
@@ -165,13 +189,39 @@ test('filler-gap：填站自己還要等開門就 never（原話 #164「禁」�
   assert.match(warnOf('filler-gap', ctx({ ...base, waitMin: 10 })), /再等開門 10 分/);
 });
 
-test('walk-cost：每走一分鐘 0.25、不出警告；same-type-day 主題日那一類最多 3 家', () => {
+test('walk-cost：每走一分鐘 0.25、不出警告；same-type-day 主題日那一類無上限（原話 #20）、主題日的其他類仍 ≤2', () => {
   assert.equal(run('walk-cost', ctx(stop('A'), { leg: { walkMin: 10, rideMin: 0, climbMin: 0 } })), 2.5);
   assert.equal(run('walk-cost', ctx(stop('A'), { leg: { walkMin: 0, rideMin: 20, climbMin: 0 } })), 0);
   const r = evaluateStop(ctx(stop('A'), { leg: { walkMin: 10, rideMin: 0, climbMin: 0 } }), rules);
   assert.ok(r.penaltyMin >= 2.5 && !r.warnings.some((w) => w.ruleId === 'walk-cost'), '有罰分但不出黃字');
   const theme = { themeCategory: 'vintage' };
   assert.equal(run('same-type-day', ctx(stop('第三家', { category: 'vintage' }), { day: theme, acc: { 'dim-cat-count': { vintage: 3 } } })), 'ok');
-  assert.equal(run('same-type-day', ctx(stop('第四家', { category: 'vintage' }), { day: theme, acc: { 'dim-cat-count': { vintage: 4 } } })), 'no');
-  assert.match(warnOf('same-type-day', ctx(stop('第四家', { category: 'vintage' }), { day: theme, acc: { 'dim-cat-count': { vintage: 4 } } })), /主題日/);
+  assert.equal(run('same-type-day', ctx(stop('第四家', { category: 'vintage' }), { day: theme, acc: { 'dim-cat-count': { vintage: 4 } } })), 'ok', '第四家也 ok：家數只由逛店連跑 4 家／240 分與一天 8 站管');
+  assert.equal(run('same-type-day', ctx(stop('第八家', { category: 'vintage' }), { day: theme, acc: { 'dim-cat-count': { vintage: 8 } } })), 'ok');
+  const cafe3 = ctx(stop('第三家咖啡', { category: 'cafe' }), { day: theme, acc: { 'dim-cat-count': { cafe: 3 } } });
+  assert.equal(run('same-type-day', cafe3), 'no', '古著主題日的咖啡廳仍 ≤2');
+  assert.match(warnOf('same-type-day', cafe3), /咖啡廳已經 2 家，不是咖啡廳主題日不再排/);
+});
+
+test('shopping-day（原話 #36、#55；DESIGN §5.2 舊表 +80）：購物類排在非購物日罰 80；購物日 0；前一天下午（shoppingFromMin）之前 80、之後 0；有品項或他勾的待辦（errand）0；非購物類 0；warn 是人話', () => {
+  const drug = (over = {}) => stop('松本清', { category: 'drugstore', walkFactor: 0, dwellMin: 15, startMin: 12 * 60, ...over });
+  assert.equal(run('shopping-day', ctx(drug())), 80, 'day 沒有 shoppingDay 就是非購物日');
+  assert.equal(run('shopping-day', ctx(drug(), { day: { shoppingDay: false, shoppingFromMin: null } })), 80);
+  assert.equal(run('shopping-day', ctx(drug(), { day: { shoppingDay: true, shoppingFromMin: null } })), 0, '購物日整天');
+  assert.equal(run('shopping-day', ctx(drug({ startMin: 12 * 60 + 59 }), { day: { shoppingDay: true, shoppingFromMin: 13 * 60 } })), 80, '13:00 起才是購物時段，12:59 開始還是罰');
+  assert.equal(run('shopping-day', ctx(drug({ startMin: 13 * 60 }), { day: { shoppingDay: true, shoppingFromMin: 13 * 60 } })), 0);
+  for (const category of ['department', 'arcade', 'electronics', 'outlet']) assert.equal(run('shopping-day', ctx(stop('X', { category }))), 80, category);
+  const research = stop('藤崎 香氛區', { category: 'department' }); research.poi.item = 'DKNY香水';
+  assert.equal(run('shopping-day', ctx(research)), 0, '代購研究的站（有品項）＝順路購買，不罰（#29）');
+  assert.equal(run('shopping-day', ctx({ ...drug(), errand: true })), 0, '他勾的待辦站（errand）＝順路購買，不罰');
+  for (const category of ['vintage', 'record', 'store', 'bookstore', 'gift', 'market', 'cafe', 'food', 'shrine']) assert.equal(run('shopping-day', ctx(stop('Y', { category }))), 0, `${category} 不是購物類`);
+  assert.equal(rules.byId.get('shopping-day').params.penaltyMin, 80, 'rules.json 的數字');
+  assert.equal(rules.byId.get('shopping-day').scope, 'stop');
+  assert.equal(warnOf('shopping-day', ctx(drug())), '松本清 是購物類的店，今天不是購物日');
+  assert.equal(warnOf('shopping-day', ctx(drug(), { day: { shoppingDay: true, shoppingFromMin: 13 * 60 } })), '松本清 是購物類的店，今天 13:00 起才是購物時段');
+  // 走整個 evaluateStop：罰分進 breakdown、警告帶 poiId；購物日不出任何 shopping-day 警告
+  const r = evaluateStop(ctx(drug()), rules);
+  assert.ok(r.breakdown.some((b) => b.ruleId === 'shopping-day' && b.minutes === 80));
+  assert.ok(r.warnings.some((w) => w.ruleId === 'shopping-day' && w.code === 'soft' && w.poiId === '松本清'));
+  assert.ok(!evaluateStop(ctx(drug(), { day: { shoppingDay: true, shoppingFromMin: null } }), rules).warnings.some((w) => w.ruleId === 'shopping-day'));
 });

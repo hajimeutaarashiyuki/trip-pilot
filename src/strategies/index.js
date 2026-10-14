@@ -43,15 +43,22 @@ export function replanDay(input) {
   }
   const seen = new Set();
   const unique = proposals.filter((p) => {
-    if (sameAsRemaining(p.plan.sequence, remaining)) return false;
+    if (sameAsRemaining(p.plan.sequence, remaining, input.nowMin)) return false;
     const key = p.plan.sequence.map((x) => x.poi.id).join('>'); if (seen.has(key)) return false; seen.add(key); return true;
   });
   unique.sort((a, b) => b.plan.score - a.plan.score);
   return { proposals: unique.slice(0, top), all: proposals };
 }
 
-/** 這案跟目前剩下的排程一模一樣：逐站 poiId 與開始時刻都相同（remaining 沒帶 startMin 就不算一樣，寧可多出一案）。 */
-function sameAsRemaining(sequence, remaining) {
+/**
+ * 這案跟目前剩下的排程一模一樣：逐站 poiId 與開始時刻都相同（remaining 沒帶 startMin 就不算一樣，寧可多出一案）。
+ * 已經開始了的站（remaining 的 startMin 不晚於現在：研討會中途按改案，會場還在 remaining 裡）只比 poiId——它在改案裡的開始時刻只會是「現在」，不算改了（10-14 T23 審查）。
+ */
+function sameAsRemaining(sequence, remaining, nowMin = null) {
   if (sequence.length !== remaining.length) return false;
-  return sequence.every((s, i) => s.poi.id === remaining[i].poi.id && remaining[i].startMin != null && s.startMin === remaining[i].startMin);
+  return sequence.every((s, i) => {
+    const r = remaining[i];
+    if (s.poi.id !== r.poi.id || r.startMin == null) return false;
+    return s.startMin === r.startMin || (nowMin != null && r.startMin <= nowMin);
+  });
 }

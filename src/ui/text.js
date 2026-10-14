@@ -16,6 +16,7 @@ export const TEXT = {
   walkTo: (min) => `走 ${min} 分`,
   rideTo: (walk, ride) => `車 ${ride} 分、走 ${walk} 分`,
   closesAt: (hm) => `${hm} 關`,
+  endsAt: (hm) => `${hm} 散場`,
   dropped: '今天排不進',
   swap: '換一家',
   remove: '不去了',
@@ -50,6 +51,7 @@ export const TEXT = {
   firstLeg: (time, t) => `${time} 出門，${t}`,
   hardLimit: (name, hm) => `${name} ${hm} 關門，這樣走會趕不上`,
   hardLimitDark: (name, hm) => `${name} ${hm} 天黑，這樣走會趕不上`,
+  hardLimitEnds: (name, hm) => `${name} ${hm} 就散了，這樣走會趕不上`,
   proposals: '接下來可以這樣走',
   takeThis: '照這個走',
   keepGoing: '照原本的走',
@@ -112,7 +114,7 @@ export const TEXT = {
 export const CATEGORY = {
   shrine: '神社', temple: '寺院', mausoleum: '靈廟', museum: '博物館', garden: '庭園', arcade: '商店街', market: '市場', event: '活動', experience: '體驗', daytrip: '一日遊',
   vintage: '古著店', record: '唱片行', store: '店', bookstore: '書店', drugstore: '藥妝', gift: '伴手禮', department: '百貨', electronics: '電器', outlet: 'Outlet', street: '街區',
-  food: '吃的', cafe: '咖啡廳', bar: '酒吧', brewery: '酒藏', onsen: '溫泉', cruise: '遊覽船', logistics: '交通', other: '其他',
+  food: '吃的', cafe: '咖啡廳', bar: '酒吧', brewery: '酒藏', onsen: '溫泉', cruise: '遊覽船', logistics: '交通', venue: '會場', other: '其他',
 };
 
 export const PRIORITY = { must: '必去', want: '想去', maybe: '可去' };

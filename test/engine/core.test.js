@@ -24,6 +24,18 @@ test('placeStop：開門前到就等到開門；固定時段提前到位', () =>
   assert.equal(f.startMin, 19 * 60);
 });
 
+test('placeStop：固定時段有 endMin 就結束在 endMin＋afterMin、不看停留（研討會前 40 後 30 掛在窗上，DESIGN §11.1 Q7）；afterMin 缺當 0；沒有 endMin 的照 startMin＋停留（10-14 T23）', () => {
+  const venue = poi('會場', { category: 'venue', walkFactor: 0, hours: { fri: [['09:30', '19:30']] } });
+  const s = placeStop({ prevEndMin: 8 * 60 + 20, leg: { walkMin: 5, rideMin: 15 }, poi: venue, dwellMin: 60, date: '2026-08-14', fixedWindow: { startMin: 9 * 60 + 30, endMin: 19 * 60 + 30, arriveEarlyMin: 40, afterMin: 30 }, dayStartMin: 8 * 60 + 20, first: true });
+  assert.deepEqual(s, { arriveMin: 8 * 60 + 50, startMin: 8 * 60 + 50, waitMin: 0, endMin: 20 * 60 }, '08:20 出門、車 20 分 08:40 到，卡位時刻 08:50 → 第一站改成晚點出門；結束 19:30＋30＝20:00，停留 60 不算');
+  const noAfter = placeStop({ prevEndMin: 8 * 60, leg: { walkMin: 10 }, poi: venue, dwellMin: 60, date: '2026-08-14', fixedWindow: { startMin: 9 * 60 + 30, endMin: 19 * 60 + 30, arriveEarlyMin: 40 } });
+  assert.equal(noAfter.endMin, 19 * 60 + 30, 'afterMin 缺當 0（預設 30 由 trip.js fixedWindowOf 補，placeStop 不補）');
+  const onlyStart = placeStop({ prevEndMin: 18 * 60, leg: { walkMin: 10 }, poi: poi('花火'), dwellMin: 20, date: '2026-08-13', fixedWindow: { startMin: 19 * 60 + 30, arriveEarlyMin: 30 } });
+  assert.deepEqual([onlyStart.startMin, onlyStart.endMin], [19 * 60, 19 * 60 + 20], '只釘開始的（花火）照停留算');
+  const late = placeStop({ prevEndMin: 9 * 60 + 30, leg: { walkMin: 10 }, poi: venue, dwellMin: 60, date: '2026-08-14', fixedWindow: { startMin: 9 * 60 + 30, endMin: 19 * 60 + 30, arriveEarlyMin: 40, afterMin: 30 } });
+  assert.deepEqual([late.startMin, late.endMin], [9 * 60 + 40, 20 * 60], '遲到了也照散場時刻結束（到得太晚由 fixed-window 規則判 never）');
+});
+
 test('守營業時間、主行程必排、指定站一定在、沒開的進 dropped 帶理由', () => {
   const cands = [
     { poi: poi('神社', { hours: { thu: [['09:00', '16:00']] } }), priority: 'want', isAnchor: true },
@@ -137,4 +149,22 @@ test('落選理由：在某條分支排進去過的站是分數取捨，不拿�
   assert.equal(r.sequence.length, 2);
   assert.equal(r.dropped.length, 1);
   assert.equal(r.dropped[0].reason, '今天勾了 3 站、上限 2，它排在後面');   // 排進去過＝取捨；勾的比名額多就寫名額那句（10-12 對抗審查）
+});
+
+test('落選理由：主題日那一類沒有家數上限，第 5 家被逛店連跑的罰分擋下時寫連跑那句，不寫泛泛的分數取捨（10-14 T25 審查）', () => {
+  // 古著主題日、5 家古著、中間沒吃的：排 4 家剛好 4 家／240 分不罰；第 5 家 shop-run 罰 60＋超過 240 分的 60，比 want 的 90 還多，排進去反而低
+  const cands = ['V1', 'V2', 'V3', 'V4', 'V5'].map((id) => ({ poi: poi(id, { category: 'vintage', walkFactor: 0 }), priority: 'want' }));
+  const r = planDay({ candidates: cands, day: day({ themeCategory: 'vintage' }), home, legFn: flatLeg, rules, settings, country, kb });
+  assert.equal(r.sequence.length, 4);
+  assert.equal(r.dropped.length, 1);
+  assert.equal(r.dropped[0].reason, '主題日不設家數上限，但今天已經連著逛了 4 家店、240 分，中間沒吃點東西或坐一下，它排在後面');
+  // 非主題日的書店（不在同類上限那三類、但算逛店連跑）第 5 家同一句、沒有主題日那個前綴
+  const books = ['B1', 'B2', 'B3', 'B4', 'B5'].map((id) => ({ poi: poi(id, { category: 'bookstore', walkFactor: 0 }), priority: 'want' }));
+  const rb = planDay({ candidates: books, day: day(), home, legFn: flatLeg, rules, settings, country, kb });
+  assert.equal(rb.sequence.length, 4);
+  assert.equal(rb.dropped[0].reason, '今天已經連著逛了 4 家店、240 分，中間沒吃點東西或坐一下，它排在後面');
+  // 中間有吃的（恢復 ≥10 分重置連跑）：5 家都排得進，沒有落選
+  const withLunch = [...cands, { poi: poi('午餐', { category: 'food', walkFactor: 0, recovery: true }), priority: 'must' }];
+  const rl = planDay({ candidates: withLunch, day: day({ themeCategory: 'vintage' }), home, legFn: flatLeg, rules, settings, country, kb });
+  assert.deepEqual(rl.dropped, []);
 });

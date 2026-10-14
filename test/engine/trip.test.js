@@ -1,11 +1,11 @@
 // 整趟：兩天的旅程，每天各自排；晚出門日從第 3 天起；主題日的前一天主題傳下去；早起日前一晚夜間站取消。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planTrip, dayWindow, airportTransitMin } from '../../src/engine/trip.js';
+import { planTrip, dayWindow, airportTransitMin, shoppingDaysOf, themeCategoryOf, fixedWindowOf, fixedSpanMin } from '../../src/engine/trip.js';
 import { loadRules } from '../../src/rules/index.js';
 import { BUILTIN } from '../../src/rules/builtin.js';
 import rulesJson from '../../src/rules.json' with { type: 'json' };
-import { POIS, HOME, KB, COUNTRY, legFn } from '../sendai/fixture.js';
+import { POIS, HOME, KB, COUNTRY, legFn, demoTrip, DAY_0813, DAY_0817 } from '../sendai/fixture.js';
 
 const rules = loadRules(BUILTIN, rulesJson.rules);
 const settings = rulesJson.settings;
@@ -85,6 +85,88 @@ test('planTrip：留白扣在時窗尾端——day.window 收工 22:30、windowR
   assert.ok(c.plan.sequence.some((s) => s.poi.id === half.id && s.endMin === 23 * 60), '留白 0 的那天 21:30–23:00 排得進');
 });
 
+// 固定時段日（研討會；DESIGN §11.1 Q7、08-19 計畫 1 夾具、10-14 T23）：會場是帶固定時段的站，fixed 日跟 normal 走同一條時窗邏輯
+const FRI_VENUE = { fri: [['09:30', '19:30']] };   // 2026-08-14 是週五
+const venue = mk('會場', { category: 'venue', walkFactor: 0, hours: FRI_VENUE, dwellMin: 60 });
+const nightBar = mk('賓', { category: 'bar', walkFactor: 0, recovery: true, hours: { fri: [['13:00', '24:00']] }, dwellMin: 90 });
+const fixedTrip = (dayOver = {}, picks = null) => planTrip({
+  trip: { id: 't', party: 1, homeBases: [{ poi: nightHome }], days: [
+    { date: '2026-08-12', type: 'normal', picks: [] }, { date: '2026-08-13', type: 'normal', picks: [] },
+    { date: '2026-08-14', type: 'fixed', earlyDay: true, departHM: '08:20', anchor: { poiId: venue.id }, picks: picks ?? [{ poiId: venue.id, priority: 'must', fixedWindow: { startMin: 9 * 60 + 30, endMin: 19 * 60 + 30 } }, { poiId: nightBar.id, priority: 'want', dwellMin: 90 }], ...dayOver },
+  ] },
+  pois: { [venue.id]: venue, [nightBar.id]: nightBar }, rules, settings, country: NIGHT_COUNTRY, kb: NIGHT_KB, legFn: flatLeg,
+});
+
+test('planTrip：固定時段日——fixedWindow 補預設（前 40 後 30）、會場 08:50–20:00 一站、營業時間不擋、停留＝釘住的整段、太晚出門不罰、散場後的 bar 算夜間站與晚餐、被蓋住的午餐不警告', () => {
+  const r = fixedTrip();
+  const d = r.days[2];
+  assert.equal(d.day.type, 'fixed');
+  assert.deepEqual(d.day.window, { startMin: 8 * 60 + 20, endMin: 22 * 60 + 30 }, '早起日手標 08:20 出門（原話 #17）；留白照扣');
+  const shown = d.plan.sequence.map((s) => `${s.poi.id} ${s.startMin}–${s.endMin}`).join('→');
+  const v = d.plan.sequence.find((s) => s.poi.id === venue.id);
+  assert.ok(v, `會場要排進去：${shown}；落選 ${JSON.stringify(d.plan.dropped.map((x) => x.reason))}`);
+  assert.deepEqual(v.fixedWindow, { startMin: 570, endMin: 1170, arriveEarlyMin: 40, afterMin: 30 }, '旅程檔只寫起訖：arriveEarlyMin 補 settings.fixedBeforeMin 40、afterMin 補 fixedAfterMin 30');
+  assert.deepEqual([v.startMin, v.endMin, v.waitMin, v.dwellMin], [8 * 60 + 50, 20 * 60, 0, 670], '08:50 到場卡位、19:30 散場再留 30 到 20:00；沒寫停留就是釘住的整段 670');
+  const b = d.plan.sequence.find((s) => s.poi.id === nightBar.id);
+  assert.ok(b && b.startMin === 20 * 60 + 5 && b.endMin === 21 * 60 + 35, `賓 接在會場後面 20:05–21:35：${shown}`);
+  const of = (ruleId) => d.plan.warnings.filter((w) => w.ruleId === ruleId).map((w) => w.msg);
+  assert.deepEqual(of('hours'), [], '會場 09:30 才開、08:50 卡位：固定時段的站不看營業時間');
+  assert.deepEqual(of('late-departure'), [], '固定時段的站當第一站不算太晚出門');
+  assert.deepEqual(of('wait-at-door'), [], '第一站對齊卡位時刻＝晚點出門，不是空等');
+  assert.deepEqual(of('night-slot'), [], 'fixed 日的夜間站：賓 20:05 起算有');
+  assert.deepEqual(of('meal-slots'), [], '午餐整段在會場裡（大會供餐）、晚餐由賓 20:05–20:30 的重疊算有');
+  assert.ok(d.plan.complete);
+  assert.deepEqual(r.warnings, []);
+  // 晚上沒排 bar：fixed 日照罰夜間站（原話 #18「每晚都要安排」是通則，不是只有 normal 日）；晚宴在研討會裡（會場到 20:00 才出來，過了晚餐段中點），晚餐不算缺
+  const alone = fixedTrip({}, [{ poiId: venue.id, priority: 'must', fixedWindow: { startMin: 570, endMin: 1170 } }]).days[2];
+  assert.deepEqual(alone.plan.warnings.filter((w) => w.ruleId === 'night-slot').map((w) => w.msg), ['今晚沒排夜間站']);
+  assert.deepEqual(alone.plan.warnings.filter((w) => w.ruleId === 'meal-slots'), [], '只勾會場：午餐、晚餐都在會場裡（10-14 T23 審查後；之前「整段蓋住」會警告沒排晚餐）');
+  // 晚場固定時段（演唱會 19:00–22:15、散場緩衝到 22:45）：對原時窗 24:00 比、留白扣掉的 22:30 不擋它；它本身跨進夜間時窗，不再要 bar（10-14 T23 審查：之前 never、整天空的）
+  const concert = fixedTrip({ earlyDay: false, departHM: undefined }, [{ poiId: venue.id, priority: 'must', fixedWindow: { startMin: 19 * 60, endMin: 22 * 60 + 15 } }]).days[2];
+  const c = concert.plan.sequence.find((s) => s.poi.id === venue.id);
+  assert.ok(c && c.startMin === 18 * 60 + 20 && c.endMin === 22 * 60 + 45, `演唱會 18:20–22:45 要排進去：${concert.plan.sequence.map((s) => `${s.poi.id} ${s.startMin}–${s.endMin}`).join('→')}；落選 ${JSON.stringify(concert.plan.dropped.map((x) => x.reason))}`);
+  assert.equal(concert.day.window.endMin, 22 * 60 + 30, '留白照扣，只是固定時段的站不對它比');
+  assert.deepEqual(concert.plan.warnings.filter((w) => w.ruleId === 'window' || w.ruleId === 'night-slot' || w.ruleId === 'anchor'), []);
+  // fixed 日卻沒有一站帶固定時段：整趟警告 fixed-day-no-window，會場照營業時間排
+  const noWindow = fixedTrip({}, [{ poiId: venue.id, priority: 'must' }, { poiId: nightBar.id, priority: 'want', dwellMin: 90 }]);
+  assert.deepEqual(noWindow.warnings.map((w) => [w.code, w.date]), [['fixed-day-no-window', '2026-08-14']]);
+  assert.match(noWindow.warnings[0].msg, /沒有一站帶固定時段/);
+  assert.ok(noWindow.days[2].plan.sequence.some((s) => s.poi.id === venue.id && s.fixedWindow === null));
+  // 第 3 天、沒標早起日：fixed 日時窗照 normal 的 09:00、不套 11:00 晚出門；09:00 出門到不了 08:50 的卡位時刻 → 會場排不進、理由寫幾點前到（自動標早起日是待做）
+  const plain = fixedTrip({ earlyDay: false, departHM: undefined }).days[2];
+  assert.equal(plain.day.window.startMin, 540, 'fixed 日不套晚出門');
+  assert.ok(!plain.plan.sequence.some((s) => s.poi.id === venue.id));
+  assert.match(plain.plan.dropped.find((x) => x.poi.id === venue.id)?.reason ?? '', /要在 08:50 前到/);
+});
+
+test('fixedWindowOf／fixedSpanMin：只釘開始的（花火）補 arriveEarlyMin、不補 afterMin，寫了的照用；有起訖的補 afterMin；壞輸入當沒有固定時段、記整趟警告 fixed-window-bad（總則 0）；planTrip 照排不出 NaN', () => {
+  assert.deepEqual(fixedWindowOf({ startMin: 1140, arriveEarlyMin: 30 }, settings), { startMin: 1140, arriveEarlyMin: 30 }, '海の盆那種：寫了 30 就是 30，沒有 endMin 不補 afterMin');
+  assert.deepEqual(fixedWindowOf({ startMin: 1140 }, settings), { startMin: 1140, arriveEarlyMin: 40 }, 'arriveEarlyMin 缺補 fixedBeforeMin');
+  assert.deepEqual(fixedWindowOf({ startMin: 570, endMin: 1170 }, settings), { startMin: 570, endMin: 1170, arriveEarlyMin: 40, afterMin: 30 });
+  assert.deepEqual(fixedWindowOf({ startMin: 570, endMin: 1170, arriveEarlyMin: 0, afterMin: 0 }, settings), { startMin: 570, endMin: 1170, arriveEarlyMin: 0, afterMin: 0 }, '明寫 0 就是 0，不是缺值');
+  assert.deepEqual(fixedWindowOf({ startMin: 570, endMin: 1170 }, { fixedBeforeMin: 10, fixedAfterMin: 5 }), { startMin: 570, endMin: 1170, arriveEarlyMin: 10, afterMin: 5 }, '預設讀 settings');
+  assert.equal(fixedWindowOf(null, settings), null);
+  assert.equal(fixedWindowOf(undefined, settings), null);
+  assert.equal(fixedSpanMin({ startMin: 570, endMin: 1170, arriveEarlyMin: 40, afterMin: 30 }), 670);
+  assert.equal(fixedSpanMin({ startMin: 1140, arriveEarlyMin: 30 }), undefined, '只釘開始的停留照 picks 或知識庫');
+  assert.equal(fixedSpanMin(null), undefined);
+  const warnings = [];
+  assert.equal(fixedWindowOf({ startMin: '09:30' }, settings, warnings, '2026-08-14', venue), null);
+  assert.equal(fixedWindowOf({ startMin: 570, endMin: 500 }, settings, warnings, '2026-08-14', venue), null, '結束比開始早');
+  assert.equal(fixedWindowOf({ startMin: 570, endMin: 1170, arriveEarlyMin: -30 }, settings, warnings, '2026-08-14', venue), null, '提前量負數：卡位時刻會跑到開始之後（10-14 T23 審查）');
+  assert.equal(fixedWindowOf({ startMin: 570, endMin: 1170, afterMin: -100 }, settings, warnings, '2026-08-14', venue), null, '散場緩衝負數：結束會早於散場');
+  assert.equal(fixedWindowOf({ startMin: 1140, arriveEarlyMin: '30' }, settings, warnings, '2026-08-14', venue), null, '提前量不是數字');
+  assert.deepEqual(warnings.map((w) => [w.code, w.date, w.poiId]), Array(5).fill(['fixed-window-bad', '2026-08-14', venue.id]));
+  assert.match(warnings[2].msg, /提前量或散場緩衝不是 0 以上的分鐘數/);
+  assert.match(warnings[0].msg, /^2026-08-14 的 會場 的固定時段看不懂/);
+  assert.doesNotThrow(() => fixedWindowOf({ startMin: 'x' }), '不給 warnings 也不丟錯');
+  // planTrip：fixedWindow 寫壞 → 整趟警告、那站當普通站照營業時間排（09:30 開門 → 晚點出門 09:30 起、待 60）
+  const r = fixedTrip({}, [{ poiId: venue.id, priority: 'must', fixedWindow: { startMin: '09:30' } }]);
+  assert.deepEqual(r.warnings.map((w) => w.code), ['fixed-window-bad', 'fixed-day-no-window'], '固定時段被拿掉後這個 fixed 日就沒有一站帶固定時段，再記一條 fixed-day-no-window（10-14 T23 審查後）');
+  const v = r.days[2].plan.sequence.find((s) => s.poi.id === venue.id);
+  assert.ok(v && v.fixedWindow === null && v.startMin === 9 * 60 + 30 && v.endMin === 10 * 60 + 30 && Number.isFinite(v.arriveMin), JSON.stringify(v && { startMin: v.startMin, endMin: v.endMin, fixedWindow: v.fixedWindow }));
+});
+
 test('planTrip：抵達日很晚落地、時窗太短：留白不扣、day.openSlotSkipped、整趟警告 open-slot-skipped 帶日期', () => {
   const shop = mk('街區');
   const r = planTrip({ trip: { id: 't', party: 1, homeBases: [{ poi: nightHome }], days: [{ date: '2026-08-13', type: 'arrival', arriveMin: 22 * 60, picks: [{ poiId: shop.id, priority: 'want' }] }] }, pois: { [shop.id]: shop }, rules, settings, country: NIGHT_COUNTRY, kb: NIGHT_KB, legFn: flatLeg });
@@ -137,4 +219,120 @@ test('planTrip：一日遊那天 day.dayTrip 帶給規則（步行預算 ×0.7�
   assert.equal(r.days[1].day.dayTrip, true);
   assert.equal(r.days[2].day.dayTrip, false);
   assert.equal(r.days[2].day.dayTripNext, true);
+});
+
+test('shoppingDaysOf（原話 #36；DESIGN §1.5）：完整天 ≤2 只有離境日、3 加前一天從 shoppingAfternoonHM 起、≥4 含離境日的最後兩天；trip.shoppingDays 覆寫；沒 departure 日拿最後一天', () => {
+  const mk = (types) => ({ days: types.map((type, i) => ({ date: `2026-08-${String(12 + i).padStart(2, '0')}`, type })) });
+  const of = (trip, s = settings) => Object.fromEntries([...shoppingDaysOf(trip, s)].map(([date, v]) => [date, v.fromMin]));
+  assert.deepEqual(of(mk(['arrival', 'departure'])), { '2026-08-13': null }, '0 完整天：只有離境日');
+  assert.deepEqual(of(mk(['arrival', 'normal', 'departure'])), { '2026-08-14': null }, '1 完整天');
+  assert.deepEqual(of(mk(['arrival', 'normal', 'normal', 'departure'])), { '2026-08-15': null }, '2 完整天');
+  assert.deepEqual(of(mk(['arrival', 'normal', 'normal', 'normal', 'departure'])), { '2026-08-15': 13 * 60, '2026-08-16': null }, '3 完整天：離境日＋前一天 13:00 起');
+  assert.deepEqual(of(mk(['arrival', 'normal', 'normal', 'normal', 'departure']), { ...settings, shoppingAfternoonHM: '14:30' }), { '2026-08-15': 14 * 60 + 30, '2026-08-16': null }, 'settings.shoppingAfternoonHM');
+  assert.deepEqual(of(mk(['arrival', 'normal', 'normal', 'normal', 'normal', 'departure'])), { '2026-08-16': null, '2026-08-17': null }, '4 完整天：最後兩天整天');
+  assert.deepEqual(of(mk(['arrival', 'normal', 'normal', 'normal', 'normal', 'normal', 'departure'])), { '2026-08-17': null, '2026-08-18': null }, '5 完整天（仙台七天）：8/17 全天＋8/18');
+  assert.deepEqual(of({ ...mk(['arrival', 'normal', 'normal', 'normal', 'normal', 'normal', 'departure']), shoppingDays: ['2026-08-14', { date: '2026-08-16', fromHM: '15:00' }] }), { '2026-08-14': null, '2026-08-16': 15 * 60 }, 'trip.shoppingDays 覆寫：字串整天、物件帶 fromHM');
+  assert.deepEqual(of({ ...mk(['normal', 'normal']), shoppingDays: [] }), {}, '空陣列＝這趟沒有購物日');
+  assert.deepEqual(of(mk(['normal', 'normal'])), { '2026-08-13': null }, '沒 departure 日：最後一天當離境日');
+  assert.deepEqual(of(mk(['normal', 'normal', 'normal', 'normal', 'normal'])), { '2026-08-15': null, '2026-08-16': null }, '沒 departure 日、5 完整天');
+  assert.deepEqual(of(mk(['normal'])), { '2026-08-12': null }, '一天的旅程：那天就是購物日');
+  assert.deepEqual(of({ days: [] }), {});
+  assert.deepEqual(of({}), {});
+});
+
+test('planTrip：day 上下文帶 shoppingDay／shoppingFromMin；picks[].errand 進 stop；購物類勾在非購物日罰 80 並出警告，待辦站（errand）與購物日不罰', () => {
+  const drug = pois[POIS['松本清'].id];
+  const shrine = POIS['大崎八幡宮'].id;
+  // 三個完整天、沒離境日 → 8/15 整天購物日、8/14 從 13:00 起（shoppingDaysOf）
+  const trip = {
+    id: 't', party: 1, homeBases: [{ poi: HOME }],
+    days: [
+      { date: '2026-08-13', type: 'normal', picks: [{ poiId: shrine, priority: 'must' }, { poiId: drug.id, priority: 'must' }] },
+      { date: '2026-08-14', type: 'normal', picks: [{ poiId: shrine, priority: 'must' }, { poiId: drug.id, priority: 'must', errand: true }] },
+      { date: '2026-08-15', type: 'normal', picks: [{ poiId: shrine, priority: 'must' }, { poiId: drug.id, priority: 'must' }] },
+    ],
+  };
+  const r = planTrip({ trip, pois, rules, settings, country: COUNTRY, kb: KB, legFn, options: { explain: true } });
+  const [d1, d2, d3] = r.days;
+  assert.deepEqual([d1.day.shoppingDay, d1.day.shoppingFromMin], [false, null]);
+  assert.deepEqual([d2.day.shoppingDay, d2.day.shoppingFromMin], [true, 13 * 60]);
+  assert.deepEqual([d3.day.shoppingDay, d3.day.shoppingFromMin], [true, null]);
+  const warned = (d) => d.plan.warnings.filter((w) => w.ruleId === 'shopping-day' && w.poiId === drug.id);
+  const placed = (d) => d.plan.sequence.find((s) => s.poi.id === drug.id);
+  assert.ok(placed(d1), 'must 的站還是排進去');
+  assert.equal(warned(d1).length, 1, `非購物日勾藥妝要有一條警告：${d1.plan.warnings.map((w) => w.msg).join('；')}`);
+  assert.equal(warned(d1)[0].msg, '松本清 是購物類的店，今天不是購物日');
+  assert.equal(placed(d2).errand, true, 'picks[].errand 進 stop');
+  assert.deepEqual(warned(d2), [], '待辦站（errand）＝順路購買，不罰');
+  assert.ok(d1.plan.sequence.every((s) => s.errand === false), '沒勾 errand 的 stop 是 false，不是 undefined');
+  assert.deepEqual(warned(d3), [], '購物日不罰');
+  // 罰分落在那一站的拆解上：非購物日 80、待辦站與購物日沒有這一項（三天的時窗不同，整天罰分不能直接比）
+  const shopItem = (d) => d.plan.breakdown.stops.find((s) => s.poiId === drug.id).items.find((i) => i.ruleId === 'shopping-day');
+  assert.equal(shopItem(d1)?.minutes, 80);
+  assert.equal(shopItem(d2), undefined);
+  assert.equal(shopItem(d3), undefined);
+});
+
+test('shoppingDaysOf 壞輸入不丟錯（總則 0；跟 pick-unknown 同一種處理）：fromHM 不是 HH:MM 當整天購物日並記警告；settings.shoppingAfternoonHM 壞了也是；trip.shoppingDays 不是陣列記警告、照天數推；planTrip 整趟照排', () => {
+  const mk = (types) => ({ days: types.map((type, i) => ({ date: `2026-08-${String(12 + i).padStart(2, '0')}`, type })) });
+  const seven = mk(['arrival', 'normal', 'normal', 'normal', 'normal', 'normal', 'departure']);
+  const list = (m) => [...m].map(([date, v]) => [date, v.fromMin]);
+  let warnings = [];
+  assert.deepEqual(list(shoppingDaysOf({ ...seven, shoppingDays: [{ date: '2026-08-14', fromHM: '13' }, '2026-08-16'] }, settings, warnings)), [['2026-08-14', null], ['2026-08-16', null]], 'fromHM 壞了：那天當整天購物日，別天不受影響');
+  assert.deepEqual(warnings, [{ code: 'shopping-from-bad', date: '2026-08-14', msg: '2026-08-14 的購物時段起點「13」看不懂（要寫成 HH:MM），那天當整天購物日' }]);
+  warnings = [];
+  assert.deepEqual(list(shoppingDaysOf(mk(['arrival', 'normal', 'normal', 'normal', 'departure']), { ...settings, shoppingAfternoonHM: '1300' }, warnings)), [['2026-08-16', null], ['2026-08-15', null]], '設定壞了：三天旅程的前一天整天');
+  assert.deepEqual(warnings.map((w) => [w.code, w.date]), [['shopping-from-bad', '2026-08-15']]);
+  assert.ok(warnings[0].msg.includes('「1300」'), warnings[0].msg);
+  warnings = [];
+  assert.deepEqual([...shoppingDaysOf({ ...seven, shoppingDays: '2026-08-14' }, settings, warnings).keys()].sort(), ['2026-08-17', '2026-08-18'], '不是陣列：不靜默吃掉，照天數推');
+  assert.deepEqual(warnings.map((w) => w.code), ['shopping-days-bad']);
+  warnings = [];
+  assert.deepEqual(list(shoppingDaysOf({ ...seven, shoppingDays: [{ fromHM: '13:00' }, '2026-08-15'] }, settings, warnings)), [['2026-08-15', null]], '沒日期的那筆跳過、記警告');
+  assert.deepEqual(warnings.map((w) => w.code), ['shopping-days-bad']);
+  assert.doesNotThrow(() => shoppingDaysOf({ ...seven, shoppingDays: [{ date: '2026-08-14', fromHM: '13' }] }), '不給 warnings 也不丟錯');
+  assert.deepEqual(list(shoppingDaysOf({ ...seven, shoppingDays: null }, settings, warnings = [])), [['2026-08-18', null], ['2026-08-17', null]], 'null＝缺：照天數推、不警告');
+  assert.deepEqual(warnings, []);
+  // planTrip：整趟照排、警告進整趟 warnings（跟 pick-unknown 同一個陣列），那天當整天購物日所以藥妝不罰
+  const trip = { id: 't', party: 1, homeBases: [{ poi: HOME }], shoppingDays: [{ date: '2026-08-13', fromHM: '13' }], days: [{ date: '2026-08-13', type: 'normal', picks: [{ poiId: POIS['松本清'].id, priority: 'must' }] }] };
+  const r = planTrip({ trip, pois, rules, settings, country: COUNTRY, kb: KB, legFn });
+  assert.equal(r.days.length, 1);
+  assert.deepEqual([r.days[0].day.shoppingDay, r.days[0].day.shoppingFromMin], [true, null]);
+  assert.deepEqual(r.warnings.filter((w) => w.code === 'shopping-from-bad').map((w) => w.date), ['2026-08-13']);
+  assert.ok(!r.days[0].plan.warnings.some((w) => w.ruleId === 'shopping-day'), '當整天購物日，藥妝不罰');
+});
+
+test('示範夾具 DAY_0813／DAY_0817 手填的 shoppingDay／shoppingFromMin 要跟 planTrip 對 demoTrip() 推出來的一致（夾具與 App 的示範旅程不能分岔；10-14 審查後補）', () => {
+  const r = planTrip({ trip: demoTrip(), pois, rules, settings, country: COUNTRY, kb: KB, legFn });
+  const byDate = Object.fromEntries(r.days.map((d) => [d.date, [d.day.shoppingDay, d.day.shoppingFromMin]]));
+  assert.deepEqual(byDate[DAY_0813.date], [DAY_0813.shoppingDay, DAY_0813.shoppingFromMin], '8/13');
+  assert.deepEqual(byDate[DAY_0817.date], [DAY_0817.shoppingDay, DAY_0817.shoppingFromMin], '8/17');
+  assert.deepEqual(byDate, { '2026-08-13': [false, null], '2026-08-17': [true, null] }, '兩個完整天、沒離境日 → 最後一天 8/17 整天購物日');
+  assert.deepEqual(r.warnings, [], '示範旅程不該有整趟警告');
+});
+
+test('themeCategoryOf／planTrip：主題日的店型要對得上知識庫的店型——店型鍵照用；需求單上的中文（古著、唱片行、咖啡廳）照店型對照表翻；翻不出來記整趟警告 theme-unknown、那天當普通日排（10-14 T25 審查）', () => {
+  assert.equal(themeCategoryOf({ date: '2026-08-17', anchor: { theme: 'vintage' } }), 'vintage');
+  assert.equal(themeCategoryOf({ date: '2026-08-17', anchor: { theme: '古著' } }), 'vintage');
+  assert.equal(themeCategoryOf({ date: '2026-08-17', anchor: { theme: '唱片行' } }), 'record');
+  assert.equal(themeCategoryOf({ date: '2026-08-17', anchor: { theme: '咖啡廳' } }), 'cafe');
+  assert.equal(themeCategoryOf({ date: '2026-08-17', anchor: { poiId: 'x' } }), null, '單站型主行程沒有主題');
+  assert.equal(themeCategoryOf({ date: '2026-08-17' }), null);
+  const warnings = [];
+  assert.equal(themeCategoryOf({ date: '2026-08-17', anchor: { theme: '鄉間探索' } }, warnings), null);
+  assert.deepEqual(warnings, [{ code: 'theme-unknown', date: '2026-08-17', msg: '2026-08-17 的主題「鄉間探索」看不出是哪一類店（寫古著、唱片行、咖啡廳這種類別），那天當普通日排' }]);
+  assert.doesNotThrow(() => themeCategoryOf({ date: '2026-08-17', anchor: { theme: '鄉間探索' } }), '不給 warnings 也不丟錯');
+  // planTrip：示範旅程 8/17 的 theme 寫成中文「古著」→ 仍是古著主題日（古著 ≥3 家、沒有整趟警告）
+  const zh = demoTrip(); zh.days[1].anchor.theme = '古著';
+  const r1 = planTrip({ trip: zh, pois, rules, settings, country: COUNTRY, kb: KB, legFn });
+  assert.deepEqual(r1.warnings, []);
+  assert.equal(r1.days[1].day.themeCategory, 'vintage');
+  assert.ok(r1.days[1].plan.sequence.filter((s) => s.poi.category === 'vintage').length >= 3);
+  // 寫成「鄉間探索」→ 整趟警告、那天當普通日（古著 ≤2、落選理由寫同類上限，畫面也不會寫成主題日）
+  const bad = demoTrip(); bad.days[1].anchor.theme = '鄉間探索';
+  const r2 = planTrip({ trip: bad, pois, rules, settings, country: COUNTRY, kb: KB, legFn });
+  assert.deepEqual(r2.warnings.map((w) => [w.code, w.date]), [['theme-unknown', '2026-08-17']]);
+  assert.equal(r2.days[1].day.themeCategory, null);
+  assert.equal(r2.days[1].plan.sequence.filter((s) => s.poi.category === 'vintage').length, 2);
+  assert.ok(r2.days[1].plan.dropped.some((d) => d.poi.category === 'vintage' && d.reason.includes('同類的店一天最多 2 家')));
 });

@@ -152,3 +152,46 @@ test('累了：剩下的站裡有恢復站時，降速把它釘到最前面且�
   assert.ok(pinned.fixedWindow?.pinned && pinned.fixedWindow.startMin === 15 * 60 + 5);
   assert.ok(r.changes.some((c) => c.action === 'pin-rest' && c.poiId === 'cafe'));
 });
+
+// 10-14 T23 審查後補：研討會中途按改案（會場是釘起訖的固定時段、還沒散）——每案都要留著會場，不能叫他丟下研討會去 bar；壓縮不縮釘起訖的站
+const VENUE = { id: 'venue', name_zh: '會場', category: 'venue', recovery: false, cafeLike: false, walkFactor: 0, climbMin: 0, hours: { fri: [['09:30', '19:30']] }, dwellMin: 60, zoneId: 'town', lat: 38.26, lng: 140.87 };
+const NIGHT_BAR = { id: 'bar', name_zh: '賓', category: 'bar', recovery: true, cafeLike: false, walkFactor: 0, climbMin: 0, hours: { fri: [['13:00', '24:00']] }, dwellMin: 90, zoneId: 'town', lat: 38.26, lng: 140.87 };
+const FIXED_FW = { startMin: 9 * 60 + 30, endMin: 19 * 60 + 30, arriveEarlyMin: 40, afterMin: 30 };
+const fixedDay = { date: '2026-08-14', type: 'fixed', earlyDay: true, party: 1, dayTripNext: false, themeCategory: null, prevThemeCategory: null, anchorPoiId: 'venue', anchorName: '會場', designated: [], regionZones: ['town'], homeZoneId: 'town', window: { startMin: 8 * 60 + 20, endMin: 22 * 60 + 30 }, windowRaw: { startMin: 8 * 60 + 20, endMin: 1440 }, openSlotMin: 90, shoppingDay: false, shoppingFromMin: null };
+const fixedRemaining = [
+  { poi: VENUE, priority: 'must', dwellMin: 670, fixedWindow: FIXED_FW, isAnchor: true, startMin: 8 * 60 + 50 },
+  { poi: NIGHT_BAR, priority: 'want', dwellMin: 90, startMin: 20 * 60 + 5 },
+];
+const fixedCountry = { ...COUNTRY, mealSlots: { lunch: ['11:30', '13:30'], dinner: ['18:00', '20:30'] }, nightSlot: ['20:00', '24:00'] };
+const fixedInput = { day: fixedDay, remaining: fixedRemaining, here: VENUE, nowMin: 12 * 60, rules, settings, country: fixedCountry, kb: { zones: { town: { environment: 'town', lat: 38.26, lng: 140.87 } } }, legFn: (a, b) => ({ walkMin: a.id === b.id ? 0 : 5, rideMin: 0, climbMin: 0 }), pool: [] };
+
+test('研討會中途 12:00 按改案：五種與累了那組每一案不是空的就留著會場（12:00 起到 20:00 散場加緩衝）、賓 接在後面；跟目前一樣的案（會場已經開始，只比站）不出，累了那組只剩回住宿', () => {
+  for (const strategies of [STRATEGIES, TIRED_STRATEGIES]) {
+    const { proposals, all } = replanDay({ ...fixedInput, strategies });
+    assert.ok(all.length >= 2);
+    for (const p of all) {
+      if (!p.plan.sequence.length) { assert.equal(p.id, 'end-day'); continue; }
+      const v = p.plan.sequence[0];
+      assert.equal(v.poi.id, 'venue', `${p.id}：第一站要是會場：${p.plan.sequence.map((s) => s.poi.name_zh).join('→')}`);
+      assert.deepEqual([v.startMin, v.endMin], [12 * 60, 20 * 60], `${p.id}：人在會場裡，從現在排到散場加緩衝`);
+      assert.ok(!p.plan.dropped.some((d) => d.poi.id === 'venue'), `${p.id}：會場不能被丟掉`);
+      assert.equal(p.plan.sequence[1]?.poi.id, 'bar', `${p.id}：賓 接在散場後`);
+    }
+    assert.ok(!proposals.some((p) => p.plan.sequence[0]?.poi.id === 'venue' && p.plan.sequence[1]?.poi.id === 'bar'), '會場→賓 跟目前剩下的一樣，不出案');
+  }
+  const tired = replanDay({ ...fixedInput, strategies: TIRED_STRATEGIES });
+  assert.deepEqual(tired.proposals.map((p) => p.id), ['end-day']);
+  // 散了之後（19:40）才改案：會場已經錯過，理由寫幾點散的
+  const after = replanDay({ ...fixedInput, nowMin: 19 * 60 + 40, strategies: TIRED_STRATEGIES });
+  const slow = after.all.find((p) => p.id === 'slow-down');
+  assert.ok(slow.plan.dropped.some((d) => d.poi.id === 'venue' && /19:30 就散了/.test(d.reason)), JSON.stringify(slow.plan.dropped));
+});
+
+test('壓縮不縮釘起訖的固定時段（結束由散場時刻釘，縮了也沒用）；只釘開始的花火照縮', () => {
+  const compress = STRATEGIES.find((s) => s.id === 'compress');
+  const fireworks = { poi: { ...VENUE, id: 'fire', name_zh: '花火', category: 'event' }, priority: 'want', dwellMin: 60, fixedWindow: { startMin: 19 * 60 + 30, arriveEarlyMin: 30 } };
+  const out = compress.apply({ remaining: [{ ...fixedRemaining[0], priority: 'want' }, fireworks, fixedRemaining[1]], settings });
+  assert.deepEqual(out.changes.map((c) => c.poiId).sort(), ['bar', 'fire'], '會場不在 changes 裡');
+  assert.equal(out.candidates.find((c) => c.poi.id === 'venue').dwellMin, 670);
+  assert.equal(out.candidates.find((c) => c.poi.id === 'fire').dwellMin, 45);
+});

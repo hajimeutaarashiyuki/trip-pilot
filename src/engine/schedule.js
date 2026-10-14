@@ -5,6 +5,9 @@ import { openIntervals } from './time.js';
 
 /**
  * placeStop({ prevEndMin, leg, poi, dwellMin, date, fixedWindow, dayStartMin, first }) → { startMin, endMin, waitMin, arriveMin }
+ * fixedWindow { startMin, endMin?, arriveEarlyMin?, afterMin? }：開始前 arriveEarlyMin 分到場（卡位提前量）；
+ * 有 endMin（研討會、預約那種有散場時刻的）結束＝endMin＋afterMin（散場後的緩衝也掛在窗尾，那段不排站），不看 dwellMin；
+ * 沒有 endMin（花火那種只釘開始時刻的）照舊 startMin＋dwellMin（DESIGN §11.1 Q7「固定時段前 40 後 30 不排站」；10-14 T23）。
  */
 export function placeStop({ prevEndMin, leg, poi, dwellMin, date, fixedWindow = null, dayStartMin = 0, first = false }) {
   const travel = (leg?.walkMin ?? 0) + (leg?.rideMin ?? 0) + (leg?.waitMin ?? 0);
@@ -22,5 +25,6 @@ export function placeStop({ prevEndMin, leg, poi, dwellMin, date, fixedWindow = 
   }
   // 當天第一站：開門前就會到的話改成晚點出門，不在門口等（等開門只發生在站與站之間）
   if (first && startMin > arriveMin) arriveMin = startMin;
-  return { arriveMin, startMin, waitMin: startMin - arriveMin, endMin: startMin + dwellMin };
+  const endMin = Number.isFinite(fixedWindow?.endMin) ? fixedWindow.endMin + (fixedWindow.afterMin ?? 0) : startMin + dwellMin;
+  return { arriveMin, startMin, waitMin: startMin - arriveMin, endMin };
 }

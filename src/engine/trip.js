@@ -4,6 +4,8 @@ import { planDay } from './core.js';
 import { hmToMin, openIntervals, overlapMin } from './time.js';
 import { haversineM } from '../geo/matrix.js';
 import { evaluateSequence, retimeSequence } from './sequence.js';
+import { SHOPPING_CATEGORIES } from '../rules/_helpers.js';   // 只借購物類店型清單篩順路站，不是規則邏輯（規則在 rules/shopping-day.js）
+import { CATEGORIES, classifyCategory } from '../data/schema.js';   // 主題日的店型要對得上知識庫的店型（themeCategoryOf）
 
 /**
  * 引擎插站的觸發：照他勾的排完後出現這些規則的警告才跑第二趟。
@@ -16,7 +18,9 @@ export const REST_TRIGGER_RULES = new Set(['walk-run', 'wait-at-door', 'late-dep
 const TRIGGER_KIND = Object.freeze({ 'walk-run': 'rest', 'wait-at-door': 'filler', 'late-departure': 'filler' });
 
 /**
- * 一天的時窗：預設 settings.dayWindow；晚出門日（旅程第 lateStartFromDay 天起、非一日遊）起點改 lateStartHM；早起日由 day.earlyDay 自帶出門時刻；
+ * 一天的時窗：預設 settings.dayWindow；晚出門日（旅程第 lateStartFromDay 天起、非一日遊、只有 normal 日）起點改 lateStartHM；早起日由 day.earlyDay 自帶出門時刻；
+ * fixed 日（研討會那種整天被一件事釘住的日子，DESIGN §11.1 Q7）照 normal 的預設時窗、不套晚出門：出門時間由固定時段決定（會場是帶 fixedWindow 的站，
+ * 排程自己對齊卡位時刻；要早於 09:00 出門就手標 earlyDay＋departHM，自動標早起日還沒做），其餘跟 normal 一樣（推導；10-14 T23）；
  * 抵達日起點不早於落地＋出關緩衝＋機場到據點的車程、離境日終點不晚於起飛－緩衝－車程（airportTransit 由 airportTransitMin 算：
  * zones.json 的 airport|<據點區> 連結，沒有就 0；10-13 七天實驗 F1：引擎原本當他 17:00 就站在飯店門口，v4 自己也只留 35 分）。
  * 留白從時窗尾端扣（profile §8「每天留 90 分鐘」、DESIGN §4 days[].openSlotMin）：每天的落後額度 day.openSlotMin ?? settings.openSlotMinPerDay，
@@ -59,13 +63,23 @@ export function regionZonesOf({ home, candidates, anchorPoi }) {
 
 /**
  * planTrip({ trip, pois, rules, settings, country, kb, legFn, restPool, options }) → { days: [{ date, day, plan }], warnings }
- * - trip.days[]: { date, type, earlyDay, departHM?, dayTrip?, openSlotMin?, anchor?: { poiId } | { theme, poiIds[] }, picks: [{ poiId, priority, dwellMin?, fixedWindow? }], designated?: [poiId], nightSlotOff?, removed?: [{ poiId, insertedBy?, priority? }] }
+ * - trip.days[]: { date, type, earlyDay, departHM?, dayTrip?, openSlotMin?, anchor?: { poiId } | { theme, poiIds[] }, picks: [{ poiId, priority, dwellMin?, fixedWindow?, errand? }], designated?: [poiId], nightSlotOff?, removed?: [{ poiId, insertedBy?, priority? }] }
+ *   anchor.theme：主題日那一類的店型鍵（vintage／record／cafe 這種；需求單上的中文會翻，翻不出記整趟警告 theme-unknown、那天當普通日；themeCategoryOf）
  *   removed 帶 insertedBy 'engine' ＝ 他拒絕過引擎插的站：那天不再插同一種（priority 'rest' 恢復站／'filler' 填站；沒記 priority 的舊資料當恢復站）
  *   （profile §2.4 細則「拒絕＝跳過，不觸發改案、不罰、當天不再重插，連跑警告降成提示」；原話 #126 拒絕的是恢復，拒絕一家填站不等於拒絕恢復）
  *   openSlotMin：這天的留白分鐘（缺＝settings.openSlotMinPerDay；departure 日 0），dayWindow 從收工時刻扣掉
- * - 每天的 day 上下文：window 是扣過留白的時窗（硬規則 window、搜尋用）、windowRaw 原時窗（畫面、夜間站）、openSlotMin 真的扣掉的分鐘、openSlotSkipped 時窗太短沒扣（整趟 warnings 另有一條 open-slot-skipped）
+ *   picks[].errand：他勾的待辦站（順路購買，原話 #29）——購物類排在非購物日不罰（rules/shopping-day.js），排進去的 stop 帶 errand
+ *   picks[].fixedWindow { startMin, endMin?, arriveEarlyMin?, afterMin? }：固定時段（花火只釘開始、研討會釘起訖；DESIGN §11.1 Q7）——
+ *     arriveEarlyMin 缺補 settings.fixedBeforeMin 40、有 endMin 而 afterMin 缺補 settings.fixedAfterMin 30（fixedWindowOf，都是預設）；
+ *     有 endMin 又沒寫 dwellMin 的站，停留＝釘住的整段（卡位提前量＋時段＋散場緩衝，fixedSpanMin），現場頁「待 N 分」才會是真的（10-14 T23）
+ *   type 'fixed'：時窗照 normal、不套晚出門（dayWindow）；夜間站照排（rules/night-slot.js）；被固定時段的站蓋住的餐段不警告（rules/meal-slots.js）；
+ *     沒有一站帶 fixedWindow 的 fixed 日記整趟警告 fixed-day-no-window（那天只會照營業時間排）
+ * - trip.shoppingDays?：購物日覆寫（陣列，元素 'YYYY-MM-DD' 或 { date, fromHM }）；沒有就由 shoppingDaysOf 照完整天數推（DESIGN §1.5）；
+ *   寫壞了（不是陣列、fromHM 或 settings.shoppingAfternoonHM 不是 HH:MM）記整趟警告 shopping-days-bad／shopping-from-bad、照樣排（跟 pick-unknown 一樣進 warnings；畫面目前不顯示整趟警告，plan-report 會印）
+ * - 每天的 day 上下文：window 是扣過留白的時窗（硬規則 window、搜尋用）、windowRaw 原時窗（畫面、夜間站）、openSlotMin 真的扣掉的分鐘、openSlotSkipped 時窗太短沒扣（整趟 warnings 另有一條 open-slot-skipped）、
+ *   shoppingDay（這天是不是購物日）、shoppingFromMin（購物時段從幾分起，整天都是就 null；非購物日 false／null）
  * - pois：{ [poiId]: poi }（已 normalize）
- * - restPool：引擎可插的站的來源（已規範化的 POI 陣列，可空；畫面與報告傳整個知識庫），每天由 restCandidates（恢復站）與 fillCandidates（填空檔，任何站）篩
+ * - restPool：引擎可插的站的來源（已規範化的 POI 陣列，可空；畫面與報告傳整個知識庫），每天由 restCandidates（恢復站）、fillCandidates（填空檔）、onTheWayCandidates（順路站）篩，三個池都先過 engineMayInsert
  */
 export function planTrip({ trip, pois, rules, settings, country, kb, legFn, restPool = [], options = {} }) {
   const out = []; const warnings = [];
@@ -75,16 +89,20 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
   const pickedAnywhere = new Set(trip.days.flatMap((d) => [...(d.picks ?? []).map((p) => p.poiId), d.anchor?.poiId, ...(d.anchor?.poiIds ?? [])]).filter(Boolean));
   const removedAnywhere = new Set(trip.days.flatMap((d) => (d.removed ?? []).map((r) => r?.poiId)).filter(Boolean));
   const insertedSoFar = new Set();
+  const shopping = shoppingDaysOf(trip, settings, warnings);   // 購物日欄位寫壞了記整趟警告、照樣排（總則 0）
   trip.days.forEach((d, index) => {
     const home = resolveHome(trip, d.date);
     const candidates = (d.picks ?? []).map((p) => {
       const poi = pois[p.poiId];
       if (!poi) { warnings.push({ code: 'pick-unknown', date: d.date, msg: `${d.date} 的 ${p.poiId} 不在知識庫` }); return null; }
-      return { poi, priority: p.priority ?? 'want', dwellMin: p.dwellMin, fixedWindow: p.fixedWindow ?? null, designated: (d.designated ?? []).includes(p.poiId), isAnchor: d.anchor?.poiId === p.poiId || Boolean(d.anchor?.poiIds?.includes(p.poiId)) };
+      const fixedWindow = fixedWindowOf(p.fixedWindow, settings, warnings, d.date, poi);
+      return { poi, priority: p.priority ?? 'want', dwellMin: p.dwellMin ?? fixedSpanMin(fixedWindow), fixedWindow, designated: (d.designated ?? []).includes(p.poiId), isAnchor: d.anchor?.poiId === p.poiId || Boolean(d.anchor?.poiIds?.includes(p.poiId)), errand: Boolean(p.errand) };
     }).filter(Boolean);
     // 主行程：單站型用那站；主題型用骨架店的第一家當顯示名（畫面不得露出 theme 鍵值）
     const anchorPoi = d.anchor?.poiId ? pois[d.anchor.poiId] : (d.anchor?.poiIds?.length ? pois[d.anchor.poiIds[0]] : null);
-    const themeCategory = d.anchor?.theme ?? null;
+    const themeCategory = themeCategoryOf(d, warnings);
+    // fixed 日卻沒有任何一站帶固定時段（旅程檔手改漏了、或 fixedWindow 寫壞被拿掉）：那天會照營業時間當普通站排、整天像普通日，記整趟警告（10-14 T23 審查）
+    if (d.type === 'fixed' && !candidates.some((c) => c.fixedWindow)) warnings.push({ code: 'fixed-day-no-window', date: d.date, msg: `${d.date} 標了固定時段日，但沒有一站帶固定時段（picks[].fixedWindow），會場會照營業時間當普通站排` });
     const win = dayWindow(d, index, settings, d.type === 'arrival' || d.type === 'departure' ? airportTransitMin({ legFn, home, settings }) : 0);
     for (const w of win.warnings) warnings.push({ ...w, date: d.date, msg: `${d.date} ${w.msg}` });
     const day = {
@@ -96,6 +114,8 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
       window: { startMin: win.startMin, endMin: win.endMin }, windowRaw: win.raw, openSlotMin: win.openSlotMin,
       openSlotSkipped: win.warnings.some((w) => w.code === 'open-slot-skipped'),
       nightSlotOff: Boolean(d.nightSlotOff) || Boolean(trip.days[index + 1]?.earlyDay),
+      // 購物日（原話 #36、#55；DESIGN §1.5）：規則 shopping-day 讀；非購物日 false／null
+      shoppingDay: shopping.has(d.date), shoppingFromMin: shopping.get(d.date)?.fromMin ?? null,
     };
     // 先照他勾的排；走路連跑破表（插恢復站）或等開門超過留白（填空檔）才把那種站加進候選重排一次，有比較好才採用。
     // 不每天都加：價值 0 的候選不受上界剪枝，試走包的 8/15 一加就從 276 節點變 6 萬節點、撞 800 ms 預算（2026-10-11 實測），結果還一樣。
@@ -150,7 +170,7 @@ export function insertOnTheWay({ plan, onway = [], day, home, legFn, rules, sett
   let seq = plan.sequence; let best = evaluate(seq); let changed = false;
   for (const c of onway) {
     if (seq.filter((s) => s.optional).length >= maxOptional) break;
-    const stop = { poi: c.poi, dwellMin: c.dwellMin, priority: c.priority, optional: true, insertedBy: 'engine', isAnchor: false, designated: false, fixedWindow: null, gap: null, detourMin: c.detourMin };
+    const stop = { poi: c.poi, dwellMin: c.dwellMin, priority: c.priority, optional: true, insertedBy: 'engine', isAnchor: false, designated: false, fixedWindow: null, gap: null, errand: false, detourMin: c.detourMin };
     // 只插在它真的順路的那一段（兩邊都走路、繞路 ≤ onTheWayDetourMin）：候選是看某一段算出來的，位置換了就不是順路
     // （10-13 七天實驗：8/15 BILLY'S ENT 被塞進兩段搭車之間、8/18 古著屋 JAM 被接在最後一站後面走回頭路）；最後一站之後沒有「下一站」，不插
     const onWayAt = (i) => {
@@ -178,8 +198,10 @@ export function insertOnTheWay({ plan, onway = [], day, home, legFn, rules, sett
 /**
  * 順路站（原話 #170：「如果有順路的話 直接就排行程進去就可以…主行程決定活動區域和路線 而不是決定當天的主題性」）：
  * 第一趟排出來的每一段走路（住宿→第一站也算），知識庫裡繞路 ≤ settings.onTheWayDetourMin（預設 8）分鐘的站就是順路——
- * 繞路＝走到它再走到下一站，比直接走多出的分鐘；搭車段不算順路。候選：在當日區域、不在 exclude、不是交通／活動／錢湯，
- * 也不是藥妝／電器／outlet／百貨（NO_ONWAY_CATEGORIES，推導）、營業時間要有（不知道開不開的不插）、不是代購研究的站（有 item）；
+ * 繞路＝走到它再走到下一站，比直接走多出的分鐘；搭車段不算順路。候選：先過 engineMayInsert（知識庫裡本來就不主動排的店不拿）、在當日區域、不在 exclude、
+ * 不是交通／活動／錢湯／一日遊（NO_FILL_CATEGORIES）、不是購物類（SHOPPING_CATEGORIES：百貨、商店街、藥妝、電器、outlet——順路站只拿「為了逛而去」的店，
+ * 原話 #170 舉的是「值得逛的古著店」、#20「順路的探店」、#82「經過古著店之類的服裝店或是店家的逛街行程」；「為了買而去」的店只走購物日（#36、#55）或順路購買（#29），
+ * 10-13 七天實驗引擎把藥妝店、百貨當順路站塞了五次）、營業時間要有（不知道開不開的不插）；
  * 依繞路分鐘取最近 settings.onTheWayPoolMax（預設 4）家；價值 PRIORITY_VALUE.onway（預設 30，低於 maybe 的 45）、optional、insertedBy engine，
  * 同類上限、站數、逛店連跑等規則照管，他不要就按「不去了」（記 priority 'onway'，那天不再插順路站）。
  */
@@ -187,7 +209,7 @@ export function onTheWayCandidates({ restPool = [], day, exclude = new Set(), ho
   if (!restPool.length || !plan?.sequence?.length) return [];
   const maxDetour = settings.onTheWayDetourMin ?? 8;
   // 順路站是「值得逛」的店，不拿恢復站（咖啡廳、餐廳、酒吧由恢復站與填站的邏輯管）
-  const pool = restPool.filter((p) => p && !NO_ONWAY_CATEGORIES.has(p.category) && p.recovery !== true && p.hours && !p.item && (day.regionZones ?? []).includes(p.zoneId) && !exclude.has(p.id));
+  const pool = restPool.filter((p) => engineMayInsert(p) && !NO_FILL_CATEGORIES.has(p.category) && !SHOPPING_CATEGORIES.includes(p.category) && p.recovery !== true && p.hours && (day.regionZones ?? []).includes(p.zoneId) && !exclude.has(p.id));
   if (!pool.length) return [];
   const walkOnly = (leg) => leg && (leg.rideMin ?? 0) === 0 ? (leg.walkMin ?? 0) : null;
   const stops = [home, ...plan.sequence.map((s) => s.poi)].filter(Boolean);
@@ -210,7 +232,7 @@ export function onTheWayCandidates({ restPool = [], day, exclude = new Set(), ho
 
 /**
  * 引擎可插的恢復站（DESIGN §1.3：走路連跑要破 150 才由引擎插恢復站，來源＝候選池未勾 ∪ 當日區域 KB，標引擎插的、可拒絕）。
- * restPool 裡 recovery 的站、在當日區域內、不在 exclude 裡（任何一天勾的、按過不去了的、前幾天插過的）；
+ * restPool 裡 recovery 的站、先過 engineMayInsert（知識庫裡本來就不主動排的店不拿）、在當日區域內、不在 exclude 裡（任何一天勾的、按過不去了的、前幾天插過的）；
  * 依到當天 picks 座標重心的直線距離取最近的 settings.restPoolMax 家（picks 都沒座標就以住宿為中心；沒座標的站排最後）。
  * 價值 0（priority 'rest'）、optional：排不進不算落選；排進去的 stop 帶 insertedBy: 'engine'，畫面上「不去了」就進 removed。
  */
@@ -220,7 +242,7 @@ export function restCandidates({ restPool = [], candidates = [], day, exclude = 
   const distance = (p) => (center && hasCoords(p) ? haversineM(center, p) : Infinity);
   return restPool
     // 錢湯／日歸溫泉要準備（毛巾、換洗，profile §5.9），引擎不自己插；他勾了才會在 picks 裡
-    .filter((p) => p && p.recovery === true && p.category !== 'onsen' && (day.regionZones ?? []).includes(p.zoneId) && !exclude.has(p.id))
+    .filter((p) => engineMayInsert(p) && p.recovery === true && p.category !== 'onsen' && (day.regionZones ?? []).includes(p.zoneId) && !exclude.has(p.id))
     .map((p) => ({ p, d: distance(p) }))
     .sort((a, b) => (a.d === b.d ? 0 : a.d < b.d ? -1 : 1))
     .slice(0, settings.restPoolMax ?? 6)
@@ -232,7 +254,8 @@ export function restCandidates({ restPool = [], candidates = [], day, exclude = 
  * 每個等開門警告（帶 poiId）算出那段空檔 gap：前一站結束 → 等開門那站的開門時刻；太晚出門的警告也算（2026-10-12 對抗審查：第一站永遠不會等開門，
  * 早上的空檔只能靠這條觸發）：gap＝時窗起點 → 第一站開門，中點取住宿與第一站
  * （openIntervals 找到達後第一個營業區間的開門；沒有結構化時段就用它排定的開始時刻）；不到 settings.fillMinGapMin（預設 15）分的空檔不填。
- * 候選：restPool 裡不是交通、活動、錢湯的站，在當日區域內、不在 exclude 裡（任何一天勾的、按過不去了的、前幾天插過的）、
+ * 候選：restPool 裡先過 engineMayInsert（知識庫裡本來就不主動排的店不拿）、不是交通、活動、錢湯、一日遊的站（NO_FILL_CATEGORIES；店型不另限，原話 #161「任何站都可以」——
+ * 購物類填在非購物日由規則 shopping-day 罰掉，購物日照填），在當日區域內、不在 exclude 裡（任何一天勾的、按過不去了的、前幾天插過的）、
  * 空檔開始時就已經開門（原話 #164：填站不能自己再等一次開門；沒有結構化時段視為有開；當天休息跳過），沒開的不佔 fillPoolMax 名額；
  * 依到「等開門那站與它前一站（沒有就住宿）中點」的直線距離取最近 settings.fillPoolMax 家。
  * 候選帶 gap（規則 filler-gap 擋在空檔外的排法）與 dwellMin = min(店的停留, 空檔長度 − fillMinGapMin)（留給兩段移動），裁完不到 fillMinGapMin 的不拿、不佔名額；
@@ -241,9 +264,7 @@ export function restCandidates({ restPool = [], candidates = [], day, exclude = 
  */
 export function fillCandidates({ restPool = [], candidates = [], day, exclude = new Set(), home = null, plan, settings = {} }) {
   if (!restPool.length || !plan?.sequence?.length) return [];
-  // 代購研究查的站（有 item 品項）是為了買某樣東西才查的，順路購買由代購清單管，不當填站或順路站（推導、待他確認；
-  // 10-13 七天實驗引擎把「藤崎 香氛區（查證結果：未見 DKNY，可略過）」當站塞進 8/17）
-  const pool = restPool.filter((p) => p && !NO_FILL_CATEGORIES.has(p.category) && !p.item && (day.regionZones ?? []).includes(p.zoneId) && !exclude.has(p.id));
+  const pool = restPool.filter((p) => engineMayInsert(p) && !NO_FILL_CATEGORIES.has(p.category) && (day.regionZones ?? []).includes(p.zoneId) && !exclude.has(p.id));
   const out = new Map();
   const minGap = settings.fillMinGapMin ?? 15;
   for (const w of plan.warnings.filter((x) => (x.ruleId === 'wait-at-door' || x.ruleId === 'late-departure') && x.poiId)) {
@@ -268,11 +289,120 @@ export function fillCandidates({ restPool = [], candidates = [], day, exclude = 
 }
 
 // 填空檔不拿的店型（推導；原話只說「任何站都可以」）：交通與資訊（不是地點）、活動（綁日期）、錢湯（要準備，profile §5.9）、
-// 一日遊的複合條目（daytrip：「松島（遊覽船＋瑞巖寺＋圓通院）」那種是研究摘要，不是一個地點；10-13 七天實驗 8/14 引擎把「鹽竈（神社＋壽司）」當站插進去）
-const NO_FILL_CATEGORIES = new Set(['logistics', 'event', 'onsen', 'daytrip']);
-// 順路站不拿的店型（推導，待他確認）：填空檔不拿的三類，再加代購／大店型——順路站是「值得逛」的店（原話 #170 舉的是古著店），
-// 不是順路買個東西；10-13 七天實驗引擎把藥妝店、百貨當順路站塞了五次。藥妝那類走填站（任何站都可以，#161）或他自己勾
-const NO_ONWAY_CATEGORIES = new Set([...NO_FILL_CATEGORIES, 'drugstore', 'electronics', 'outlet', 'department']);
+// 一日遊的複合條目（daytrip：「松島（遊覽船＋瑞巖寺＋圓通院）」那種是研究摘要，不是一個地點；10-13 七天實驗 8/14 引擎把「鹽竈（神社＋壽司）」當站插進去）、
+// 會場（venue：研討會、演唱會的場地，只有旅程檔那天勾了它、帶 fixedWindow 才有意義；知識庫的營業時間寫的是那天的時段卻解析成七天都開，
+// 不擋的話 8/13 等開門的空檔會把研討會會場當 60 分的填站插進去——10-14 T23 審查）。順路站的池同一張。
+const NO_FILL_CATEGORIES = new Set(['logistics', 'event', 'onsen', 'daytrip', 'venue']);
+
+/**
+ * 引擎自己插的站（恢復站、填站、順路站三個池，與現場「累了」的池）共用的門：知識庫裡本來就不主動排的店不拿——
+ * - curated === false：已確認挖寶型（總則 2「選品店優先，挖寶型排除」；profile §5.12 只允許手填 false；Second Street／JAM／Florida 09-07 文件測試已判不進）
+ * - my.rating ≤ 2：「不會再去」「踩雷」，不主動排（profile §7 星等表）
+ * - poolLosses ≥ 2：候選池落選兩次降權，排程不主動排（profile §7、原話 #89）
+ * - unlockWhen 有值：「下次再說」層，未達條件不排（profile §7；善治郎那種）
+ * - item 有值：代購研究的站是為了買某樣東西才查的，順路購買由代購清單管（原話 #87、#29；10-13 七天實驗引擎把「藤崎 香氛區（查證結果：未見 DKNY，可略過）」當站塞進 8/17）
+ * 他自己勾的站不走這裡（picks 照排，總則 3「指定行程凌駕偏好」）。10-14 T22。
+ * 10-14 現況（審查後註記）：仙台包 147 站的 my 都是 {}、沒有一筆 poolLosses 或 unlockWhen（§7 點名的善治郎也沒標），src/ui 也還沒把評分寫進 poi.my（field.ratings 留在手機裡）；
+ * 今天真的擋到東西的只有 curated:false 與 item 兩條，其餘三條是門先立著、等資料接上。
+ */
+export function engineMayInsert(p) {
+  if (!p) return false;
+  if (p.curated === false) return false;
+  if (Number.isFinite(p.my?.rating) && p.my.rating <= 2) return false;
+  if ((p.poolLosses ?? 0) >= 2) return false;
+  if (p.unlockWhen) return false;
+  if (p.item) return false;
+  return true;
+}
+
+/**
+ * 購物日：shoppingDaysOf(trip, settings, warnings?) → Map<date, { shoppingDay: true, fromMin: number|null }>（fromMin 有值＝那天從幾分起才是購物時段）。
+ * trip.shoppingDays 有值（陣列，元素 'YYYY-MM-DD' 或 { date, fromHM }）就照它（空陣列＝這趟沒有購物日）；
+ * 沒有就照完整天數推（DESIGN §1.5、profile §5.10 原話 #36「出國的倒數一兩天才是購物行程」；門檻是 DESIGN 09-02 定的，預設等級）：
+ * 完整天數 N＝type 不是 arrival／departure 的天數；N ≤ 2 → 只有離境日；N = 3 → 離境日＋前一天從 settings.shoppingAfternoonHM（預設 '13:00'）起；
+ * N ≥ 4 → 含離境日的最後兩天整天。沒有 departure 日就拿最後一天當離境日。仙台那趟 7 天（N = 5）＝ 8/17 全天＋8/18。
+ * 壞輸入不丟錯（總則 0「永遠回得出東西」；跟 planTrip 對 pick-unknown 的處理同一種，10-14 審查後改）：這些是他會手改的欄位，記進 warnings（planTrip 的整趟警告陣列，可不給）就好——
+ * trip.shoppingDays 不是陣列 → shopping-days-bad、照天數推；fromHM 或 settings.shoppingAfternoonHM 不是 HH:MM → shopping-from-bad、那天當整天購物日。
+ */
+export function shoppingDaysOf(trip, settings = {}, warnings = null) {
+  const out = new Map();
+  const days = trip?.days ?? [];
+  const warn = (w) => { if (Array.isArray(warnings)) warnings.push(w); };
+  const given = trip?.shoppingDays;
+  if (Array.isArray(given)) {
+    for (const entry of given) {
+      const date = typeof entry === 'string' ? entry : entry?.date;
+      if (!date) { warn({ code: 'shopping-days-bad', msg: '購物日清單裡有一筆沒有日期，跳過它' }); continue; }
+      const fromHM = entry && typeof entry === 'object' ? entry.fromHM ?? null : null;
+      const fromMin = fromHM ? safeHmToMin(fromHM) : null;
+      if (fromHM && fromMin == null) warn({ code: 'shopping-from-bad', date, msg: `${date} 的購物時段起點「${fromHM}」看不懂（要寫成 HH:MM），那天當整天購物日` });
+      out.set(date, { shoppingDay: true, fromMin });
+    }
+    return out;
+  }
+  if (given != null) warn({ code: 'shopping-days-bad', msg: '購物日覆寫要是日期清單（旅程檔的 shoppingDays 不是陣列），先照天數自動推' });
+  if (!days.length) return out;
+  const full = days.filter((d) => d.type !== 'arrival' && d.type !== 'departure').length;
+  let dep = days.length - 1;
+  for (let i = days.length - 1; i >= 0; i--) if (days[i].type === 'departure') { dep = i; break; }
+  out.set(days[dep].date, { shoppingDay: true, fromMin: null });
+  if (dep >= 1 && full === 3) {
+    const hm = settings.shoppingAfternoonHM ?? '13:00';
+    const fromMin = safeHmToMin(hm);
+    if (fromMin == null) warn({ code: 'shopping-from-bad', date: days[dep - 1].date, msg: `設定的購物日下午起點「${hm}」看不懂（要寫成 HH:MM），${days[dep - 1].date} 當整天購物日` });
+    out.set(days[dep - 1].date, { shoppingDay: true, fromMin });
+  } else if (dep >= 1 && full >= 4) out.set(days[dep - 1].date, { shoppingDay: true, fromMin: null });
+  return out;
+}
+
+/** 'HH:MM' → 分鐘；格式不對回 null（hmToMin 會丟錯；這裡只給他會手改的購物日欄位用，時窗那些照舊丟）。 */
+function safeHmToMin(hm) { try { return hmToMin(hm); } catch { return null; } }
+
+/**
+ * 旅程檔 picks[].fixedWindow 補齊預設（DESIGN §11.1 Q7「固定時段前 40 後 30 不排站」；10-14 T23）→ 新物件，沒有固定時段回 null。
+ * - arriveEarlyMin 缺就用 settings.fixedBeforeMin（預設 40；數字出自 08-19 計畫 1 第 2159 行的夾具 arriveEarlyMin: 40／afterMin: 30 與 DESIGN Q7，預設等級。
+ *   知識庫 8/14 研討會通勤條目的「建議研討會開始前 40 分出門」講的是出門時刻、門到門 25–30 分，不是到場提前量，不當出處——10-14 T23 審查）
+ * - 有 endMin 而 afterMin 缺就用 settings.fixedAfterMin（預設 30）；沒有 endMin 的（花火那種只釘開始時刻）不補 afterMin，結束照停留算（schedule.js placeStop）
+ * - 寫壞了（不是物件、startMin 不是分鐘數、endMin 早於開始、提前量或散場緩衝是負數）當沒有固定時段、記整趟警告 fixed-window-bad（總則 0；跟 shoppingDaysOf 的 shopping-days-bad 同一種處理，warnings 可不給）——
+ *   不擋的話 placeStop 會算出 NaN 的時刻、或卡位時刻跑到開始之後、整天靜靜地壞掉
+ */
+export function fixedWindowOf(raw, settings = {}, warnings = null, date = null, poi = null) {
+  if (raw == null) return null;
+  const bad = (why) => {
+    if (Array.isArray(warnings)) warnings.push({ code: 'fixed-window-bad', date, poiId: poi?.id ?? null, msg: `${date ?? ''} 的 ${poi?.name_zh ?? poi?.id ?? '這一站'} 的固定時段${why}，當沒有固定時段排`.trim() });
+    return null;
+  };
+  if (typeof raw !== 'object' || !Number.isFinite(raw.startMin)) return bad('看不懂（startMin 要是從 0:00 起算的分鐘數）');
+  const hasEnd = raw.endMin != null;
+  if (hasEnd && !(Number.isFinite(raw.endMin) && raw.endMin >= raw.startMin)) return bad('的結束比開始早、或不是分鐘數');
+  if ((raw.arriveEarlyMin != null && !(Number.isFinite(raw.arriveEarlyMin) && raw.arriveEarlyMin >= 0)) || (raw.afterMin != null && !(Number.isFinite(raw.afterMin) && raw.afterMin >= 0))) return bad('的提前量或散場緩衝不是 0 以上的分鐘數');
+  const out = { ...raw, arriveEarlyMin: Number.isFinite(raw.arriveEarlyMin) ? raw.arriveEarlyMin : (settings.fixedBeforeMin ?? 40) };
+  if (hasEnd) out.afterMin = Number.isFinite(raw.afterMin) ? raw.afterMin : (settings.fixedAfterMin ?? 30);
+  return out;
+}
+
+/** 有起訖的固定時段釘住的整段分鐘（卡位提前量＋時段＋散場緩衝）；只釘開始的回 undefined（停留照 picks 或知識庫）。 */
+export function fixedSpanMin(fw) {
+  if (!fw || !Number.isFinite(fw.endMin)) return undefined;
+  return (fw.endMin + (fw.afterMin ?? 0)) - (fw.startMin - (fw.arriveEarlyMin ?? 0));
+}
+
+/**
+ * 主題日的店型：themeCategoryOf(day, warnings?) → 店型鍵或 null（沒有主題、或主題看不出是哪一類店）。
+ * 來源是旅程檔 days[].anchor.theme（需求單 §1 骨架表的主題日欄，規劃者寫進旅程檔；DESIGN §4）。合法值是店型鍵（vintage／record／cafe 這種，src/data/schema.js CATEGORIES）；
+ * 寫成需求單上的中文（古著／唱片行／咖啡廳）就照知識庫店型的對照表翻（derive/category.json，跟 normalizePoi 認店型同一張）；
+ * 翻不出來記整趟警告 theme-unknown、那天當普通日排（同類 ≤2 照管）——不這樣的話畫面會寫「XX主題日」、引擎卻照普通日排、落選理由還寫同類上限（10-14 T25 審查）。
+ * 壞輸入不丟錯（總則 0），跟 shoppingDaysOf 同一種處理；warnings 可不給。
+ */
+export function themeCategoryOf(day, warnings = null) {
+  const raw = day?.anchor?.theme;
+  if (raw == null || raw === '') return null;
+  if (CATEGORIES.includes(raw)) return raw;
+  const { key } = classifyCategory(raw);
+  if (key !== 'other') return key;
+  if (Array.isArray(warnings)) warnings.push({ code: 'theme-unknown', date: day.date, msg: `${day.date} 的主題「${raw}」看不出是哪一類店（寫古著、唱片行、咖啡廳這種類別），那天當普通日排` });
+  return null;
+}
 
 /** 等開門那站的開門時刻：到達後第一個營業區間的開門；拿不到（沒有結構化時段、或那個區間其實已經開了）就用它排定的開始時刻。 */
 function opensAt(stop, date) {

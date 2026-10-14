@@ -31,6 +31,7 @@ import designated from './designated.js';
 import itemGap from './item-gap.js';
 import mealSlots from './meal-slots.js';
 import nightSlot from './night-slot.js';
+import shoppingDay from './shopping-day.js';
 
 export const BUILTIN = Object.freeze([
   // 累積量
@@ -38,7 +39,7 @@ export const BUILTIN = Object.freeze([
   // 硬約束（站）
   hours, fixedWindow, windowRule, maxStops, sameTypeDay, earlyDay, daylight, fillerGap,
   // 軟約束（站）
-  walkBudget, walkCost, rideCost, walkRun, shopRun, cafeAdjacent, recoveryRun, backtrack, zoneExit, zoneReentry, noonUrban, waitAtDoor, lateDeparture,
+  walkBudget, walkCost, rideCost, walkRun, shopRun, cafeAdjacent, recoveryRun, backtrack, zoneExit, zoneReentry, noonUrban, waitAtDoor, lateDeparture, shoppingDay,
   // 整天
   anchor, designated, itemGap, mealSlots, nightSlot,
 ]);

@@ -67,8 +67,12 @@ test('快照只存 poiId 與時刻、旗標，過 JSON 再還原成同一條序�
   assert.ok(snap.stops.every((s) => typeof s.poiId === 'string' && s.poi === undefined), 'POI 本體不存');
   assert.deepEqual(snap.lost, lost);
   const restored = restorePlan(snap, pois);
-  const strip = (s) => ({ id: s.poi.id, startMin: s.startMin, endMin: s.endMin, dwellMin: s.dwellMin, waitMin: s.waitMin, arriveMin: s.arriveMin, fixedWindow: s.fixedWindow ?? null, insertedBy: s.insertedBy ?? null, priority: s.priority, optional: Boolean(s.optional), gap: s.gap ?? null, isAnchor: Boolean(s.isAnchor), designated: Boolean(s.designated) });
+  const strip = (s) => ({ id: s.poi.id, startMin: s.startMin, endMin: s.endMin, dwellMin: s.dwellMin, waitMin: s.waitMin, arriveMin: s.arriveMin, fixedWindow: s.fixedWindow ?? null, insertedBy: s.insertedBy ?? null, priority: s.priority, optional: Boolean(s.optional), gap: s.gap ?? null, isAnchor: Boolean(s.isAnchor), designated: Boolean(s.designated), errand: Boolean(s.errand) });
   assert.deepEqual(restored.map(strip), next.plan.sequence.map(strip));
+  // 他勾的待辦站（errand，順路購買）的旗標也要活過快照：丟了的話還原後購物日規則會把它當非購物日的購物站罰（10-14 T22）
+  const withErrand = { ...next.plan, sequence: next.plan.sequence.map((s, i) => (i === idx ? { ...s, errand: true } : s)) };
+  const back = restorePlan(JSON.parse(JSON.stringify(snapshotPlan(withErrand, idx))), pois);
+  assert.deepEqual(back.map((s) => s.errand), next.plan.sequence.map((s, i) => i === idx));
   assert.ok(restored.every((s) => s.poi === pois[s.poi.id]), '對回同一個 POI 物件');
   assert.deepEqual(restorePlan({ stops: [{ poiId: 'ghost', startMin: 0 }] }, pois), [], '知識庫裡沒有的站跳過');
   assert.deepEqual(restorePlan(null, pois), []);

@@ -8,7 +8,7 @@ import { resolveHome } from '../engine/trip.js';
 import { TEXT } from './text.js';
 
 /** 快照每站存的欄位（POI 本體不存，還原時從 state.pois 對回；跟 planDay 排出的 stop 同名） */
-const STOP_KEYS = ['startMin', 'endMin', 'dwellMin', 'waitMin', 'arriveMin', 'fixedWindow', 'insertedBy', 'priority', 'optional', 'gap', 'isAnchor', 'designated'];
+const STOP_KEYS = ['startMin', 'endMin', 'dwellMin', 'waitMin', 'arriveMin', 'fixedWindow', 'insertedBy', 'priority', 'optional', 'gap', 'isAnchor', 'designated', 'errand'];
 
 /**
  * 還沒去的站翻成 planDay 的候選（現場改案的 remaining）。optional、insertedBy、gap 要帶著：引擎插的站重排時還是價值 0、排不進不算落選、
@@ -16,7 +16,7 @@ const STOP_KEYS = ['startMin', 'endMin', 'dwellMin', 'waitMin', 'arriveMin', 'fi
  * 降速釘的「現在就去坐」時刻（fixedWindow.pinned）只對那一次改案有效，再重排就拿掉，不然時間一過它就排不進；他自己的固定時段（訂位、花火）留著。
  */
 export function remainingFrom(seq, idx) {
-  return seq.slice(idx).map((s) => ({ poi: s.poi, priority: s.priority ?? 'want', dwellMin: s.dwellMin, designated: s.designated, isAnchor: s.isAnchor, fixedWindow: s.fixedWindow?.pinned ? null : s.fixedWindow ?? null, optional: Boolean(s.optional), insertedBy: s.insertedBy ?? null, gap: s.gap ?? null, startMin: s.startMin }));
+  return seq.slice(idx).map((s) => ({ poi: s.poi, priority: s.priority ?? 'want', dwellMin: s.dwellMin, designated: s.designated, isAnchor: s.isAnchor, fixedWindow: s.fixedWindow?.pinned ? null : s.fixedWindow ?? null, optional: Boolean(s.optional), insertedBy: s.insertedBy ?? null, gap: s.gap ?? null, errand: Boolean(s.errand), startMin: s.startMin }));
 }
 
 /**
@@ -41,7 +41,7 @@ export function snapshotPlan(plan, idx, { packAt = null, lost = [] } = {}) {
 
 /** 還原：快照的站對回 pois 裡的 POI，成 planDay 排出的 stop 形狀；知識庫裡沒有的站跳過（同一份打包不會發生，packAt 相同才還原）。 */
 export function restorePlan(snapshot, pois) {
-  return (snapshot?.stops ?? []).filter((s) => pois[s.poiId]).map(({ poiId, ...rest }) => ({ poi: pois[poiId], ...rest, optional: Boolean(rest.optional), isAnchor: Boolean(rest.isAnchor), designated: Boolean(rest.designated) }));
+  return (snapshot?.stops ?? []).filter((s) => pois[s.poiId]).map(({ poiId, ...rest }) => ({ poi: pois[poiId], ...rest, optional: Boolean(rest.optional), isAnchor: Boolean(rest.isAnchor), designated: Boolean(rest.designated), errand: Boolean(rest.errand) }));
 }
 
 /**

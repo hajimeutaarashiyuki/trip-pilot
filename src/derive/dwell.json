@@ -1,5 +1,5 @@
 {
-  "_說明": "店型→預設停留分鐘（DESIGN §1.3 一點預設 60；古著店每家 60 是原話 #104；其餘預設）。知識庫有寫 duration 時優先用它。",
+  "_說明": "店型→預設停留分鐘（DESIGN §1.3 一點預設 60；古著店每家 60 是原話 #104；其餘預設）。知識庫有寫 duration 時優先用它。會場（venue）60 是預設、只在沒有固定時段時用：有固定時段的站停留由旅程檔 picks[].fixedWindow 的起訖算（trip.js，10-14 T23）。",
   "default": 60,
   "byCategory": {
     "vintage": 60,
@@ -28,6 +28,7 @@
     "electronics": 60,
     "outlet": 120,
     "street": 30,
+    "venue": 60,
     "other": 60
   }
 }

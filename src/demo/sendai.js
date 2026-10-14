@@ -44,8 +44,11 @@ export function legFn(from, to) {
   return { walkMin: 20, rideMin: 0, climbMin: 0 };
 }
 
-export const DAY_0813 = { date: '2026-08-13', type: 'normal', earlyDay: false, party: 1, dayTripNext: false, themeCategory: null, prevThemeCategory: null, anchorPoiId: POIS['大崎八幡宮'].id, anchorName: '大崎八幡宮', designated: [POIS['宮城縣護國神社'].id], regionZones: ['station', 'ichibancho', 'honcho', 'kokubuncho', 'aoba-castle', 'hachiman'], window: { startMin: 9 * 60, endMin: 24 * 60 } };
-export const DAY_0817 = { date: '2026-08-17', type: 'normal', earlyDay: false, party: 1, dayTripNext: true, themeCategory: 'vintage', prevThemeCategory: null, anchorPoiId: POIS.Utah.id, anchorName: 'Utah', designated: [POIS['おやま'].id, POIS['バンザイ'].id], regionZones: ['station', 'ichibancho', 'honcho', 'kokubuncho'], window: { startMin: 11 * 60, endMin: 24 * 60 } };
+// shoppingDay／shoppingFromMin 照 planTrip 對 demoTrip() 推出來的（trip.js shoppingDaysOf：兩個完整天、沒有離境日 → 最後一天 8/17 是購物日），規則 shopping-day 讀；8/17 勾的松本清（藥妝）才不會被當成非購物日的購物站
+// 示範的 8/17 標成古著主題日（themeCategory 'vintage'、demoTrip 的 anchor.theme）是刻意的：給「載入示範」與夾具測試看主題日的排法（那一類無上限，只由逛店連跑與一天 8 站管；sendai.test 斷言古著 ≥3）。
+// 這不是他那趟 8/17 的實況——他 10-13 說「那天又不是主題日」（原話 #169），試走旅程檔 trips/2026-08-sendai.json 的 8/17 已改成普通日（10-14 T25 審查後註記）。
+export const DAY_0813 = { date: '2026-08-13', type: 'normal', earlyDay: false, party: 1, dayTripNext: false, themeCategory: null, prevThemeCategory: null, anchorPoiId: POIS['大崎八幡宮'].id, anchorName: '大崎八幡宮', designated: [POIS['宮城縣護國神社'].id], regionZones: ['station', 'ichibancho', 'honcho', 'kokubuncho', 'aoba-castle', 'hachiman'], window: { startMin: 9 * 60, endMin: 24 * 60 }, shoppingDay: false, shoppingFromMin: null };
+export const DAY_0817 = { date: '2026-08-17', type: 'normal', earlyDay: false, party: 1, dayTripNext: true, themeCategory: 'vintage', prevThemeCategory: null, anchorPoiId: POIS.Utah.id, anchorName: 'Utah', designated: [POIS['おやま'].id, POIS['バンザイ'].id], regionZones: ['station', 'ichibancho', 'honcho', 'kokubuncho'], window: { startMin: 11 * 60, endMin: 24 * 60 }, shoppingDay: true, shoppingFromMin: null };
 
 export const CANDS_0813 = [
   { poi: POIS['大崎八幡宮'], priority: 'must', isAnchor: true },

@@ -1,5 +1,5 @@
 {
-  "_說明": "店型→腳的負荷係數（profile §2.4，原話 #95、#106、#110、#111、#117）。站著逛 0、慢走參觀 0.5、走動 1.0；walkAround 的大店 1.0。改數字不用改程式。",
+  "_說明": "店型→腳的負荷係數（profile §2.4，原話 #95、#106、#110、#111、#117）。站著逛 0、慢走參觀 0.5、走動 1.0；walkAround 的大店 1.0。會場（venue：研討會、演唱會，坐著）0，預設（10-14 T23）。改數字不用改程式。",
   "byCategory": {
     "vintage": 0,
     "record": 0,
@@ -27,6 +27,7 @@
     "electronics": 1,
     "outlet": 1,
     "street": 1,
+    "venue": 0,
     "other": 0.5
   },
   "walkAround": ["department", "electronics", "outlet"],

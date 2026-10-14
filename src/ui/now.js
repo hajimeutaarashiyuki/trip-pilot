@@ -6,7 +6,7 @@ import { el, hm, dateLabel, nowMinutes, todayStr } from './dom.js';
 import { TEXT } from './text.js';
 import { openIntervals } from '../engine/time.js';
 import { replanDay, TIRED_STRATEGIES } from '../strategies/index.js';
-import { resolveHome } from '../engine/trip.js';
+import { resolveHome, engineMayInsert } from '../engine/trip.js';
 import { routeUrl, legMode, tripCityName } from './maps.js';
 import { darkBeforeMinOf } from './daylight.js';
 import { pendingRatings, progressOf, daysBetween, skipStopPatch } from './ratings.js';
@@ -54,18 +54,21 @@ export function renderNow({ state, actions }) {
   const from = prev ? prev.poi : resolveHome(state.trip, date);
   const leg = state.legFn(from, next.poi);
   const legText = leg.rideMin > 0 ? TEXT.rideTo(leg.walkMin, leg.rideMin) : TEXT.walkTo(leg.walkMin);
-  const closes = closeMin(next.poi, date);
-  const dark = closes == null ? darkBeforeMinOf(next.poi, date, state) : null;   // 白天站沒有幾點關，寫天黑前；天黑也是硬時限（原話 #159）
-  const limitMin = closes ?? dark;
+  // 釘起訖的固定時段（研討會、演唱會；stop.fixedWindow.endMin）：硬時限是散場時刻，不是場地的營業時間（會場寫 19:30 關、排程卻是 20:00）；
+  // 到場時它已經散了才算受威脅——研討會中途卡片一整天都是這一站，不能 19:00 一過就翻成改案清單（10-14 T23 審查）
+  const ends = Number.isFinite(next.fixedWindow?.endMin) ? next.fixedWindow.endMin : null;
+  const closes = ends == null ? closeMin(next.poi, date) : null;
+  const dark = ends == null && closes == null ? darkBeforeMinOf(next.poi, date, state) : null;   // 白天站沒有幾點關，寫天黑前；天黑也是硬時限（原話 #159）
+  const limitMin = ends ?? closes ?? dark;
   const lateMin = nowMin + leg.walkMin + leg.rideMin - next.startMin; // 現在出發會比排定晚幾分（負＝有餘裕）
   const arriveMin = nowMin + leg.walkMin + leg.rideMin;
-  const threatened = limitMin != null && arriveMin + Math.min(next.dwellMin, 30) > limitMin;
+  const threatened = limitMin != null && (ends != null ? arriveMin > ends : arriveMin + Math.min(next.dwellMin, 30) > limitMin);
   const status = lateMin > (state.settings.lateThresholdMin ?? 15) ? TEXT.late(lateMin) : lateMin < -5 ? TEXT.early(-lateMin) : '';
 
   nodes.push(el('section', { class: 'card big next' }, [
     el('p', { class: 'muted small', text: TEXT.nextStop + (status ? `　${status}` : '') }),
     el('h2', { text: next.poi.name_zh }),
-    el('p', { class: 'big-line', text: `${legText}${closes != null ? `　${TEXT.closesAt(hm(closes))}` : dark != null ? `　${TEXT.darkBefore(hm(dark))}` : ''}` }),
+    el('p', { class: 'big-line', text: `${legText}${ends != null ? `　${TEXT.endsAt(hm(ends))}` : closes != null ? `　${TEXT.closesAt(hm(closes))}` : dark != null ? `　${TEXT.darkBefore(hm(dark))}` : ''}` }),
     el('p', { class: 'muted small', text: `${hm(next.startMin)} 到，待 ${next.dwellMin} 分` }),
     next.insertedBy === 'engine' ? el('p', { class: 'muted small', text: next.priority === 'filler' ? TEXT.fillerInsertedNow : next.priority === 'onway' ? TEXT.onTheWayInsertedNow : TEXT.restInsertedNow }) : null,
     // 路線深連結：不帶 origin（Google Maps 用現在位置），搭車段 transit、其餘 walking（原話 #157）
@@ -76,7 +79,7 @@ export function renderNow({ state, actions }) {
     ]),
   ]));
 
-  if (threatened) nodes.push(proposalsBlock({ state, actions, date, planned, seq, idx, nowMin, title: TEXT.proposals, tone: 'warn', limitText: closes != null ? TEXT.hardLimit(next.poi.name_zh, hm(closes)) : TEXT.hardLimitDark(next.poi.name_zh, hm(dark)) }));
+  if (threatened) nodes.push(proposalsBlock({ state, actions, date, planned, seq, idx, nowMin, title: TEXT.proposals, tone: 'warn', limitText: ends != null ? TEXT.hardLimitEnds(next.poi.name_zh, hm(ends)) : closes != null ? TEXT.hardLimit(next.poi.name_zh, hm(closes)) : TEXT.hardLimitDark(next.poi.name_zh, hm(dark)) }));
 
   nodes.push(el('button', { class: 'btn primary huge', type: 'button', onclick: () => leave({ state, actions, idx, prev: next }) }, TEXT.leaveNow));
   nodes.push(tiredToggle({ state, actions, date, planned, seq, idx, nowMin }));
@@ -154,13 +157,14 @@ function tiredToggle({ state, actions, date, planned, seq, idx, nowMin }) {
 /**
  * 累了時可以拿來坐的站：當日區域內整個知識庫（原話 #126），扣掉今天排了的、別天排進去的（同一家不在兩天出現）、任何一天按過「不去了」的；
  * 今天勾了但排不進的（示範 8/13 的火星の庭）留著——它就在附近、他本來就想去，正好拿來坐。錢湯要準備、不臨時提（profile §5.9）。形狀同 state.pool（{ poi }）。
+ * 知識庫裡本來就不主動排的店（挖寶型、2 星、落選兩次、未解鎖、代購研究站）也不拿：跟引擎插的恢復站、填站、順路站同一道門（trip.js engineMayInsert，10-14 T22）。
  */
 function tiredPool(state, planned, seq) {
   const zones = new Set(planned.day.regionZones ?? []);
   const skip = new Set(seq.map((s) => s.poi.id));
   for (const other of Object.values(state.plans)) if (other !== planned) for (const s of other.plan.sequence) skip.add(s.poi.id);
   for (const d of state.trip.days) for (const r of d.removed ?? []) if (r?.poiId) skip.add(r.poiId);
-  return Object.values(state.pois).filter((p) => zones.has(p.zoneId) && !skip.has(p.id) && p.category !== 'onsen').map((poi) => ({ poi }));
+  return Object.values(state.pois).filter((p) => engineMayInsert(p) && zones.has(p.zoneId) && !skip.has(p.id) && p.category !== 'onsen').map((poi) => ({ poi }));
 }
 
 /**

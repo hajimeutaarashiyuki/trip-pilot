@@ -31,6 +31,8 @@
     "lateStartHM": "11:00",
     "arrivalBufferMin": 60,
     "departureBufferMin": 180,
+    "fixedBeforeMin": 40,
+    "fixedAfterMin": 30,
     "compressFactor": 0.75,
     "compressMinDwell": 20,
     "restSoonMin": 30,
@@ -42,16 +44,17 @@
     "restInsertMaxPerDay": 2,
     "fillMinGapMin": 15,
     "_原話": {
+      "fixedBeforeMin": "預設，不是原話：數字出自 08-19 計畫 1（docs/superpowers/plans/2026-08-19-trip-pilot-m0-m1.md 第 2159 行）的夾具 arriveEarlyMin: 40／afterMin: 30 與 DESIGN §11.1 Q7「固定時段前 40 後 30 不排站」；fixedAfterMin 30 同一處（10-14 T23）。知識庫 8/14 研討會通勤條目的「建議研討會開始前 40 分出門」是出門時刻、不是到場提前量，不當出處（10-14 T23 審查）",
       "maxShopRunMin": "#103（題目寫 240 他答可以）",
       "walkBudgetMin": "#114（先留）",
       "sameTypeMaxPerDay": "#123、#143",
       "dayTripWalkFactor": "#160（跟早起日同值 0.7，取最嚴）"
     },
-    "themeDaySameTypeMax": 3,
     "onTheWayDetourMin": 8,
     "onTheWayPoolMax": 4,
     "onTheWayMaxDwellMin": 45,
-    "airportZoneId": "airport"
+    "airportZoneId": "airport",
+    "shoppingAfternoonHM": "13:00"
   },
   "rules": {
     "dim-walk": {
@@ -176,6 +179,10 @@
     "night-slot": {
       "weight": 1,
       "missMin": 10
+    },
+    "shopping-day": {
+      "weight": 1,
+      "penaltyMin": 80
     }
   },
   "_規則說明": "每條規則：weight 0 = 停用；其餘鍵是那條規則的門檻或罰分（分鐘）。預設值是 10-10 從 DESIGN §5.2 換算的，都是預設等級。"
