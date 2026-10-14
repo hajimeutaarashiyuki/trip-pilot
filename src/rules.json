@@ -54,7 +54,8 @@
     "onTheWayPoolMax": 4,
     "onTheWayMaxDwellMin": 45,
     "airportZoneId": "airport",
-    "shoppingAfternoonHM": "13:00"
+    "shoppingAfternoonHM": "13:00",
+    "fillerValuePerMin": 0.5
   },
   "rules": {
     "dim-walk": {

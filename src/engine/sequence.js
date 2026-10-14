@@ -33,7 +33,7 @@ export function evaluateSequence({ sequence, day, home, legFn, rules, settings, 
     const prev = seq.length ? seq[seq.length - 1] : null;
     const leg = legBetween(legFn, seq, home, stop.poi);
     const r = evaluateStop({ ...base, stop, prev, next: null, leg, acc, sequence: seq }, rules);
-    acc = r.acc; value += candidateValue(stop); stopPenalty += r.penaltyMin;
+    acc = r.acc; value += candidateValue(stop, settings); stopPenalty += r.penaltyMin;
     warnings.push(...r.warnings);
     stops.push({ poiId: stop.poi.id, penaltyMin: r.penaltyMin, items: r.breakdown, verdict: r.verdict });
     seq.push(stop);

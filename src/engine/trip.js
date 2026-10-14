@@ -123,7 +123,7 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
     let plan = planDay({ candidates, day, home, legFn, rules, settings, country, kb, options });
     const rejected = rejectedKinds(d.removed);
     const exclude = new Set([...pickedAnywhere, ...removedAnywhere, ...insertedSoFar]);
-    const extra = extraCandidates({ restPool, candidates, day, exclude, home, plan, settings, rejected });
+    const extra = extraCandidates({ restPool, candidates, day, exclude, home, plan, settings, rejected, legFn });
     if (extra.length) {
       const withExtra = planDay({ candidates: [...candidates, ...extra], day, home, legFn, rules, settings, country, kb, options });
       if ((withExtra.complete && !plan.complete) || (withExtra.complete === plan.complete && withExtra.score > plan.score)) plan = withExtra;
@@ -146,12 +146,12 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
  * 第二趟要加進候選的引擎插站：第一趟有 walk-run 警告 → 恢復站（restCandidates）、有 wait-at-door 警告 → 填站（fillCandidates）；
  * rejected（這天拒絕過的種類 'rest'／'filler'）那一種不加；同一家店兩邊都選到只留恢復站那份（不綁空檔）。
  */
-export function extraCandidates({ restPool = [], candidates = [], day, exclude = new Set(), home = null, plan, settings = {}, rejected = new Set() }) {
+export function extraCandidates({ restPool = [], candidates = [], day, exclude = new Set(), home = null, plan, settings = {}, rejected = new Set(), legFn = null }) {
   const triggered = (ruleId) => (plan?.warnings ?? []).some((w) => w.ruleId === ruleId);
   const rests = triggered('walk-run') && !rejected.has('rest') ? restCandidates({ restPool, candidates, day, exclude, home, settings }) : [];
   // 填站與順路站都是「引擎多排一家店」：拒絕過其中一種，那天兩種都不插（推導；拒絕恢復站只管恢復站）
   const shopRejected = rejected.has('filler') || rejected.has('onway');
-  const fillers = triggered('wait-at-door') && !shopRejected ? fillCandidates({ restPool, candidates, day, exclude, home, plan, settings }) : [];
+  const fillers = triggered('wait-at-door') && !shopRejected ? fillCandidates({ restPool, candidates, day, exclude, home, plan, settings, legFn }) : [];
   const seen = new Set(rests.map((c) => c.poi.id));
   return [...rests, ...fillers.filter((c) => (seen.has(c.poi.id) ? false : (seen.add(c.poi.id), true)))];
 }
@@ -258,34 +258,80 @@ export function restCandidates({ restPool = [], candidates = [], day, exclude = 
  * 購物類填在非購物日由規則 shopping-day 罰掉，購物日照填），在當日區域內、不在 exclude 裡（任何一天勾的、按過不去了的、前幾天插過的）、
  * 空檔開始時就已經開門（原話 #164：填站不能自己再等一次開門；沒有結構化時段視為有開；當天休息跳過），沒開的不佔 fillPoolMax 名額；
  * 依到「等開門那站與它前一站（沒有就住宿）中點」的直線距離取最近 settings.fillPoolMax 家。
+ * 等的那站前面整塊能往後挪時（搭車過來的那一塊，受各站關門時刻限制），鬆弛算成搭車前、上一區的空檔，填站也可以放那裡（upstreamGap，T24）。
  * 候選帶 gap（規則 filler-gap 擋在空檔外的排法）與 dwellMin = min(店的停留, 空檔長度 − fillMinGapMin)（留給兩段移動），裁完不到 fillMinGapMin 的不拿、不佔名額；
  * 價值 0（priority 'filler'）、optional、insertedBy 'engine'，可拒絕。
- * 同一家店靠近兩段空檔時歸先出現的那段。
+ * 同一家店靠近兩段空檔時歸離它比較近的那段。
  */
-export function fillCandidates({ restPool = [], candidates = [], day, exclude = new Set(), home = null, plan, settings = {} }) {
+export function fillCandidates({ restPool = [], candidates = [], day, exclude = new Set(), home = null, plan, settings = {}, legFn = null }) {
   if (!restPool.length || !plan?.sequence?.length) return [];
   const pool = restPool.filter((p) => engineMayInsert(p) && !NO_FILL_CATEGORIES.has(p.category) && (day.regionZones ?? []).includes(p.zoneId) && !exclude.has(p.id));
   const out = new Map();
   const minGap = settings.fillMinGapMin ?? 15;
+  // 一段空檔 → 離它最近、開始時有開的幾家店；同一家店靠近兩段空檔時歸離它比較近的那段（城裡的店不該綁在松島那段空檔裡，T24）
+  const addGap = (gap, mid) => {
+    const gapMin = gap.endMin - gap.startMin;
+    if (gapMin < minGap) return;
+    const distance = (p) => (mid && hasCoords(p) ? haversineM(mid, p) : Infinity);
+    pool.filter((p) => openFrom(p, day.date, gap.startMin, minGap))
+      .map((p) => ({ p, d: distance(p) })).sort((a, b) => (a.d === b.d ? 0 : a.d < b.d ? -1 : 1)).slice(0, settings.fillPoolMax ?? 6)
+      .forEach(({ p, d }) => {
+        const prev = out.get(p.id);
+        if (prev && prev.d <= d) return;
+        const dwellMin = Math.min(p.dwellMin ?? settings.defaultDwellMin ?? 60, gapMin - minGap);
+        if (dwellMin < minGap) return;
+        out.set(p.id, { poi: p, priority: 'filler', optional: true, insertedBy: 'engine', gap, dwellMin, d });
+      });
+  };
   for (const w of plan.warnings.filter((x) => (x.ruleId === 'wait-at-door' || x.ruleId === 'late-departure') && x.poiId)) {
     const i = plan.sequence.findIndex((s) => s.poi.id === w.poiId);
     if (i < 0) continue;
     const waiting = plan.sequence[i]; const before = i > 0 ? plan.sequence[i - 1] : null;
     const gap = { startMin: before ? before.endMin : day.window.startMin, endMin: opensAt(waiting, day.date) };
-    const gapMin = gap.endMin - gap.startMin;
-    if (gapMin < minGap) continue;
     const mid = centroidOf([waiting.poi, before?.poi ?? home].filter(Boolean)) ?? centroidOf(candidates.map((c) => c.poi));
-    const distance = (p) => (mid && hasCoords(p) ? haversineM(mid, p) : Infinity);
-    pool.filter((p) => openFrom(p, day.date, gap.startMin, minGap))
-      .map((p) => ({ p, d: distance(p) })).sort((a, b) => (a.d === b.d ? 0 : a.d < b.d ? -1 : 1)).slice(0, settings.fillPoolMax ?? 6)
-      .forEach(({ p }) => {
-        if (out.has(p.id)) return;
-        const dwellMin = Math.min(p.dwellMin ?? settings.defaultDwellMin ?? 60, gapMin - minGap);
-        if (dwellMin < minGap) return;
-        out.set(p.id, { poi: p, priority: 'filler', optional: true, insertedBy: 'engine', gap, dwellMin });
-      });
+    addGap(gap, mid);
+    // 錨點前的空檔倒推（T24，DESIGN §1.2「提早多久到錨點區＝錨點時限＋錨點區當天有開的候選夠不夠逛」、原話 #80「一大早到松島…逛無可逛」）：
+    // 等的那站前面、搭車過來之後的整塊能往後挪多少，那段鬆弛就是搭車前、上一區的空檔——填站可以放那裡（城裡有的是店），
+    // 搭車自然延後、整塊跟著往後貼、等的時間變短。10-13 七天實驗 8/16：松島的站 16:35 就用完、花火 18:30，空等 115 分，而仙台午餐後的空檔沒人填。
+    const up = legFn ? upstreamGap({ sequence: plan.sequence, index: i, day, legFn, home }) : null;
+    if (up) addGap(up.gap, hasCoords(up.near) ? { lat: up.near.lat, lng: up.near.lng } : mid);
   }
-  return [...out.values()];
+  return [...out.values()].map(({ d, ...c }) => c);
+}
+
+/**
+ * 等的那站（index）前面、搭車過來之後連續走路到得了的那一塊（block）能往後挪多少（T24）：
+ * 鬆弛 ＝ min(等的分鐘, block 裡「所在營業區間的關門時刻 − 它的結束」的最大值)——取最大值是樂觀估計，讓第二趟搜尋可以把 block 重排（先去早關門的那家）；
+ * 排不開的硬規則 hours 會擋，填站是 optional，排不進就不插。block 前面要是搭車段（鬆弛在同一區時原本的空檔已經涵蓋）；block 裡有固定時段的站就不挪；
+ * 沒結構化時段的站不設限。回 { gap: { startMin: 搭車前那站的結束（沒有就時窗起點）, endMin: 同＋鬆弛 }, near: 搭車前那站（沒有就住宿） }，沒有可挪的塊回 null。
+ */
+export function upstreamGap({ sequence, index, day, legFn, home }) {
+  if (!Array.isArray(sequence) || index <= 0 || index >= sequence.length) return null;
+  let start = index;
+  for (let k = index - 1; k >= 0; k--) {
+    const prevPoi = k > 0 ? sequence[k - 1].poi : home;
+    start = k;
+    if ((legFn(prevPoi, sequence[k].poi)?.rideMin ?? 0) > 0) break;
+  }
+  if (start >= index) return null;
+  const beforeBlock = start > 0 ? sequence[start - 1].poi : home;
+  if ((legFn(beforeBlock, sequence[start].poi)?.rideMin ?? 0) <= 0) return null;
+  const waiting = sequence[index];
+  let roomMax = 0;
+  for (let k = start; k < index; k++) {
+    const s = sequence[k];
+    if (s.fixedWindow) return null;
+    const intervals = openIntervals(s.poi, day.date);
+    if (!intervals || !intervals.length) { roomMax = Infinity; continue; }
+    const cur = intervals.find(([o, c]) => s.startMin >= o && s.startMin < c) ?? intervals.find(([, c]) => s.endMin <= c);
+    if (!cur) continue;
+    roomMax = Math.max(roomMax, cur[1] - s.endMin);
+  }
+  const slack = Math.min(waiting.waitMin ?? 0, roomMax);
+  if (!(slack > 0)) return null;
+  const prevStop = start > 0 ? sequence[start - 1] : null;
+  const gapStart = prevStop ? prevStop.endMin : day.window.startMin;
+  return { gap: { startMin: gapStart, endMin: gapStart + slack }, near: prevStop?.poi ?? home };
 }
 
 // 填空檔不拿的店型（推導；原話只說「任何站都可以」）：交通與資訊（不是地點）、活動（綁日期）、錢湯（要準備，profile §5.9）、

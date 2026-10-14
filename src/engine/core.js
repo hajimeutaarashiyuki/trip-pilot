@@ -14,8 +14,11 @@ import { warnText } from '../rules/index.js';
 export const PRIORITY_VALUE = Object.freeze({ must: 180, want: 90, maybe: 45, rest: 0, filler: 0, onway: 30 });   // onway＝順路站（trip.js onTheWayCandidates，原話 #170）：有一點價值才會被排進去，但低於他自己勾的 maybe
 
 /** 一個候選的價值（分鐘）：優先度＋星等加分。預設等級的數字。 */
-export function candidateValue(c) {
-  if (c.priority === 'rest' || c.priority === 'filler') return 0;   // 星等加分也不給：不然評分高的店沒觸發也會被塞進來
+export function candidateValue(c, settings = {}) {
+  if (c.priority === 'rest') return 0;   // 星等加分也不給：不然評分高的店沒觸發也會被塞進來
+  // 填站：價值＝填掉的分鐘 × settings.fillerValuePerMin（預設 0.5）。等開門的罰封頂 60 之後，填站少等幾分鐘都沒有罰分差，兩小時的洞填不填一樣；
+  // 給它一點跟長度成比例的價值，第二趟才會採用（10-14 T24）。試過改封頂 180：引擎為了少等會把他勾的站整個丟掉（花火前的神社），不行。星等加分照樣不給。
+  if (c.priority === 'filler') return Math.max(0, c.dwellMin ?? 0) * (settings.fillerValuePerMin ?? 0.5);
   if (c.priority === 'onway') return PRIORITY_VALUE.onway;           // 順路站：固定一點價值，不吃星等加分
   const base = PRIORITY_VALUE[c.priority] ?? PRIORITY_VALUE.maybe;
   const rating = c.poi?.my?.rating;
@@ -48,7 +51,7 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
   const maxOptional = settings.restInsertMaxPerDay ?? 2;   // 一天最多排幾個 optional（引擎插的恢復站與填站；rules.json settings.restInsertMaxPerDay）：價值 0 的站不受上界剪枝，不設上限會把節點吃光
   const explain = Boolean(options.explain);
   const started = Date.now();
-  const cands = orderCandidates(candidates.map((c, i) => ({ ...c, _i: i, value: candidateValue(c), dwellMin: c.dwellMin ?? c.poi.dwellMin ?? settings.defaultDwellMin ?? 60 })));
+  const cands = orderCandidates(candidates.map((c, i) => ({ ...c, _i: i, value: candidateValue(c, settings), dwellMin: c.dwellMin ?? c.poi.dwellMin ?? settings.defaultDwellMin ?? 60 })));
   const stats = { nodes: 0, truncated: false, ms: 0 };
   const dead = new Map();   // _i → 第一次 never 的人話理由
   const placedEver = new Set();   // 在任何一條分支裡排進去過的候選：落選是分數取捨，不是硬約束擋的（理由不能拿 never 的那句誤導，例如「天黑」）

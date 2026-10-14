@@ -4,6 +4,8 @@
 // waitMin 是比卡位時刻還早到的部分，是空等，一樣罰（10-13 七天實驗：不罰的話引擎讓他 8/16 在松島空等 137 分）；
 // fixedWindow 平常是 null，不列進 reads（列了會被當缺欄位跳過）。
 // 當天第一站要等開門的話 schedule.js 已改成晚點出門（waitMin 0），所以這條只會罰站與站之間的等待；推太晚由 late-departure 罰。
+// 封頂 60（預設，10-11 對抗審查）。封頂之後填站少等幾分鐘都沒有罰分差，所以填站另有「填掉的分鐘 × fillerValuePerMin」的價值（core.js candidateValue，10-14 T24）；
+// 10-14 試過把封頂拉到 180：引擎會為了少等而把他勾的站整個丟掉（花火前的神社、8/13 的汐谷），不行。
 export default {
   id: 'wait-at-door',
   kind: 'soft',

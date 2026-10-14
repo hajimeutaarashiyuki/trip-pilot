@@ -124,7 +124,7 @@ test('wait-at-door：等開門超過 15 分的部分每分鐘罰 1、封頂 60�
   assert.equal(run('wait-at-door', ctx({ ...stop('Elbe'), waitMin: 45 })), 30);
   assert.equal(run('wait-at-door', ctx({ ...stop('Elbe'), waitMin: 10 })), 0);
   assert.equal(run('wait-at-door', ctx({ ...stop('Elbe'), waitMin: 0 })), 0);
-  assert.equal(run('wait-at-door', ctx({ ...stop('Elbe'), waitMin: 200 })), 60, '等 200 分罰到 capMin 60 封頂');
+  assert.equal(run('wait-at-door', ctx({ ...stop('Elbe'), waitMin: 200 })), 60, '等 200 分罰到 capMin 60 封頂（10-14 試過 180：引擎為了少等會丟掉他勾的站，改回）');
   assert.equal(run('wait-at-door', ctx({ ...stop('Elbe'), waitMin: 75 })), 60, '剛好到頂');
   const fireworks = stop('花火', { category: 'event', walkFactor: 0, startMin: 19 * 60, dwellMin: 60, fixedWindow: { startMin: 19 * 60 + 30, arriveEarlyMin: 30 } });
   assert.equal(run('wait-at-door', ctx({ ...fireworks, waitMin: 200 })), 60, '固定時段（花火）：卡位提前量已在排程裡，比它更早到的空等照罰（10-13 七天實驗 8/16 空等 137 分）');

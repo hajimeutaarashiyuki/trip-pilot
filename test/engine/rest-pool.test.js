@@ -6,7 +6,7 @@
 // 恢復站與填站一天合計最多插 settings.restInsertMaxPerDay 家；同一家店不在兩天都被插、任何一天按過「不去了」的不插。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planTrip, restCandidates, fillCandidates, extraCandidates } from '../../src/engine/trip.js';
+import { planTrip, restCandidates, fillCandidates, extraCandidates, upstreamGap } from '../../src/engine/trip.js';
 import { loadRules } from '../../src/rules/index.js';
 import { BUILTIN } from '../../src/rules/builtin.js';
 import rulesJson from '../../src/rules.json' with { type: 'json' };
@@ -351,4 +351,30 @@ test('購物類的填站只在購物日填進去（規則 shopping-day）：同�
   assert.equal(filled.errand, false);
   assert.ok(!on.plan.warnings.some((w) => w.ruleId === 'shopping-day'));
   assert.ok(on.plan.penaltyMin < off.plan.penaltyMin, `購物日填了之後罰分 ${on.plan.penaltyMin} 要低於沒填的 ${off.plan.penaltyMin}`);
+});
+
+test('T24 錨點前的空檔倒推：等的那站前面整塊能往後挪時，鬆弛算成搭車前上一區的空檔，填站放在上一區（DESIGN §1.2、原話 #80）', () => {
+  const far = (id, over = {}) => poi(id, { zoneId: 'far', lat: 38.40, lng: 141.00, ...over });
+  // A 12:00 關、B 15:00 關、花火 13:30 釘住：順序只能 A → B → 花火（不然引擎會把花火排第一站、晚出門，根本不用等）
+  const A = poi('A', { hours: { thu: [['09:00', '12:00']] } });
+  const B = far('B', { hours: { thu: [['10:00', '15:00']] } });
+  const F = far('花火', { category: 'event', walkFactor: 0, hours: ALL, dwellMin: 60 });
+  const C = cafe('城裡咖啡廳');
+  const legFn2 = (a, b) => (a.zoneId === b.zoneId ? { walkMin: 5, rideMin: 0, climbMin: 0 } : { walkMin: 5, rideMin: 30, climbMin: 0 });
+  const kb2 = { zones: { town: { environment: 'town', lat: 38.26, lng: 140.87 }, far: { environment: 'town', lat: 38.40, lng: 141.00 } } };
+  const mk = (restPool) => planTrip({ trip: { id: 't', party: 1, homeBases: [{ poi: home }], days: [{ date: '2026-08-13', type: 'normal', designated: ['A', 'B', '花火'], picks: [{ poiId: 'A', priority: 'must' }, { poiId: 'B', priority: 'must' }, { poiId: '花火', priority: 'must', fixedWindow: { startMin: 13 * 60 + 30, arriveEarlyMin: 0 } }] }] }, pois: { A, B, 花火: F }, rules, settings, country, kb: kb2, legFn: legFn2, restPool }).days[0];
+  const bare = mk([]);
+  const fw = bare.plan.sequence.find((s) => s.poi.id === '花火');
+  assert.ok(fw && fw.waitMin > 60, `沒池時花火前要空等很久：${fw?.waitMin}`);
+  const a = bare.plan.sequence.find((s) => s.poi.id === 'A'); const b = bare.plan.sequence.find((s) => s.poi.id === 'B');
+  const up = upstreamGap({ sequence: bare.plan.sequence, index: bare.plan.sequence.indexOf(fw), day: bare.day, legFn: legFn2, home });
+  assert.deepEqual(up.gap, { startMin: a.endMin, endMin: a.endMin + Math.min(fw.waitMin, 15 * 60 - b.endMin) }, '上游空檔＝A 結束起、長度＝min(花火空等, B 關門前還能挪的)');
+  assert.equal(up.near.id, 'A', '空檔在搭車前那站附近');
+  assert.equal(upstreamGap({ sequence: bare.plan.sequence, index: bare.plan.sequence.indexOf(b), day: bare.day, legFn: legFn2, home }), null, 'B 自己是搭車到的，前面沒有可挪的塊');
+  const withPool = mk([C]);
+  const ids2 = withPool.plan.sequence.map((s) => s.poi.id);
+  assert.deepEqual(ids2, ['A', '城裡咖啡廳', 'B', '花火'], `咖啡廳要插在 A 後、搭車前：${ids2.join('→')}`);
+  const fw2 = withPool.plan.sequence.find((s) => s.poi.id === '花火');
+  assert.ok(fw2.waitMin < fw.waitMin, `花火前的空等要變短：${fw.waitMin} → ${fw2.waitMin}`);
+  assert.equal(withPool.plan.sequence.find((s) => s.poi.id === '城裡咖啡廳').gap.startMin, a.endMin, '填站綁在上游空檔');
 });
