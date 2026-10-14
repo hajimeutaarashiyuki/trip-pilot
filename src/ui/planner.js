@@ -90,10 +90,12 @@ function stopCard(s, i, plan, d, state, actions, seenCumulative = new Set()) {
   const poi = s.poi;
   const next = plan.sequence[i + 1];
   const legNext = next ? state.legFn(poi, next.poi) : null;
-  const closes = closeHm(poi, d.date);
+  // 釘起訖的固定時段站（研討會、演唱會）寫「HH:MM 散場」，跟現場頁一樣（10-14 T23）；其他站寫幾點關
+  const ends = Number.isFinite(s.fixedWindow?.endMin) ? hm(s.fixedWindow.endMin) : null;
+  const closes = ends ? null : closeHm(poi, d.date);
   // 白天站沒有幾點關：在同一個位置寫「天黑 HH:MM 前」（原話 #159）；位置不明就不寫
-  const dark = closes ? null : darkBeforeMinOf(poi, d.date, state);
-  const limitText = closes ? TEXT.closesAt(closes) : dark != null ? TEXT.darkBefore(hm(dark)) : '';
+  const dark = ends || closes ? null : darkBeforeMinOf(poi, d.date, state);
+  const limitText = ends ? TEXT.endsAt(ends) : closes ? TEXT.closesAt(closes) : dark != null ? TEXT.darkBefore(hm(dark)) : '';
   // 等開門那段已在站間那行寫「等開門 N 分（算留白）」，wait-at-door 的黃字不再寫一次
   const warns = plan.warnings.filter((w) => {
     if (w.poiId !== poi.id || w.code === 'skipped-missing' || w.ruleId === 'wait-at-door') return false;
