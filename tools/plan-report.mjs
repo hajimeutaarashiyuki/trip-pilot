@@ -13,7 +13,11 @@ import { minToHm } from '../src/engine/time.js';
 import rulesJson from '../src/rules.json' with { type: 'json' };
 
 export async function planPackFile(file, options = {}) {
-  const { pack, pois, warnings } = readPack(await readFile(file, 'utf8'));
+  return planPack(readPack(await readFile(file, 'utf8')), options);
+}
+
+/** 讀好的打包檔（readPack 的結果）→ 排整趟；tools/allocate.mjs 分配完也拿這個印同一份報告。 */
+export function planPack({ pack, pois, warnings }, options = {}) {
   const src = pack.rules ?? rulesJson;
   const settings = { ...src.settings };
   const rules = loadRules(BUILTIN, src.rules);

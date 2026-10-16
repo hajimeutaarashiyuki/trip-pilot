@@ -63,7 +63,16 @@
     "spotFlexMaxMin": 120,
     "spotPoolMax": 2,
     "corridorListRadiusM": 100,
-    "corridorListMaxPerLeg": 5
+    "corridorListMaxPerLeg": 5,
+    "allocTargetStops": 6,
+    "allocMaxStops": 8,
+    "allocDayTripTargetStops": 5,
+    "allocDayTripMaxStops": 6,
+    "allocOverTargetPenaltyMin": 60,
+    "allocWalkCircleMin": 20,
+    "allocLinkMaxMin": 15,
+    "allocCorridorSlackMin": 10,
+    "allocItemMaxPerDay": 2
   },
   "rules": {
     "dim-walk": {

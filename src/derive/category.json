@@ -1,5 +1,7 @@
 {
  "_說明": "知識庫的 category 是研究寫的自由文字，這張表把它對到規範店型。依序比對 keywords，第一個命中就用；都沒命中→ other 並記警告。改這張表不用改程式。 daytrip 排在神社寺院前面：「半日遊（神社＋美食）」那種複合條目要先認成一日遊，不然會被當成一座神社插進行程（10-13）。venue（會場：研討會、演唱會那種固定時段的場地）放最後：「交通｜…」的通勤條目先被 logistics 認走、「祭典／縁日（會場攤位）」先被 event 認走，只有 category 本身寫會場的才算（10-14 T23）。 spot（坐下來的地方）排在博物館、庭園前面：「海邊」「展望台」這種沒有店名的地點不是庭園（10-16，原話 #172）。",
+ "_brandKeywords說明": "keywords 裡拿來認店型的品牌與品名字（研究把 category 寫成「電器（Yodobashi）」「藥妝（松本清）」那種）。需求單點名這些字是指一家店、不是店型請求：多日分配器 engine/allocate.js isCategoryRequest 讀這張清單，不把「Yodobashi」「三越」當成「電器行」「百貨」的店型請求丟掉（10-16 T17 審查後）。classifyCategory 不讀這個鍵，認店型照舊。keywords 加了品牌字就同步加進來。",
+ "brandKeywords": ["Yodobashi", "ヨドバシ", "S-PAL", "PARCO", "三越", "藤崎", "松本清", "ツルハ", "EDP", "Cloudmonster", "On（", "Be Delicious"],
  "rules": [
   {
    "key": "logistics",
