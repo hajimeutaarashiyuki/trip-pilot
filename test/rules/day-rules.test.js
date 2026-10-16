@@ -1,7 +1,7 @@
 // T3：整天層級的規則（主行程必排、指定行程缺席罰、主題日不連兩天、餐段、夜間站）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { stop, ctx, run, warnOf, rules } from './_fixtures.js';
+import { stop, ctx, run, warnOf, rules, country } from './_fixtures.js';
 import { evaluateDay } from '../../src/engine/evaluate.js';
 
 const lunch = stop('一隆', { category: 'food', walkFactor: 0, recovery: true, startMin: 12 * 60 + 15, dwellMin: 65 });
@@ -86,6 +86,20 @@ test('固定時段日（type fixed，研討會；10-14 T23）：night-slot 照�
   assert.equal(run('night-slot', ctx(null, { sequence: [lunch, pinnedCafe], day: { type: 'normal' } })), 10, '降速釘的「現在就去坐」不是固定時段，咖啡廳不算夜間站');
   const longShrine = stop('長站', { startMin: 8 * 60 + 50, dwellMin: 670 });
   assert.equal(run('meal-slots', ctx(null, { sequence: [longShrine], day })), 40, '沒有固定時段的長站不算蓋住（只有固定時段的站才當大會供餐）');
+});
+
+test('night-slot 夜間步行風險（T20，country.transportProfile.nightWalk.risk，原話 #145）：low／缺照 nightSlot 到 24:00；mid 尾端提前到 23:00、high 到 22:00（預設、推導）', () => {
+  const c = (seq, risk) => ctx(null, { sequence: seq, country: risk ? { ...country, transportProfile: { nightWalk: { risk } } } : country });
+  const lateNight = stop('深夜bar', { category: 'bar', walkFactor: 0, recovery: true, startMin: 23 * 60 + 10, dwellMin: 50 });   // 23:10–24:00
+  const evening = stop('十點半bar', { category: 'bar', walkFactor: 0, recovery: true, startMin: 22 * 60 + 30, dwellMin: 60 });   // 22:30–23:30
+  assert.equal(run('night-slot', c([lunch, lateNight])), 0, '缺 transportProfile＝low：23:10 的 bar 在 20:00–24:00 內');
+  assert.equal(run('night-slot', c([lunch, lateNight], 'low')), 0);
+  assert.equal(run('night-slot', c([lunch, lateNight], 'mid')), 10, 'mid：尾端 23:00，23:10 才開始的不算');
+  assert.equal(run('night-slot', c([lunch, evening], 'mid')), 0, 'mid：22:30 開始、跨 23:00 前算有');
+  assert.equal(run('night-slot', c([lunch, evening], 'high')), 10, 'high：尾端 22:00，22:30 才開始的不算');
+  assert.equal(run('night-slot', c([lunch, late], 'high')), 0, 'high：20:30–22:00 的 bar 算有');
+  assert.equal(run('night-slot', c([lunch, late], 'weird')), 0, '看不懂的等級當 low');
+  assert.equal(run('night-slot', c([lunch, evening], 'high')), 10, '規則沒因為少了選填鍵被跳過（transportProfile 不在 reads）');
 });
 
 test('evaluateDay 把 day scope 的規則一起算', () => {

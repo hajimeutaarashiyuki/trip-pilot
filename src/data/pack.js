@@ -1,5 +1,5 @@
 // 打包檔：桌機把「知識庫＋旅程＋國家層＋步行矩陣」包成一個 JSON 給手機（決策樹 Q19；形狀借 case-lab：meta 在前、內容在後）。
-// 手機用 meta 判斷要不要收；讀進來時每個 POI 過 normalizePoi，缺的補預設並留警告。純函式，Node 與瀏覽器共用。
+// 手機用 meta 判斷要不要收；讀進來時每個 POI 過 normalizePoi（帶 pack.country：要準備的恢復站型的打包待辦從國家層來，T20），缺的補預設並留警告。純函式，Node 與瀏覽器共用。
 import { normalizeAll } from './schema.js';
 
 export const PACK_FORMAT = 'trip-pilot-pack';
@@ -21,7 +21,7 @@ export function readPack(json) {
   if (!pack || pack.meta?.format !== PACK_FORMAT) throw new Error('這不是 Trip Pilot 的打包檔');
   if (pack.meta.version > PACK_VERSION) throw new Error(`打包檔版本 ${pack.meta.version} 比 App 新，先更新 App`);
   if (!pack.trip?.id || !pack.city?.id) throw new Error('打包檔缺旅程或城市');
-  const { pois, warnings } = normalizeAll(pack.pois ?? []);
+  const { pois, warnings } = normalizeAll(pack.pois ?? [], { country: pack.country ?? null });
   return { pack, pois, warnings };
 }
 

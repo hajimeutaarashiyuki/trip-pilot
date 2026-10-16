@@ -19,7 +19,7 @@ import { mergeField, pickFieldDate, catchUpFieldDate } from './ratings.js';
 import { restoreApplied, withoutApplied } from './applied.js';
 import { upgradePick, visitedPatch, visitedDates } from './corridor.js';
 import { chooseOptionTrip, deferStopTrip, deferNotice, displacedPicks } from './choices.js';
-import { emptyBrief, normalizeBrief, briefToMarkdown, briefFileName, looksLikeBrief, isBriefEmpty } from '../data/brief.js';
+import { emptyBrief, normalizeBrief, briefToMarkdown, briefFileName, looksLikeBrief, isBriefEmpty, themeOptions } from '../data/brief.js';
 import { normalizeMemory, rememberFromBrief } from '../data/brief-memory.js';
 import { personsOf, cityNamesOf } from '../engine/persons.js';
 
@@ -395,7 +395,8 @@ export function exportBrief() {
 /** 複製需求單文字（brief-template 格式）；剪貼簿不給用（非 https、瀏覽器不支援）就把文字放進頁上的框讓他自己複製。 */
 export async function copyBrief() {
   rememberBrief();
-  const text = briefToMarkdown(state.brief);
+  // 主題勾選框照這趟國家層的清單印（T20；沒旅程就預設五個）
+  const text = briefToMarkdown(state.brief, { themes: themeOptions(state.country) });
   try {
     await navigator.clipboard.writeText(text);
     state.briefStatus = TEXT.brief.copied;
@@ -417,7 +418,8 @@ export async function importBrief(file) {
   try { raw = JSON.parse(await file.text()); } catch { raw = undefined; }
   if (raw === undefined) state.briefStatus = TEXT.brief.importFailed(TEXT.brief.notJson);
   else if (!looksLikeBrief(raw)) state.briefStatus = TEXT.brief.importFailed(TEXT.brief.notBriefFile);
-  else { replaceBrief(normalizeBrief(raw)); state.briefStatus = TEXT.brief.imported; }
+  // 手打的中文主題照這趟國家層的清單翻回 id（T20 審查後；沒旅程就只認預設五個）——開機那次 normalizeBrief 沒帶：存著的已經是 id，而且那時還不知道國家
+  else { replaceBrief(normalizeBrief(raw, { themes: themeOptions(state.country) })); state.briefStatus = TEXT.brief.imported; }
   state.briefCopyText = null;
   render();
 }

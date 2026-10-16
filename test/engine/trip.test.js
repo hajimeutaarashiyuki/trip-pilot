@@ -53,6 +53,32 @@ test('dayWindow 留白：days[].openSlotMin 覆寫（0 也算）、settings.open
   assert.equal(dayWindow({ type: 'arrival', arriveMin: 20 * 60 + 30 }, 0, settings).openSlotMin, 0);
 });
 
+test('dayWindow 國家層（T20）：離境日免稅緩衝 taxRefund.bufferMin 只在旅程日期 ≥ effectiveFrom 才扣（仙台 2026-08 不扣）；夜間步行風險 mid／high 時窗尾端 23:00／22:00、low 與缺照舊', () => {
+  const jp = { taxRefund: { mode: 'departure-refund', effectiveFrom: '2026-11-01', bufferMin: 45 }, transportProfile: { nightWalk: { risk: 'low', maxMinNoLastTrain: 15 } } };
+  const dep = (date, country) => dayWindow({ type: 'departure', date, departAirportMin: 16 * 60 }, 6, settings, 30, country);
+  assert.equal(dep('2026-08-18', jp).endMin, 12 * 60 + 30, '仙台 2026-08-18：新制 2026-11-01 才生效，跟以前一樣 16:00−180−30');
+  assert.equal(dep('2026-08-18', jp).taxRefundBufferMin, 0);
+  assert.equal(dep('2026-11-01', jp).endMin, 12 * 60 + 30 - 45, '生效日當天起多扣 45');
+  assert.equal(dep('2026-11-01', jp).taxRefundBufferMin, 45);
+  assert.deepEqual(dep('2027-02-13', jp).raw, { startMin: 540, endMin: 12 * 60 + 30 - 45 }, '原時窗也是扣過的（畫面與夜間站看的收工）');
+  assert.equal(dep('2027-02-13', jp).openSlotMin, 0, '離境日照舊不扣留白');
+  assert.equal(dep('2027-02-13', null).endMin, 12 * 60 + 30, '沒國家層不扣');
+  assert.equal(dep('2027-02-13', { taxRefund: { mode: 'none', bufferMin: 45 } }).endMin, 12 * 60 + 30, '沒有免稅制度（mode none）不扣');
+  assert.equal(dep('2027-02-13', { taxRefund: { bufferMin: 30 } }).endMin, 12 * 60, '沒寫生效日＝已生效');
+  assert.equal(dep(undefined, jp).endMin, 12 * 60 + 30, '有生效日、旅程日期不明：不扣');
+  assert.equal(dayWindow({ type: 'normal', date: '2027-02-13' }, 0, settings, 0, jp).endMin, 22 * 60 + 30, '普通日不扣免稅緩衝');
+  assert.equal(dayWindow({ type: 'normal', date: '2027-02-13' }, 0, settings, 0, jp).taxRefundBufferMin, 0);
+  // 夜間步行風險（原話 #145；mid 23:00、high 22:00 是預設、推導）
+  const risk = (r) => dayWindow({ type: 'normal' }, 0, settings, 0, { transportProfile: { nightWalk: { risk: r } } });
+  assert.deepEqual(risk('low').raw, { startMin: 540, endMin: 1440 });
+  assert.deepEqual(risk('mid').raw, { startMin: 540, endMin: 23 * 60 });
+  assert.equal(risk('mid').endMin, 23 * 60 - 90, '留白照樣從提前後的尾端扣');
+  assert.deepEqual(risk('high').raw, { startMin: 540, endMin: 22 * 60 });
+  assert.deepEqual(risk('weird').raw, { startMin: 540, endMin: 1440 }, '看不懂的等級當 low');
+  assert.equal(dayWindow({ type: 'normal' }, 0, { ...settings, dayWindow: ['09:00', '21:00'] }, 0, { transportProfile: { nightWalk: { risk: 'high' } } }).raw.endMin, 21 * 60, '時窗本來就比上限早就不動');
+  assert.equal(dep('2027-02-13', { ...jp, transportProfile: { nightWalk: { risk: 'high' } } }).endMin, 12 * 60 + 30 - 45, '離境日早就收工，夜間上限不影響');
+});
+
 // 留白扣時窗的整合情境（自己造的小世界，跟 rest-pool.test 同款）：全天開的走動站 ＋ 20:00 才開的 bar ＋ 21:30 才開的 bar
 const NIGHT_COUNTRY = { mealSlots: { lunch: ['11:30', '13:30'], dinner: ['18:00', '20:30'] }, nightSlot: ['20:00', '24:00'], climate: { summerMonths: [6, 7, 8, 9] }, utcOffsetMin: 540 };
 const NIGHT_KB = { zones: { town: { environment: 'town', lat: 38.26, lng: 140.87 } } };
@@ -83,6 +109,27 @@ test('planTrip：留白扣在時窗尾端——day.window 收工 22:30、windowR
   assert.equal(c.day.window.endMin, 1440);
   assert.equal(c.day.openSlotMin, 0);
   assert.ok(c.plan.sequence.some((s) => s.poi.id === half.id && s.endMin === 23 * 60), '留白 0 的那天 21:30–23:00 排得進');
+});
+
+test('planTrip 國家層（T20）：離境日在免稅新制生效後收工再扣 bufferMin、day.taxRefundBufferMin 記下來，生效前跟以前一樣；夜間步行風險 mid 時窗尾端 23:00', () => {
+  const shop = mk('街區');
+  const depTrip = (date) => ({ id: 't', party: 1, homeBases: [{ poi: nightHome }], days: [{ date, type: 'departure', departAirportMin: 16 * 60, picks: [{ poiId: shop.id, priority: 'must' }] }] });
+  const dep = (date, country) => planTrip({ trip: depTrip(date), pois: { [shop.id]: shop }, rules, settings, country, kb: NIGHT_KB, legFn: flatLeg }).days[0];
+  const jp = { ...NIGHT_COUNTRY, taxRefund: { mode: 'departure-refund', effectiveFrom: '2026-11-01', bufferMin: 45 } };
+  const before = dep('2026-08-13', jp);   // 週四（小世界的營業時間只寫 thu）
+  assert.equal(before.day.taxRefundBufferMin, 0);
+  assert.equal(before.day.window.endMin, 13 * 60, '16:00 起飛−180；沒有機場連結車程 0；新制沒生效不扣');
+  const after = dep('2026-11-05', jp);
+  assert.equal(after.day.taxRefundBufferMin, 45);
+  assert.equal(after.day.window.endMin, 13 * 60 - 45);
+  assert.deepEqual(after.day.windowRaw, { startMin: 540, endMin: 13 * 60 - 45 });
+  assert.equal(after.day.openSlotMin, 0, '離境日照舊不扣留白');
+  assert.ok(after.plan.sequence.length && after.plan.sequence.every((s) => s.endMin <= 13 * 60 - 45), '沒有站待過扣了免稅緩衝的收工');
+  assert.equal(dep('2026-11-05', NIGHT_COUNTRY).day.window.endMin, 13 * 60, '國家層沒有 taxRefund 就不扣');
+  const mid = planTrip({ trip: { id: 't', party: 1, homeBases: [{ poi: nightHome }], days: [{ date: '2026-08-13', type: 'normal', picks: [{ poiId: shop.id, priority: 'must' }] }] }, pois: { [shop.id]: shop }, rules, settings, country: { ...NIGHT_COUNTRY, transportProfile: { nightWalk: { risk: 'mid' } } }, kb: NIGHT_KB, legFn: flatLeg }).days[0];
+  assert.deepEqual(mid.day.windowRaw, { startMin: 540, endMin: 23 * 60 }, '夜間步行風險 mid：時窗尾端 23:00');
+  assert.equal(mid.day.window.endMin, 23 * 60 - 90);
+  assert.equal(mid.day.taxRefundBufferMin, 0);
 });
 
 // 固定時段日（研討會；DESIGN §11.1 Q7、08-19 計畫 1 夾具、10-14 T23）：會場是帶固定時段的站，fixed 日跟 normal 走同一條時窗邏輯

@@ -9,6 +9,7 @@ import { SHOPPING_CATEGORIES } from '../rules/_helpers.js';   // 只借購物類
 import { CATEGORIES, classifyCategory } from '../data/schema.js';   // 主題日的店型要對得上知識庫的店型（themeCategoryOf）
 import { proposeChoices, swappedAwayFrom } from './choices.js';   // 二選一（T16）：七天排完才對每天的序列算，不進分數與時刻；choices.js 的 defer 反過來用 planTrip 試排（模組互相引用只在呼叫時用到，沒問題）
 import { personsOf, presentOn, mergeAdjustments, personAvoids, personAvoidWarnings, cityNamesOf } from './persons.js';   // 同行者（T19）：每天在場的人、合併後的調整（取最鬆，原話 #144）、不想去的店型
+import { nightWalkCapMin, taxRefundBufferMin } from '../data/country.js';   // 國家層（T20）：離境日免稅緩衝、夜間步行風險對時窗尾端的上限（誰讀哪個鍵都記在 data/country.js）
 
 /**
  * 引擎插站的觸發：照他勾的排完後出現這些規則的警告才跑第二趟。
@@ -26,19 +27,26 @@ const TRIGGER_KIND = Object.freeze({ 'walk-run': 'rest', 'wait-at-door': 'filler
  * 排程自己對齊卡位時刻；要早於 09:00 出門就手標 earlyDay＋departHM，自動標早起日還沒做），其餘跟 normal 一樣（推導；10-14 T23）；
  * 抵達日起點不早於落地＋出關緩衝＋機場到據點的車程、離境日終點不晚於起飛－緩衝－車程（airportTransit 由 airportTransitMin 算：
  * zones.json 的 airport|<據點區> 連結，沒有就 0；10-13 七天實驗 F1：引擎原本當他 17:00 就站在飯店門口，v4 自己也只留 35 分）。
+ * 國家層（country，打包檔 pack.country；T20）兩樣：離境日再扣免稅海關確認的緩衝 country.taxRefund.bufferMin，只在旅程日期（day.date）≥ taxRefund.effectiveFrom 時扣
+ * （日本 2026-11-01 起的出境退款制、45 分；仙台 2026-08 不扣；data/country.js taxRefundBufferMin）；夜間步行風險 country.transportProfile.nightWalk.risk（原話 #145）
+ * mid／high 時時窗尾端最晚 23:00／22:00（預設、推導；low 與缺照 settings.dayWindow，日本 low；nightWalkCapMin）——規則 night-slot 的時段尾端同一個上限。
  * 留白從時窗尾端扣（profile §8「每天留 90 分鐘」、DESIGN §4 days[].openSlotMin）：每天的落後額度 day.openSlotMin ?? settings.openSlotMinPerDay，
  * 排程時從收工時刻扣掉＝排在最後；departure 日一律 0（那天的尾端是飛機）。
  * 扣完整天只剩 settings.openSlotSkipBelowMin（預設 60）分或更少就不扣、記警告 open-slot-skipped（推導：抵達日很晚落地那種，扣了就沒得排）。
- * 回 { startMin, endMin（扣過的收工時刻，硬規則 window 看這個）, raw: { startMin, endMin }（原時窗，給畫面與夜間站）, openSlotMin（真的扣掉的分鐘）, warnings }
+ * 回 { startMin, endMin（扣過的收工時刻，硬規則 window 看這個）, raw: { startMin, endMin }（原時窗，給畫面與夜間站）, openSlotMin（真的扣掉的分鐘）, taxRefundBufferMin（離境日真的扣掉的免稅緩衝，其餘 0）, warnings }
  */
-export function dayWindow(day, index, settings, airportTransit = 0) {
+export function dayWindow(day, index, settings, airportTransit = 0, country = null) {
   const [start, end] = (settings.dayWindow ?? ['09:00', '24:00']).map(hmToMin);
   let startMin = start;
   if (day.earlyDay && day.departHM) startMin = hmToMin(day.departHM);
   else if (!day.earlyDay && day.type === 'normal' && index + 1 >= (settings.lateStartFromDay ?? 3) && !day.dayTrip) startMin = hmToMin(settings.lateStartHM ?? '11:00');
   if (day.type === 'arrival' && day.arriveMin != null) startMin = Math.max(startMin, day.arriveMin + (settings.arrivalBufferMin ?? 60) + airportTransit);
   let endMin = end;
-  if (day.type === 'departure' && day.departAirportMin != null) endMin = Math.min(endMin, day.departAirportMin - (settings.departureBufferMin ?? 180) - airportTransit);
+  const nightCap = nightWalkCapMin(country);
+  if (nightCap != null) endMin = Math.min(endMin, nightCap);
+  const departing = day.type === 'departure' && day.departAirportMin != null;
+  const taxBuffer = departing ? taxRefundBufferMin(country, day.date) : 0;
+  if (departing) endMin = Math.min(endMin, day.departAirportMin - (settings.departureBufferMin ?? 180) - airportTransit - taxBuffer);
   const raw = { startMin, endMin };
   const wanted = day.type === 'departure' ? 0 : Math.max(0, Number(day.openSlotMin ?? settings.openSlotMinPerDay ?? 90) || 0);
   const warnings = [];
@@ -47,7 +55,7 @@ export function dayWindow(day, index, settings, airportTransit = 0) {
     openSlotMin = 0;
     warnings.push({ code: 'open-slot-skipped', msg: `時窗只有 ${endMin - startMin} 分鐘，留白 ${wanted} 分沒從時窗扣` });
   }
-  return { startMin, endMin: endMin - openSlotMin, raw, openSlotMin, warnings };
+  return { startMin, endMin: endMin - openSlotMin, raw, openSlotMin, taxRefundBufferMin: taxBuffer, warnings };
 }
 
 /** 機場到據點的分鐘：legFn 查 settings.airportZoneId（預設 'airport'）那一區到據點區的搭車連結（車程＋轉乘走路）；沒有連結、據點就在機場區都回 0。 */
@@ -80,6 +88,7 @@ export function regionZonesOf({ home, candidates, anchorPoi }) {
  * - trip.shoppingDays?：購物日覆寫（陣列，元素 'YYYY-MM-DD' 或 { date, fromHM }）；沒有就由 shoppingDaysOf 照完整天數推（DESIGN §1.5）；
  *   寫壞了（不是陣列、fromHM 或 settings.shoppingAfternoonHM 不是 HH:MM）記整趟警告 shopping-days-bad／shopping-from-bad、照樣排（跟 pick-unknown 一樣進 warnings；畫面目前不顯示整趟警告，plan-report 會印）
  * - 每天的 day 上下文：window 是扣過留白的時窗（硬規則 window、搜尋用）、windowRaw 原時窗（畫面、夜間站）、openSlotMin 真的扣掉的分鐘、openSlotSkipped 時窗太短沒扣（整趟 warnings 另有一條 open-slot-skipped）、
+ *   taxRefundBufferMin 離境日扣掉的免稅緩衝（國家層 country.taxRefund，只在旅程日期 ≥ 生效日；T20；其餘日子 0）、
  *   shoppingDay（這天是不是購物日）、shoppingFromMin（購物時段從幾分起，整天都是就 null；非購物日 false／null）
  * - pois：{ [poiId]: poi }（已 normalize）
  * - restPool：引擎可插的站的來源（已規範化的 POI 陣列，可空；畫面與報告傳整個知識庫），每天由 restCandidates（恢復站）、fillCandidates（填空檔）、onTheWayCandidates（順路站）篩，三個池都先過 engineMayInsert；
@@ -123,7 +132,7 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
     const themeCategory = themeCategoryOf(d, warnings);
     // fixed 日卻沒有任何一站帶固定時段（旅程檔手改漏了、或 fixedWindow 寫壞被拿掉）：那天會照營業時間當普通站排、整天像普通日，記整趟警告（10-14 T23 審查）
     if (d.type === 'fixed' && !candidates.some((c) => c.fixedWindow)) warnings.push({ code: 'fixed-day-no-window', date: d.date, msg: `${d.date} 標了固定時段日，但沒有一站帶固定時段（picks[].fixedWindow），會場會照營業時間當普通站排` });
-    const win = dayWindow(d, index, settings, d.type === 'arrival' || d.type === 'departure' ? airportTransitMin({ legFn, home, settings }) : 0);
+    const win = dayWindow(d, index, settings, d.type === 'arrival' || d.type === 'departure' ? airportTransitMin({ legFn, home, settings }) : 0, country);
     for (const w of win.warnings) warnings.push({ ...w, date: d.date, msg: `${d.date} ${w.msg}` });
     // 那天在場的人與合併後的調整（T19）：party＝在場人數（有 dates 的只算那幾天；倍率那條照舊 ≥2 就 partyWalkFactor）；人之間取最鬆（原話 #144）
     const present = presentOn(persons, d.date);
@@ -137,6 +146,7 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
       designated: d.designated ?? [], regionZones: regionZonesOf({ home, candidates, anchorPoi }), homeZoneId: home?.zoneId ?? null,
       window: { startMin: win.startMin, endMin: win.endMin }, windowRaw: win.raw, openSlotMin: win.openSlotMin,
       openSlotSkipped: win.warnings.some((w) => w.code === 'open-slot-skipped'),
+      taxRefundBufferMin: win.taxRefundBufferMin,   // 離境日真的扣掉的免稅緩衝（國家層 taxRefund，T20）；plan-report 與之後的離境日畫面讀，其餘日子 0
       // 夜間站：早起日前一晚、旅程檔手標、在場有人「不排」（adjust.nightSlot none）都不排；「少排」（less）那天 night-slot 的罰分減半（推導）
       nightSlotOff: Boolean(d.nightSlotOff) || Boolean(trip.days[index + 1]?.earlyDay) || adjust.nightSlot === 'none',
       nightSlotLess: adjust.nightSlot === 'less',

@@ -22,13 +22,18 @@ test('店型由自由文字推：古著店 0、百貨 1.0 且 walkAround、喫�
   assert.equal(s.category, 'temple'); assert.equal(s.walkFactor, 0.5); assert.equal(s.dwellMin, 90);
 });
 
-test('明寫的欄位優先於推導；書店走 0.5；錢湯帶打包待辦', () => {
+test('明寫的欄位優先於推導；書店走 0.5；錢湯的打包待辦讀國家層 recoveryTypes（T20）：沒給國家層不帶、明寫的優先、不是要準備的店型不帶', () => {
   const p = normalizePoi({ name_zh: 'X', category: '古著店', walkFactor: 0.5, recovery: true, dwellMin: 45 }).poi;
   assert.equal(p.walkFactor, 0.5); assert.equal(p.recovery, true); assert.equal(p.dwellMin, 45);
   const b = normalizePoi({ name_zh: '阿武隈書房', category: 'bookstore' }).poi;
   assert.equal(b.walkFactor, 0.5);
   const o = normalizePoi({ name_zh: '駒の湯', category: '錢湯' }).poi;
-  assert.equal(o.category, 'onsen'); assert.deepEqual(o.prepNeeded, ['毛巾', '換洗衣物']);
+  assert.equal(o.category, 'onsen'); assert.equal(o.prepNeeded, undefined, '毛巾那串是日本值，10-16 T20 從 derive/recovery.json 搬去 kb/country；沒給國家層就不帶');
+  const jp = { recoveryTypes: [{ category: 'onsen', name_zh: '錢湯／日歸溫泉', prepNeeded: ['毛巾', '換洗衣物'] }, { category: 'cafe', name_zh: '純喫茶' }] };
+  assert.deepEqual(normalizePoi({ name_zh: '駒の湯', category: '錢湯' }, { country: jp }).poi.prepNeeded, ['毛巾', '換洗衣物']);
+  assert.deepEqual(normalizePoi({ name_zh: '駒の湯', category: '錢湯', prepNeeded: ['泳衣'] }, { country: jp }).poi.prepNeeded, ['泳衣'], '明寫的優先');
+  assert.equal(normalizePoi({ name_zh: 'Elbe', category: 'cafe' }, { country: jp }).poi.prepNeeded, undefined, '那筆沒有 prepNeeded 就不帶');
+  assert.equal(normalizePoi({ name_zh: '駒の湯', category: '錢湯' }, { country: { recoveryTypes: 'junk' } }).poi.prepNeeded, undefined, '國家層寫壞不炸');
 });
 
 test('缺資料不炸：看不懂的店型→other 並警告；沒座標、沒結構化營業時間各一條警告；爬坡沒分鐘警告', () => {

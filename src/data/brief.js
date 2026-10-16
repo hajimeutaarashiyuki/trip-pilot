@@ -2,12 +2,13 @@
 // 空單、容錯讀入（舊版或手打的 JSON 也讀得出一份合法的單子，總則 0）、輸出成研究要讀的文字。不碰 DOM。
 // 清單欄位（要去的、一定要吃到的、要買的、例外品牌）畫面上是一行一項的 textarea，資料存陣列。
 import { TEXT } from '../ui/text.js';
+import { themeOptionsOf } from './country.js';   // 主題勾選框的選項讀國家層 country.themes（T20）
 
 export const BRIEF_VERSION = 1;
 export const PURPOSES = ['play', 'work'];
 export const MODES = ['transit', 'car', 'moto'];
 export const THEME_DAY_CATEGORIES = ['vintage', 'record', 'cafe'];
-export const GO_THEMES = ['sakura', 'momiji', 'snow', 'matsuri', 'hanabi'];
+export const GO_THEMES = ['sakura', 'momiji', 'snow', 'matsuri', 'hanabi'];   // 沒國家層時主題勾選框的預設五個（日本的，kb/country/jp.json themes 同一份）；有國家層就讀 country.themes（themeOptions）
 export const STAMINAS = ['normal', 'easy', 'hard'];
 export const NIGHT_SLOTS = ['default', 'less', 'none'];
 export const ME_ID = 'me';
@@ -26,6 +27,25 @@ const ALIASES = {
   nightSlot: { ...flip(TEXT.brief.nightSlots), '每晚': 'default' },
   goTheme: flip(TEXT.brief.themeList),
 };
+
+/** 主題勾選框的選項 [{ id, label }]：有國家層就讀 country.themes（data/country.js themeOptionsOf；缺、空、整個都壞就當沒有），沒有（示範資料、還沒旅程）就預設的五個。 */
+export function themeOptions(country) {
+  return themeOptionsOf(country) ?? GO_THEMES.map((id) => ({ id, label: TEXT.brief.themeList[id] }));
+}
+const THEME_ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/i;
+/**
+ * 主題一項 → id：這個國家清單上的 id 或中文、預設五個的中文都翻回 id；其他英數的 id 照收、壓小寫（主題清單是國家層的，單子在手機上跨旅程留著，
+ * 讀入那一刻不一定知道是哪國——丟了會把上一趟勾的清掉）；不像 id 的（翻不出的中文、空白）丟掉。
+ */
+function themeKey(t, options) {
+  if (typeof t !== 'string') return null;
+  const s = t.trim();
+  if (!s) return null;
+  const hit = (options ?? []).find((o) => o.label === s || o.id === s);
+  if (hit) return hit.id;
+  if (ALIASES.goTheme[s]) return ALIASES.goTheme[s];
+  return THEME_ID_RE.test(s) ? s.toLowerCase() : null;
+}
 
 export function newId(prefix) { return `${prefix}-${Math.random().toString(36).slice(2, 8)}`; }
 
@@ -80,12 +100,12 @@ export function toList(v) {
   return list.filter((x) => typeof x === 'string').map((x) => x.trim()).filter(Boolean);
 }
 
-function normalizePerson(raw, { isMe, fallbackId }) {
+function normalizePerson(raw, { isMe, fallbackId, themes = null }) {
   const p = isObj(raw) ? raw : {};
   const go = isObj(p.go) ? p.go : {};
   const buy = isObj(p.buy) ? p.buy : {};
   const adj = isObj(p.adjustments) ? p.adjustments : {};
-  const themes = toList(go.themes).map((t) => (GO_THEMES.includes(t) ? t : ALIASES.goTheme[t])).filter(Boolean);
+  const themeIds = toList(go.themes).map((t) => themeKey(t, themes)).filter(Boolean);
   return {
     id: str(p.id) || fallbackId || newId('p'),
     name: str(p.name),
@@ -95,7 +115,7 @@ function normalizePerson(raw, { isMe, fallbackId }) {
       // DESIGN §4 草案的 night[]、areas[]、recommended[] 併進 designated：他想到什麼寫什麼、研究來分（brief-template 原則三）
       designated: [...new Set([...toList(go.designated), ...toList(go.night), ...toList(go.areas), ...toList(go.recommended)])],
       mustEat: toList(go.mustEat),
-      themes: [...new Set(themes)],
+      themes: [...new Set(themeIds)],
       themeOther: str(go.themeOther),
     },
     buy: { own: toList(buy.own), brandExceptions: toList(buy.brandExceptions) },
@@ -107,8 +127,8 @@ function normalizePerson(raw, { isMe, fallbackId }) {
   };
 }
 
-/** persons[]：他永遠在第一段（isMe）、沒名字就叫「我」；舊版（go／buy／adjustments 在頂層、party.designated 是同行者要去的）翻成一段一段。 */
-function normalizePersons(r) {
+/** persons[]：他永遠在第一段（isMe）、沒名字就叫「我」；舊版（go／buy／adjustments 在頂層、party.designated 是同行者要去的）翻成一段一段。themes 是這個國家的主題選項（翻中文用）。 */
+function normalizePersons(r, themes = null) {
   let list = arr(r.persons).filter(isObj);
   if (!list.length && (isObj(r.go) || isObj(r.buy) || isObj(r.adjustments))) {
     list = [{ id: ME_ID, isMe: true, go: r.go, buy: r.buy, adjustments: r.adjustments }];
@@ -117,7 +137,7 @@ function normalizePersons(r) {
   }
   if (!list.length) return [emptyPerson({ id: ME_ID, name: TEXT.brief.meName, isMe: true })];
   const meIndex = Math.max(0, list.findIndex((p) => p.isMe === true));
-  const persons = list.map((p, i) => normalizePerson(p, { isMe: i === meIndex, fallbackId: i === meIndex ? ME_ID : undefined }));
+  const persons = list.map((p, i) => normalizePerson(p, { isMe: i === meIndex, fallbackId: i === meIndex ? ME_ID : undefined, themes }));
   const [me] = persons.splice(meIndex, 1);
   if (!me.name) me.name = TEXT.brief.meName;
   const seen = new Set([me.id]);
@@ -131,14 +151,17 @@ function uniqueIds(rows, prefix) {
   return rows;
 }
 
-/** 任何東西都讀得出一份合法的需求單：缺欄位補預設、型別錯就丟掉那個值；舊版草案（DESIGN §4 的 go／buy／party／adjustments）也翻得過來。 */
-export function normalizeBrief(raw) {
+/**
+ * 任何東西都讀得出一份合法的需求單：缺欄位補預設、型別錯就丟掉那個值；舊版草案（DESIGN §4 的 go／buy／party／adjustments）也翻得過來。
+ * options.themes：這個國家的主題選項 [{ id, label }]（themeOptions(state.country)），手打的中文主題照它翻回 id；不給就只認預設五個的中文，英數的 id 一律照收。
+ */
+export function normalizeBrief(raw, { themes = null } = {}) {
   const r = isObj(raw) ? raw : {};
   const dates = isObj(r.dates) ? r.dates : {};
   const flights = isObj(r.flights) ? r.flights : {};
   const legacyAdj = isObj(r.adjustments) ? r.adjustments : {};   // 草案把 dayTrips、departureNote 放在 adjustments
   const dayTrips = isObj(r.dayTrips) ? r.dayTrips : { count: r.dayTrips ?? legacyAdj.dayTrips, direction: '' };
-  const persons = normalizePersons(r);
+  const persons = normalizePersons(r, themes);
   const personIds = new Set(persons.map((p) => p.id));
   const idByName = new Map(persons.filter((p) => p.name).map((p) => [p.name, p.id]));
   const errandsRaw = Array.isArray(r.errands) ? r.errands : isObj(r.party) ? arr(r.party.errands) : [];
@@ -192,10 +215,13 @@ export function briefFileName(brief) {
 const cell = (s) => String(s ?? '').replace(/\|/g, '｜').replace(/\r?\n/g, ' ');
 const bullets = (list) => (list.length ? list.map((x) => `  - ${x}`) : ['  -']);
 
-function personSection(p, n) {
+function personSection(p, n, themes) {
   const L = TEXT.brief; const M = L.md;
+  // 勾選框照這個國家的清單印；這份單子勾了、但清單上沒有的 id（換國家留下來的）接在後面印，不丟
+  const known = new Set(themes.map((o) => o.id));
   const themeLine = [
-    ...GO_THEMES.map((t) => `${p.go.themes.includes(t) ? '☑' : '☐'} ${L.themeList[t]}`),
+    ...themes.map((o) => `${p.go.themes.includes(o.id) ? '☑' : '☐'} ${o.label}`),
+    ...p.go.themes.filter((id) => !known.has(id)).map((id) => `☑ ${id}`),
     `${p.go.themeOther ? '☑' : '☐'} ${M.themeOther}：${p.go.themeOther || '＿＿'}`,
   ].join(' ');
   return [
@@ -214,9 +240,10 @@ function personSection(p, n) {
   ];
 }
 
-/** 照 docs/brief-template.md 的標題與段落順序輸出；空的欄位留空、列不省略——這份文字是研究 workflow 的輸入。 */
-export function briefToMarkdown(input) {
-  const b = normalizeBrief(input);
+/** 照 docs/brief-template.md 的標題與段落順序輸出；空的欄位留空、列不省略——這份文字是研究 workflow 的輸入。options.themes：這個國家的主題選項（themeOptions(state.country)），不給就預設五個。 */
+export function briefToMarkdown(input, { themes = null } = {}) {
+  const opts = Array.isArray(themes) && themes.length ? themes : themeOptions(null);
+  const b = normalizeBrief(input, { themes: opts });
   const L = TEXT.brief; const M = L.md;
   const me = b.persons.find((p) => p.isMe) ?? b.persons[0];
   const companions = b.persons.filter((p) => p !== me);
@@ -237,8 +264,8 @@ export function briefToMarkdown(input) {
   row(M.dayTrips, b.dayTrips.count != null ? M.dayTripsLine(b.dayTrips.count, b.dayTrips.direction) : b.dayTrips.direction);
   row(M.themeDays, b.themeDays.map((t) => [t.date, L.themeCategories[t.category]].filter(Boolean).join(' ')).join('；'));
   row(M.departureNote, b.departureNote);
-  lines.push('', `## ${L.s2}`, '', ...personSection(me, 2));
-  if (companions.length) for (const c of companions) lines.push(`## ${M.companionHead(nameOf(c))}`, '', ...personSection(c, 3));
+  lines.push('', `## ${L.s2}`, '', ...personSection(me, 2, opts));
+  if (companions.length) for (const c of companions) lines.push(`## ${M.companionHead(nameOf(c))}`, '', ...personSection(c, 3, opts));
   else lines.push(`## ${L.s3}`, '', M.noCompanion, '');
   lines.push(`## ${L.s4}`, '', `| ${M.errandsTable.join(' | ')} |`, '|---|---|---|---|---|');
   if (b.errands.length) for (const e of b.errands) lines.push(`| ${cell(e.for)} | ${cell(e.what)} | ${cell(e.qty)} | ${cell(e.note)} | ${e.consumable ? M.yes : ''} |`);

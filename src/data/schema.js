@@ -7,6 +7,7 @@ import recoveryTable from '../derive/recovery.json' with { type: 'json' };
 import dwellTable from '../derive/dwell.json' with { type: 'json' };
 import daylightTable from '../derive/daylight.json' with { type: 'json' };
 import { parseHoursText } from '../derive/hours.js';
+import { prepNeededOf } from './country.js';   // 要準備的恢復站型的打包待辦從國家層 recoveryTypes 來（T20），不再寫死在 derive/recovery.json
 
 export const DERIVE = { category: categoryTable, walk: walkTable, recovery: recoveryTable, dwell: dwellTable, daylight: daylightTable };
 
@@ -51,8 +52,9 @@ export function slugId(poi) {
  * normalizePoi(raw, options?) → { poi, warnings[] }
  * - raw 可以是知識庫自由文字格式（name_zh／name_local／category／duration…）或已規範化的 POI；都不丟未知欄位。
  * - 明寫的 walkFactor／recovery／cafeLike／dwellMin／walkAround 優先於推導（他現場可改一站，決策樹 Q1／Q13）。
+ * - options.country：國家層（打包檔 pack.country；可不給）——要準備的恢復站型（錢湯帶毛巾、換洗衣物）的打包待辦 prepNeeded 從它的 recoveryTypes 來（T20；明寫的 prepNeeded 優先）。
  */
-export function normalizePoi(raw, { derive = DERIVE } = {}) {
+export function normalizePoi(raw, { derive = DERIVE, country = null } = {}) {
   const warnings = [];
   const poi = { ...raw };
   poi.id = slugId(raw);
@@ -93,7 +95,8 @@ export function normalizePoi(raw, { derive = DERIVE } = {}) {
   const rec = derive.recovery;
   poi.recovery = typeof raw.recovery === 'boolean' ? raw.recovery : rec.recovery.includes(category) || raw.role === 'rest';
   poi.cafeLike = typeof raw.cafeLike === 'boolean' ? raw.cafeLike : rec.cafeLike.includes(category);
-  if (rec.prepNeeded[category] && !Array.isArray(raw.prepNeeded)) poi.prepNeeded = [...rec.prepNeeded[category]];
+  // 要準備的恢復站型（profile §5.9 錢湯帶毛巾、換洗衣物）：打包待辦讀國家層 country.recoveryTypes（T20；之前寫死在 derive/recovery.json，是日本值）；沒給國家層就不帶
+  if (!Array.isArray(raw.prepNeeded)) { const prep = prepNeededOf(country, category); if (prep) poi.prepNeeded = prep; }
   poi.deepDig = raw.deepDig === true;
   poi.seated = typeof raw.seated === 'boolean' ? raw.seated : null;
 

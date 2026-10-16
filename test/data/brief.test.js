@@ -2,7 +2,7 @@
 // 輸出的文字照 docs/brief-template.md 的五段與每列、記憶（消耗品與要買的）與建議、匯出再匯入不變。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyBrief, normalizeBrief, briefToMarkdown, briefFileName, toList, looksLikeBrief, isBriefEmpty } from '../../src/data/brief.js';
+import { emptyBrief, normalizeBrief, briefToMarkdown, briefFileName, toList, looksLikeBrief, isBriefEmpty, themeOptions } from '../../src/data/brief.js';
 import { emptyMemory, normalizeMemory, rememberFromBrief, suggestionsFor } from '../../src/data/brief-memory.js';
 
 /** 填好的一份（已是 normalize 後的形狀）：仙台七天、有公務、一位同行者、兩筆代購（一筆消耗品）、兩件要辦的事。 */
@@ -92,7 +92,7 @@ test('persons 的不變量：他永遠在第一段；沒人標 isMe 就第一個
 test('舊版草案（DESIGN §4：go／buy／party／adjustments 在頂層）翻成以人為單位：night、areas、recommended 併進 designated 並去重，party.designated 成一位同行者，party.errands 成代購，dayTrips／departureNote／routeIdea 搬上來', () => {
   const b = normalizeBrief({
     holiday: '中秋',
-    go: { designated: ['Utah', '清酒吧'], night: ['清酒吧'], areas: ['下北澤'], recommended: ['朋友推薦的 XX'], mustEat: ['味太助'], themes: ['sakura', '花火', 'bogus'] },
+    go: { designated: ['Utah', '清酒吧'], night: ['清酒吧'], areas: ['下北澤'], recommended: ['朋友推薦的 XX'], mustEat: ['味太助'], themes: ['sakura', '花火', 'bogus', '雪祭', 'Momiji '] },
     buy: { own: ['咖啡豆'], brandExceptions: ['Kapital'] },
     party: { designated: ['Loft'], errands: [{ for: '媽', what: '睫毛膏', consumable: true }] },
     adjustments: { dayTrips: 2, stamina: 'easy', departureNote: '睡飽', nightSlot: 'less', dislikes: '神社' },
@@ -100,7 +100,7 @@ test('舊版草案（DESIGN §4：go／buy／party／adjustments 在頂層）翻
   });
   assert.deepEqual(b.persons[0].go.designated, ['Utah', '清酒吧', '下北澤', '朋友推薦的 XX']);
   assert.deepEqual(b.persons[0].go.mustEat, ['味太助']);
-  assert.deepEqual(b.persons[0].go.themes, ['sakura', 'hanabi']);
+  assert.deepEqual(b.persons[0].go.themes, ['sakura', 'hanabi', 'bogus', 'momiji'], '英數的 id 照留（主題清單是國家層的，手機讀入那一刻不一定知道是哪國；T20）、中文翻回 id、不像 id 的中文丟掉、大小寫與空白整理');
   assert.deepEqual(b.persons[0].buy, { own: ['咖啡豆'], brandExceptions: ['Kapital'] });
   assert.deepEqual(b.persons[0].adjustments, { stamina: 'easy', nightSlot: 'less', dislikes: '神社' });
   assert.equal(b.persons.length, 2);
@@ -245,6 +245,22 @@ test('建議：排掉已在這份需求單裡的（代購看給誰＋什麼、�
   assert.deepEqual(suggestionsFor(memory, b), { consumables: [], ownItems: [] });
   assert.deepEqual(suggestionsFor(null, emptyBrief()), { consumables: [], ownItems: [] });
   assert.deepEqual(normalizeMemory({ consumables: [{ what: '' }, 'x', { for: '媽', what: '藥膏', lastAt: 'bad' }], ownItems: 'no' }), { version: 1, consumables: [{ for: '媽', what: '藥膏', note: '', lastAt: '' }], ownItems: [] });
+});
+
+test('主題勾選框讀國家層（T20）：themeOptions 沒國家層＝預設五個、有 country.themes 照它（壞的那筆跳過、沒 name_zh 就印 id、整個都壞就預設）；normalize 把該國的中文翻回 id；複製出來的文字照該國清單印，別國留下來的 id 接在後面', () => {
+  const five = [['sakura', '櫻花'], ['momiji', '楓葉'], ['snow', '雪'], ['matsuri', '祭典'], ['hanabi', '花火']].map(([id, label]) => ({ id, label }));
+  assert.deepEqual(themeOptions(null), five);
+  assert.deepEqual(themeOptions({ themes: [] }), five);
+  assert.deepEqual(themeOptions({ themes: [null, { id: 'bad id', name_zh: 'x' }, 7] }), five, '整個都壞就預設');
+  const th = { themes: [{ id: 'songkran', name_zh: '潑水節' }, { id: 'loykrathong', name_zh: '水燈節' }, { id: 'songkran', name_zh: '重複' }, 'sakura'] };
+  const opts = themeOptions(th);
+  assert.deepEqual(opts, [{ id: 'songkran', label: '潑水節' }, { id: 'loykrathong', label: '水燈節' }, { id: 'sakura', label: 'sakura' }]);
+  const b = normalizeBrief({ persons: [{ isMe: true, go: { themes: ['潑水節', 'sakura', '花火', '雪祭', 'LoyKrathong'] } }] }, { themes: opts });
+  assert.deepEqual(b.persons[0].go.themes, ['songkran', 'sakura', 'hanabi', 'loykrathong'], '該國的中文翻回 id、預設五個的中文也翻、不像 id 的中文丟掉、大小寫壓成小寫');
+  const md = briefToMarkdown(b, { themes: opts });
+  assert.ok(md.includes('- 主題：☑ 潑水節 ☑ 水燈節 ☑ sakura ☑ hanabi ☐ 其他：＿＿'), md);
+  assert.ok(briefToMarkdown(b).includes('- 主題：☑ 櫻花 ☐ 楓葉 ☐ 雪 ☐ 祭典 ☑ 花火 ☑ songkran ☑ loykrathong ☐ 其他：＿＿'), '沒帶清單就預設五個，別國的 id 接在後面');
+  assert.deepEqual(normalizeBrief(b, { themes: opts }), b, '再 normalize 一次不變');
 });
 
 test('JSON 匯出再匯入（normalize）等於原本；normalize 對已合法的單子是恆等', () => {

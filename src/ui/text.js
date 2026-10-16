@@ -199,7 +199,10 @@ export const TEXT = {
     fwLabel: '名稱',
     mode: '這趟怎麼移動',
     modes: { transit: '大眾運輸', car: '租車', moto: '重機' },
-    modeNote: '路線想法、取還車店、駕照譯本與保險辦好沒',
+    modeNote: '路線想法、取還車店、駕照文件與保險辦好沒',
+    // 租車／重機時該國要求的駕照文件：讀國家層 drivingPermit.summary（T20；日本是台灣駕照＋日文譯本）；沒國家層就提醒先查
+    drivingHint: (summary) => `駕照文件：${summary}`,
+    drivingHintNone: '駕照文件：這個國家還沒有國家層資料，出發前先查該國承認哪種駕照文件、保險怎麼辦',
     dayTrips: '一日遊想去幾天',
     dayTripsDirection: '方向（空＝照規則選）',
     themeDays: '主題日（哪一天整天逛同一類；沒有就不填）',
@@ -247,7 +250,9 @@ export const TEXT = {
     lastConsumables: '上次的消耗品，點一下加進表：',
     // §5 要辦的事
     s5: '5. 要辦的事',
-    tasksIntro: '行程外、但要在當地辦的事；有期限的會當那天的硬時限。例：換 SIM、領 JR Pass、取預約票、改褲長。',
+    // 例子讀國家層 commonErrands（T20）；沒國家層用 tasksExamples（不帶哪一國的東西）
+    tasksIntro: (examples) => `行程外、但要在當地辦的事；有期限的會當那天的硬時限。例：${examples.join('、')}。`,
+    tasksExamples: ['換 SIM', '取預約票', '改褲長'],
     taskWhat: '什麼',
     taskDeadline: '期限（可空）',
     taskWho: '誰',

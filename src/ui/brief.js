@@ -3,10 +3,13 @@
 // 只有結構變了才重畫：加列、刪列、加／移除同行者、記憶按鈕加進表、純玩／有公務與移動方式的 radio（多一欄要出現或收掉）、載入、清空、復原。
 // 改資料一律從 updater 收到的現況算（x），不拿畫面當下的物件，不然沒重畫的期間會蓋掉剛打的字。
 // 存成檔案／複製文字／載入別份／清空時 app.js 順手把消耗品與他要買的記進記憶（data/brief-memory.js），下一份需求單在 §4 與「要買的」上方帶出來一排按鈕。
+// 國家層（T20，state.country＝打包檔的 kb/country/<國>.json）：主題勾選框的選項讀 themes、「要辦的事」的例子讀 commonErrands、租車／重機的提示讀 drivingPermit.summary；
+// 沒旅程（state.country null）就用 data/brief.js 與 text.js 的預設。
 import { el } from './dom.js';
 import { TEXT } from './text.js';
-import { emptyPerson, emptyErrand, emptyTask, emptyFixedWindow, emptyThemeDay, GO_THEMES, PURPOSES, MODES, THEME_DAY_CATEGORIES, STAMINAS, NIGHT_SLOTS } from '../data/brief.js';
+import { emptyPerson, emptyErrand, emptyTask, emptyFixedWindow, emptyThemeDay, themeOptions, PURPOSES, MODES, THEME_DAY_CATEGORIES, STAMINAS, NIGHT_SLOTS } from '../data/brief.js';
 import { suggestionsFor } from '../data/brief-memory.js';
+import { errandExamplesOf, drivingPermitSummaryOf } from '../data/country.js';
 
 const L = TEXT.brief;
 let clearTimer = null;   // 「清空」第一下只武裝幾秒，再按一下才清
@@ -16,6 +19,9 @@ export function renderBrief({ state, actions }) {
   const me = b.persons.find((p) => p.isMe) ?? b.persons[0];
   const companions = b.persons.filter((p) => p !== me);
   const sugg = suggestionsFor(state.briefMemory, b);
+  const themes = themeOptions(state.country);
+  const driving = drivingPermitSummaryOf(state.country);
+  const errandExamples = errandExamplesOf(state.country) ?? L.tasksExamples;
   const put = (fn) => actions.setBrief(fn, { rerender: false });   // 打字中：存、不重畫
   const putRender = (fn) => actions.setBrief(fn);                   // 結構變了：存、重畫
   disarmClear();
@@ -26,13 +32,13 @@ export function renderBrief({ state, actions }) {
     // 載入別份或清空後留一次「復原上一份」（跟「不去了」的一次性復原同一個想法，原話 #171）
     state.briefStatus ? el('p', { class: 'small status' }, [state.briefStatus, state.briefUndo ? el('button', { class: 'btn quiet sm', type: 'button', onclick: () => actions.undoBrief() }, L.undo) : null]) : null,
     state.briefCopyText ? el('textarea', { class: 'copy-box', readonly: true, onfocus: (e) => e.target.select() }, state.briefCopyText) : null,
-    skeletonSection(b, put, putRender),
-    personSection(me, put, putRender, sugg.ownItems),
+    skeletonSection(b, put, putRender, driving),
+    personSection(me, put, putRender, sugg.ownItems, themes),
     // 沒有同行者也留「3. 同行者」這一節（編號不跳 2 → 4，他看得到這段是給誰填的）；有的話每位一段、標題帶名字
-    ...(companions.length ? companions.map((c) => personSection(c, put, putRender, [])) : [el('section', { class: 'group' }, [el('h2', { text: L.s3 }), el('p', { class: 'muted small', text: L.companionsHint })])]),
+    ...(companions.length ? companions.map((c) => personSection(c, put, putRender, [], themes)) : [el('section', { class: 'group' }, [el('h2', { text: L.s3 }), el('p', { class: 'muted small', text: L.companionsHint })])]),
     el('div', { class: 'actions' }, [el('button', { class: 'btn', type: 'button', onclick: () => putRender((x) => ({ ...x, persons: [...x.persons, emptyPerson()] })) }, L.addPerson)]),
     errandsSection(b, sugg.consumables, put, putRender),
-    tasksSection(b, put, putRender),
+    tasksSection(b, put, putRender, errandExamples),
   ])];
 }
 
@@ -70,7 +76,7 @@ function actionBar(actions) {
 function disarmClear() { if (clearTimer) clearTimeout(clearTimer); clearTimer = null; }
 
 // ---- §1 骨架 ----
-function skeletonSection(b, put, putRender) {
+function skeletonSection(b, put, putRender, driving) {
   const setTop = (k) => (v) => put((x) => ({ ...x, [k]: v }));
   const setIn = (k, sub) => (v) => put((x) => ({ ...x, [k]: { ...x[k], [sub]: v } }));
   const setRow = (k, i, sub) => (v) => put((x) => ({ ...x, [k]: x[k].map((r, j) => (j === i ? { ...r, [sub]: v } : r)) }));
@@ -98,6 +104,8 @@ function skeletonSection(b, put, putRender) {
     ]),
     el('div', { class: 'field' }, [el('span', { text: L.mode }), radios('mode', b.mode, MODES.map((v) => [v, L.modes[v]]), (v) => putRender((x) => ({ ...x, mode: v })))]),
     b.mode !== 'transit' ? field(L.modeNote, textInput(b.modeNote, setTop('modeNote'))) : null,
+    // 租車／重機：該國要求的駕照文件讀國家層 drivingPermit.summary（T20）；沒國家層就提醒出發前查
+    b.mode !== 'transit' ? el('p', { class: 'muted small hint', text: driving ? L.drivingHint(driving) : L.drivingHintNone }) : null,
     el('div', { class: 'pair' }, [
       field(L.dayTrips, el('input', { type: 'number', inputmode: 'numeric', min: 0, step: 1, value: b.dayTrips.count ?? '', onchange: (e) => { const n = Number.parseInt(e.target.value, 10); setIn('dayTrips', 'count')(Number.isInteger(n) && n >= 0 ? n : null); } })),
       field(L.dayTripsDirection, textInput(b.dayTrips.direction, setIn('dayTrips', 'direction'))),
@@ -116,7 +124,7 @@ function skeletonSection(b, put, putRender) {
 }
 
 // ---- §2 我、§3 同行者（同一組欄位；同行者多名字欄與移除鍵） ----
-function personSection(p, put, putRender, ownSuggestions) {
+function personSection(p, put, putRender, ownSuggestions, themes) {
   const setP = (fn) => put((x) => ({ ...x, persons: x.persons.map((q) => (q.id === p.id ? fn(q) : q)) }));
   const setGo = (k) => (v) => setP((q) => ({ ...q, go: { ...q.go, [k]: v } }));
   const setBuy = (k) => (v) => setP((q) => ({ ...q, buy: { ...q.buy, [k]: v } }));
@@ -141,7 +149,8 @@ function personSection(p, put, putRender, ownSuggestions) {
     field(L.go, linesInput(p.go.designated, setGo('designated'), L.goPlaceholder)),
     field(L.mustEat, linesInput(p.go.mustEat, setGo('mustEat'))),
     el('div', { class: 'field' }, [el('span', { text: L.themes }), el('div', { class: 'choices' }, [
-      ...GO_THEMES.map((t) => checkbox(L.themeList[t], p.go.themes.includes(t), (on) => setP((q) => ({ ...q, go: { ...q.go, themes: on ? [...new Set([...q.go.themes, t])] : q.go.themes.filter((x) => x !== t) } })))),
+      // 選項讀國家層 country.themes（T20，data/brief.js themeOptions）；沒國家層就預設的五個。別國留下來的 id 不畫（資料留著，複製出來的文字會印）
+      ...themes.map(({ id: t, label }) => checkbox(label, p.go.themes.includes(t), (on) => setP((q) => ({ ...q, go: { ...q.go, themes: on ? [...new Set([...q.go.themes, t])] : q.go.themes.filter((x) => x !== t) } })))),
       el('label', { class: 'choice other' }, [L.themeOther, textInput(p.go.themeOther, setGo('themeOther'))]),
     ])]),
     el('h3', { text: `${n}.2 ${L.buyTitle}` }),
@@ -185,13 +194,14 @@ function errandsSection(b, suggestions, put, putRender) {
 }
 
 // ---- §5 要辦的事 ----
-function tasksSection(b, put, putRender) {
+function tasksSection(b, put, putRender, errandExamples) {
   const me = b.persons.find((p) => p.isMe) ?? b.persons[0];
   const whoOptions = [['', L.nobody], ...b.persons.map((p) => [p.id, p.name || (p.isMe ? L.meName : L.personUnnamed)])];
   const setRow = (id, k) => (v) => put((x) => ({ ...x, tasks: x.tasks.map((r) => (r.id === id ? { ...r, [k]: v } : r)) }));
   return el('section', { class: 'group' }, [
     el('h2', { text: L.s5 }),
-    el('p', { class: 'muted small', text: L.tasksIntro }),
+    // 例子讀國家層 commonErrands（T20；日本：換 SIM、領 JR Pass、取預約票、寄明信片、免稅海關確認）；沒國家層用 text.js 的預設
+    el('p', { class: 'muted small', text: L.tasksIntro(errandExamples) }),
     ...b.tasks.map((t) => el('div', { class: 'brief-row task' }, [
       field(L.taskWhat, textInput(t.what, setRow(t.id, 'what')), 'wide'),
       field(L.taskDeadline, el('input', { type: 'datetime-local', value: t.deadline, onchange: (e) => setRow(t.id, 'deadline')(e.target.value) }), 'wide'),

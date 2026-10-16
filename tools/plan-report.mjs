@@ -34,8 +34,8 @@ export function formatReport({ pack, result, legFn }) {
     // 時窗印扣過留白的收工時刻（引擎用的），括號裡附原時窗；離境日沒留白、太短的沒扣
     const raw = day.windowRaw ?? day.window;
     const slot = day.openSlotMin > 0 ? `（原 ${minToHm(raw.startMin)}–${minToHm(raw.endMin)}，留白 ${day.openSlotMin} 分排在最後）` : day.openSlotSkipped ? '（時窗太短，留白沒扣）' : '（這天沒留白）';
-    // 同行（T19）：那天在場 ≥2 人才印（一個人的旅程這行跟以前一樣）
-    lines.push(`## ${d.date}（${day.type}${day.themeCategory ? `，${day.themeCategory} 主題` : ''}）主行程：${day.anchorName ?? '—'}　時窗 ${minToHm(day.window.startMin)}–${minToHm(day.window.endMin)}${slot}${day.party >= 2 ? `　同行 ${day.party} 人` : ''}`);
+    // 免稅緩衝（T20）：離境日真的扣了國家層 taxRefund.bufferMin 才印（仙台 2026-08 新制還沒生效，這段不印）；同行（T19）：那天在場 ≥2 人才印（一個人的旅程這行跟以前一樣）
+    lines.push(`## ${d.date}（${day.type}${day.themeCategory ? `，${day.themeCategory} 主題` : ''}）主行程：${day.anchorName ?? '—'}　時窗 ${minToHm(day.window.startMin)}–${minToHm(day.window.endMin)}${slot}${day.taxRefundBufferMin > 0 ? `　免稅緩衝 ${day.taxRefundBufferMin} 分` : ''}${day.party >= 2 ? `　同行 ${day.party} 人` : ''}`);
     lines.push(`分數 ${plan.score}　罰分 ${Math.round(plan.penaltyMin)} 分鐘　${plan.complete ? '全排進' : '沒全排進'}　節點 ${plan.stats?.nodes ?? '?'}　${plan.stats?.ms ?? '?'} ms${plan.stats?.truncated ? '　（預算到了，截斷）' : ''}`);
     let prev = null;
     for (const s of plan.sequence) {

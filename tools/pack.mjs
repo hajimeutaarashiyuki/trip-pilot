@@ -19,8 +19,8 @@ const PACKS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..
 
 async function readJson(file) { return existsSync(file) ? JSON.parse(await readFile(file, 'utf8')) : null; }
 
-/** 讀一城：data.json 的 POI 全部規範化、同店多類別合併成一筆（alsoCategories）、歸區、套座標。 */
-export async function loadCityKb(dir) {
+/** 讀一城：data.json 的 POI 全部規範化（帶國家層：要準備的恢復站型的打包待辦從 country.recoveryTypes 來，T20）、同店多類別合併成一筆（alsoCategories）、歸區、套座標。 */
+export async function loadCityKb(dir, { country = null } = {}) {
   const data = await readJson(path.join(dir, 'data.json'));
   if (!data) throw new Error(`${dir} 沒有 data.json`);
   const zonesFile = (await readJson(path.join(dir, 'zones.json'))) ?? { zones: {}, links: {} };
@@ -29,7 +29,7 @@ export async function loadCityKb(dir) {
   const list = Object.values(data.categories ?? {}).flatMap((v) => (Array.isArray(v) ? v : v.items ?? []));
   const byId = new Map(); const warnings = [];
   for (const raw of list) {
-    const { poi, warnings: w } = normalizePoi(raw);
+    const { poi, warnings: w } = normalizePoi(raw, { country });
     for (const x of w) warnings.push(typeof x === 'string' ? { poiId: poi.id, msg: x } : { poiId: poi.id, ...x });
     if (byId.has(poi.id)) {
       const prev = byId.get(poi.id);
@@ -60,8 +60,8 @@ async function main() {
   if (trip.countryId && trip.countryId !== cityCfg.countryId) console.warn(`旅程寫 countryId ${trip.countryId}、city.json 寫 ${cityCfg.countryId}：照 city.json`);
   const countryFile = opt('--country') ?? path.join(dir, '..', 'country', `${cityCfg.countryId}.json`);
   const country = await readJson(countryFile);
-  if (!country) console.warn(`沒有國家層檔 ${countryFile}：餐段、夜間站、夏季正午、白天站四條規則會跳過並警告（範本在 kb/country/_template.json）`);
-  const kb = await loadCityKb(dir);
+  if (!country) console.warn(`沒有國家層檔 ${countryFile}：餐段、夜間站、夏季正午、白天站四條規則會跳過並警告，離境日免稅緩衝、錢湯的打包待辦、需求單的主題也沒有（範本在 kb/country/_template.json）`);
+  const kb = await loadCityKb(dir, { country });
   const pack = buildPack({ city, country, zones: kb.zones, pois: kb.pois, walk: kb.walk, trip, rulesJson });
   const outFile = opt('--out') ?? path.join(PACKS_DIR, `${trip.id}.json`);
   await mkdir(path.dirname(outFile), { recursive: true });
