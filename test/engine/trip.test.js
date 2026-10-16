@@ -336,3 +336,30 @@ test('themeCategoryOf／planTrip：主題日的店型要對得上知識庫的店
   assert.equal(r2.days[1].plan.sequence.filter((s) => s.poi.category === 'vintage').length, 2);
   assert.ok(r2.days[1].plan.dropped.some((d) => d.poi.category === 'vintage' && d.reason.includes('同類的店一天最多 2 家')));
 });
+
+test('planTrip（T16）：每天都回 plan.choices（沒有候選就空陣列）；順延過來的 pick（deferredFrom）排不進 → 整趟警告 deferred-dropped 帶日期與 poiId、不罰、trip.deferred 不自動改；排得進就帶在 stop 上；options.onlyDates 跳過的日子 plan 為 null', () => {
+  const shop = mk('街區');
+  const closedThu = mk('週四休的店', { hours: { fri: [['09:00', '23:00']] } });
+  const trip = { id: 't', party: 1, homeBases: [{ poi: nightHome }], deferred: [{ poiId: closedThu.id, chosenPoiId: null, fromDate: '2026-08-12', toDate: '2026-08-13', status: 'placed', at: 'T0' }], days: [
+    { date: '2026-08-12', type: 'normal', picks: [{ poiId: shop.id, priority: 'must' }] },
+    { date: '2026-08-13', type: 'normal', picks: [{ poiId: shop.id, priority: 'must' }, { poiId: closedThu.id, priority: 'want', deferredFrom: '2026-08-12' }] },
+  ] };
+  const r = planTrip({ trip, pois: { [shop.id]: shop, [closedThu.id]: closedThu }, rules, settings, country: NIGHT_COUNTRY, kb: NIGHT_KB, legFn: flatLeg });
+  assert.deepEqual(r.days.map((d) => d.plan.choices), [[], []], '沒有同類候選：空陣列，不是 undefined');
+  assert.ok(r.days[1].plan.dropped.some((x) => x.poi.id === closedThu.id), '週四休的店 8/13 排不進');
+  assert.equal(r.days[1].plan.dropped.find((x) => x.poi.id === closedThu.id).deferredFrom, '2026-08-12', '排不進清單那筆帶 deferredFrom（規劃頁寫「從 8/12 順延來的」）');
+  assert.deepEqual(r.warnings.map((w) => [w.code, w.date, w.poiId]), [['deferred-dropped', '2026-08-13', closedThu.id]]);
+  assert.equal(r.warnings[0].msg, '週四休的店 從 8/12 順延到這天，但這天排不進了');
+  assert.deepEqual(trip.deferred[0].status, 'placed', '只出警告，不自動改 deferred');
+  const bare = planTrip({ trip: { ...trip, deferred: undefined, days: [trip.days[0], { ...trip.days[1], picks: [trip.days[1].picks[0], { poiId: closedThu.id, priority: 'want' }] }] }, pois: { [shop.id]: shop, [closedThu.id]: closedThu }, rules, settings, country: NIGHT_COUNTRY, kb: NIGHT_KB, legFn: flatLeg });
+  assert.deepEqual(bare.warnings, [], '不是順延來的就沒有這條');
+  assert.equal(bare.days[1].plan.penaltyMin, r.days[1].plan.penaltyMin, '不罰');
+  // 排得進：stop 帶 deferredFrom（畫面寫「從 8/12 順延」），別的站是 null
+  const ok = planTrip({ trip: { ...trip, days: [trip.days[0], { ...trip.days[1], picks: [trip.days[1].picks[0], { poiId: '街區B', priority: 'want', deferredFrom: '2026-08-12' }] }] }, pois: { [shop.id]: shop, 街區B: mk('街區B') }, rules, settings, country: NIGHT_COUNTRY, kb: NIGHT_KB, legFn: flatLeg });
+  assert.deepEqual(ok.warnings, []);
+  assert.deepEqual(ok.days[1].plan.sequence.map((s) => [s.poi.id, s.deferredFrom]).sort(), [['街區', null], ['街區B', '2026-08-12']]);
+  // onlyDates：8/12 不排
+  const only = planTrip({ trip, pois: { [shop.id]: shop, [closedThu.id]: closedThu }, rules, settings, country: NIGHT_COUNTRY, kb: NIGHT_KB, legFn: flatLeg, options: { onlyDates: ['2026-08-13'] } });
+  assert.deepEqual(only.days.map((d) => [d.date, d.plan === null, Boolean(d.day)]), [['2026-08-12', true, true], ['2026-08-13', false, true]]);
+  assert.deepEqual(only.warnings.map((w) => w.code), ['deferred-dropped'], '跳過的日子不出警告，試排的那天照出');
+});

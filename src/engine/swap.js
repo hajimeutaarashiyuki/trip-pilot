@@ -21,10 +21,7 @@ export function swapCandidates({ plan, stopId, pool, legFn, date, settings = {} 
   for (const c of pool) {
     const poi = c.poi ?? c;
     if (poi.id === cur.poi.id || inPlan.has(poi.id) || !sameType(poi)) continue;
-    const a = prev ? legMin(legFn(prev.poi, poi)) : 0;
-    const b = next ? legMin(legFn(poi, next.poi)) : 0;
-    const base = prev && next ? legMin(legFn(prev.poi, next.poi)) : 0;
-    const detourMin = Math.max(0, a + b - base);
+    const detourMin = swapDetourMin(seq, i, poi, legFn);
     if (detourMin > maxDetour) continue;
     const iv = openIntervals(poi, date);
     const open = iv === null ? null : iv.some(([o, cl]) => cur.startMin >= o && cur.startMin + (poi.dwellMin ?? cur.dwellMin) <= cl);
@@ -33,6 +30,15 @@ export function swapCandidates({ plan, stopId, pool, legFn, date, settings = {} 
   }
   out.sort((x, y) => x.detourMin - y.detourMin);
   return out;
+}
+
+/** 把序列第 index 站換成 poi 會多繞幾分：(前→候選＋候選→後) − (前→後)，第一站沒有前站、最後一站沒有後站就只算有的那段；換這一站與二選一（choices.js）共用同一個算法。 */
+export function swapDetourMin(seq, index, poi, legFn) {
+  const prev = seq[index - 1] ?? null; const next = seq[index + 1] ?? null;
+  const a = prev ? legMin(legFn(prev.poi, poi)) : 0;
+  const b = next ? legMin(legFn(poi, next.poi)) : 0;
+  const base = prev && next ? legMin(legFn(prev.poi, next.poi)) : 0;
+  return Math.max(0, a + b - base);
 }
 
 /** 把旅程某天的 picks 裡的一站換成另一站（換掉的不算落選：記在 day.swapped[]），回新的 day 物件；重排由呼叫端做。 */

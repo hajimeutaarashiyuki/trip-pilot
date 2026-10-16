@@ -7,6 +7,7 @@ import { distToSegmentM } from '../geo/corridor.js';
 import { evaluateSequence, retimeSequence } from './sequence.js';
 import { SHOPPING_CATEGORIES } from '../rules/_helpers.js';   // 只借購物類店型清單篩順路站，不是規則邏輯（規則在 rules/shopping-day.js）
 import { CATEGORIES, classifyCategory } from '../data/schema.js';   // 主題日的店型要對得上知識庫的店型（themeCategoryOf）
+import { proposeChoices, swappedAwayFrom } from './choices.js';   // 二選一（T16）：七天排完才對每天的序列算，不進分數與時刻；choices.js 的 defer 反過來用 planTrip 試排（模組互相引用只在呼叫時用到，沒問題）
 
 /**
  * 引擎插站的觸發：照他勾的排完後出現這些規則的警告才跑第二趟。
@@ -83,10 +84,17 @@ export function regionZonesOf({ home, candidates, anchorPoi }) {
  * - restPool：引擎可插的站的來源（已規範化的 POI 陣列，可空；畫面與報告傳整個知識庫），每天由 restCandidates（恢復站）、fillCandidates（填空檔）、onTheWayCandidates（順路站）篩，三個池都先過 engineMayInsert；
  *   走廊清單（corridorFor，T15）也從這裡挑：每段走路旁 ≤ corridorListRadiusM、經過時開著的店，掛在 plan.corridor，不是站、不進分數；七天都排完才算（exclude 含任何一天引擎插過的站）
  * - 每天的 plan 多兩樣（attachCorridor）：plan.corridor [{ legIndex, pois[{ poi, distM, open }] }]（legIndex 0＝住宿→第一站；open true 經過時有開、null 沒營業時間資料）、長段提示 leg-suggest（warnings 裡 hint: true 的一條，不罰）
+ * - 二選一（T16，choices.js proposeChoices）：七天排完再對每天的序列算，掛 plan.choices [{ date, poiId: A, slot, options: [A, B], source, detourMin, altPoi }]（沒有就空陣列），不進分數與時刻；
+ *   pool＝restPool，exclude＝任何一天勾過／按過「不去了」的 ∪ 任何一天序列裡的站（含引擎插的）∪ 那天之前按過「我進去了」的 ∪ 這天換掉過的與 unplaced 的（choices.js swappedAwayFrom）
+ * - picks[].deferredFrom：二選一沒選的那家順延到這天（choices.js defer 寫的；DESIGN §4 Stop.deferredFrom），排進去的 stop 帶著給畫面寫「從 8/15 順延」；
+ *   順延過來卻排不進（落在那天的 plan.dropped）記整趟警告 deferred-dropped（不罰、不自動改 trip.deferred）
+ * - options.onlyDates: ['YYYY-MM-DD']：只排清單內的日子，其餘日子跳過 planDay（那天回 { date, day, plan: null }；day 上下文照算，整趟的 exclude 也照常算）——
+ *   順延試排用，一天一天試不用整趟重算（推導）；跳過的日子沒插過的站不會進 insertedSoFar，試排的那天可能插到別天已插的引擎站，只影響引擎插站、不影響試排的結論
  */
 export function planTrip({ trip, pois, rules, settings, country, kb, legFn, restPool = [], options = {} }) {
   const out = []; const warnings = [];
   let prevTheme = null; let prevType = null;
+  const onlyDates = Array.isArray(options.onlyDates) ? new Set(options.onlyDates) : null;
   // 引擎不插的站：任何一天勾了的（含主行程；他勾的站由 picks 走）、任何一天按過「不去了」的（他拿掉的勾選站、拒絕過的引擎插站）（pickedOrRemoved）、
   // 前幾天已經插過的（同一家店不在兩天都被插）、走廊清單按過「我進去了」之後的日子（options.visited: { [poiId]: 'YYYY-MM-DD' }，裝置端 field.visited；
   // 原話 #138 去過的不再出現；進去那天本身照舊——visitedBefore）
@@ -99,7 +107,7 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
       const poi = pois[p.poiId];
       if (!poi) { warnings.push({ code: 'pick-unknown', date: d.date, msg: `${d.date} 的 ${p.poiId} 不在知識庫` }); return null; }
       const fixedWindow = fixedWindowOf(p.fixedWindow, settings, warnings, d.date, poi);
-      return { poi, priority: p.priority ?? 'want', dwellMin: p.dwellMin ?? fixedSpanMin(fixedWindow), fixedWindow, designated: (d.designated ?? []).includes(p.poiId), isAnchor: d.anchor?.poiId === p.poiId || Boolean(d.anchor?.poiIds?.includes(p.poiId)), errand: Boolean(p.errand) };
+      return { poi, priority: p.priority ?? 'want', dwellMin: p.dwellMin ?? fixedSpanMin(fixedWindow), fixedWindow, designated: (d.designated ?? []).includes(p.poiId), isAnchor: d.anchor?.poiId === p.poiId || Boolean(d.anchor?.poiIds?.includes(p.poiId)), errand: Boolean(p.errand), deferredFrom: p.deferredFrom ?? null };
     }).filter(Boolean);
     // 主行程：單站型用那站；主題型用骨架店的第一家當顯示名（畫面不得露出 theme 鍵值）
     const anchorPoi = d.anchor?.poiId ? pois[d.anchor.poiId] : (d.anchor?.poiIds?.length ? pois[d.anchor.poiIds[0]] : null);
@@ -120,11 +128,19 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
       // 購物日（原話 #36、#55；DESIGN §1.5）：規則 shopping-day 讀；非購物日 false／null
       shoppingDay: shopping.has(d.date), shoppingFromMin: shopping.get(d.date)?.fromMin ?? null,
     };
+    // 只試排幾天（options.onlyDates）：其他日子不跑 planDay，plan 回 null；上下文與主題的傳遞照常
+    if (onlyDates && !onlyDates.has(d.date)) {
+      out.push({ date: d.date, day, plan: null });
+      prevTheme = themeCategory; prevType = d.dayTrip ? 'daytrip' : (d.type ?? 'normal');
+      return;
+    }
     // 先照他勾的排；走路連跑破表（插恢復站）或等開門超過留白（填空檔）才把那種站加進候選重排一次，有比較好才採用。
     // 不每天都加：價值 0 的候選不受上界剪枝，試走包的 8/15 一加就從 276 節點變 6 萬節點、撞 800 ms 預算（2026-10-11 實測），結果還一樣。
     // 他拒絕過哪一種（原話 #126；profile §2.4「當天不再重插，連跑警告降成提示」）那天就不插那一種、它的觸發警告標 hint，畫面用提示樣式。
     const rejected = rejectedKinds(d.removed);
-    const exclude = new Set([...pickedOrRemovedAnywhere, ...insertedSoFar, ...visitedBefore(options.visited, d.date)]);
+    // 他在這天換掉過的站（二選一選了 B 頂掉的 A、「換一家」換掉的）與二選一沒選、別天也排不進的那家（trip.deferred 裡 unplaced）：這天引擎不再把它當恢復站／填站插回來
+    // （別天照舊可以——原話 #138 沒選的可以再出現；推導，T16；choices.js swappedAwayFrom）
+    const exclude = new Set([...pickedOrRemovedAnywhere, ...insertedSoFar, ...visitedBefore(options.visited, d.date), ...swappedAwayFrom(trip, d.date)]);
     // 坐下來的地方（spot：海邊、公園、展望台）每天都進第一趟候選（optional、價值 0、最多 settings.spotPoolMax 家）：它的用處是把等固定時段的時間坐掉，
     // 第二趟才加會看不到（第一趟為了少等會跑去別區再回來）；拒絕過恢復站的那天不加（原話 #172 採的做法；10-16）
     const spots = rejected.has('rest') ? [] : restPool
@@ -145,15 +161,29 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
     }
     if (rejected.size) plan = { ...plan, warnings: plan.warnings.map((w) => (rejected.has(TRIGGER_KIND[w.ruleId]) ? { ...w, hint: true } : w)) };
     for (const s of plan.sequence) if (s.insertedBy) insertedSoFar.add(s.poi.id);
+    // 順延過來的站（picks[].deferredFrom）這天排不進了：整趟警告、不罰；trip.deferred 那筆不自動改（DESIGN §6.3.2 寫的 toDate 回 null／status 'dropped' 沒做，只出警告）
+    for (const c of candidates) {
+      if (c.deferredFrom && plan.dropped.some((x) => x.poi.id === c.poi.id)) warnings.push({ code: 'deferred-dropped', date: d.date, poiId: c.poi.id, msg: `${c.poi.name_zh ?? c.poi.id} 從 ${monthDay(c.deferredFrom)} 順延到這天，但這天排不進了` });
+    }
     out.push({ date: d.date, day, plan });
     prevTheme = themeCategory; prevType = d.dayTrip ? 'daytrip' : (d.type ?? 'normal');
   });
   // 走廊清單與長段提示（T15）：七天都排完才算，掛在排好的序列旁，不進分數、不改時刻。exclude 比引擎插站多扣「任何一天引擎插過的站」（不只前幾天）：
   // 同一家店在別天是站就不當走廊——10-16 審查：仙台朝市早餐是 8/16 的引擎站卻列在 8/12、8/15 的走廊，8/12 按「升級」會把它變成 8/12 的站、8/16 就不插了。今天序列裡的站 corridorFor 自己扣。
   // 按過「我進去了」的（options.visited）從進去那天之後不再列（visitedBefore；原話 #138），進去那天照列、勾要看得到
-  const sequences = out.map((x) => x.plan.sequence);
-  for (const x of out) x.plan = attachCorridor({ plan: x.plan, home: resolveHome(trip, x.date), pool: restPool, legFn, settings, day: x.day, exclude: corridorExclude(trip, sequences, visitedBefore(options.visited, x.date)) });
+  const sequences = out.map((x) => x.plan?.sequence ?? []);
+  for (const x of out) if (x.plan) x.plan = attachCorridor({ plan: x.plan, home: resolveHome(trip, x.date), pool: restPool, legFn, settings, day: x.day, exclude: corridorExclude(trip, sequences, visitedBefore(options.visited, x.date)) });
+  // 二選一（T16）：也是七天排完才算（exclude 要扣任何一天序列裡的站，含別天引擎插的：XXNT 是 8/15 的引擎站就不當 8/17 的 B；
+  // 這天換掉過的與 unplaced 的 A 也不當這天的 B——swappedAwayFrom，10-16 審查）；不進分數與時刻
+  const inAnySequence = new Set(sequences.flat().map((s) => s.poi.id));
+  for (const x of out) if (x.plan) x.plan = { ...x.plan, choices: proposeChoices({ plan: x.plan, date: x.date, pool: restPool, legFn, settings, exclude: new Set([...pickedOrRemovedAnywhere, ...inAnySequence, ...visitedBefore(options.visited, x.date), ...swappedAwayFrom(trip, x.date)]) }) };
   return { days: out, warnings };
+}
+
+/** '2026-08-15' → '8/15'（整趟警告的人話；畫面另有 dom.js dateLabel）。 */
+function monthDay(date) {
+  const m = String(date ?? '').match(/^\d{4}-(\d{2})-(\d{2})$/);
+  return m ? `${Number(m[1])}/${Number(m[2])}` : String(date ?? '');
 }
 
 /**
@@ -184,7 +214,7 @@ export function insertOnTheWay({ plan, onway = [], day, home, legFn, rules, sett
   let seq = plan.sequence; let best = evaluate(seq); let changed = false;
   for (const c of onway) {
     if (seq.filter((s) => s.optional).length >= maxOptional) break;
-    const stop = { poi: c.poi, dwellMin: c.dwellMin, priority: c.priority, optional: true, insertedBy: 'engine', isAnchor: false, designated: false, fixedWindow: null, gap: null, errand: false, detourMin: c.detourMin };
+    const stop = { poi: c.poi, dwellMin: c.dwellMin, priority: c.priority, optional: true, insertedBy: 'engine', isAnchor: false, designated: false, fixedWindow: null, gap: null, errand: false, deferredFrom: null, detourMin: c.detourMin };
     // 只插在它真的順路的那一段（兩邊都走路、繞路 ≤ onTheWayDetourMin）：候選是看某一段算出來的，位置換了就不是順路
     // （10-13 七天實驗：8/15 BILLY'S ENT 被塞進兩段搭車之間、8/18 古著屋 JAM 被接在最後一站後面走回頭路）；最後一站之後沒有「下一站」，不插
     const onWayAt = (i) => {

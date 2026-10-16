@@ -18,6 +18,7 @@ import { renderBrief } from './brief.js';
 import { mergeField, pickFieldDate, catchUpFieldDate } from './ratings.js';
 import { restoreApplied, withoutApplied } from './applied.js';
 import { upgradePick, visitedPatch, visitedDates } from './corridor.js';
+import { chooseOptionTrip, deferStopTrip, deferNotice, displacedPicks } from './choices.js';
 import { emptyBrief, normalizeBrief, briefToMarkdown, briefFileName, looksLikeBrief, isBriefEmpty } from '../data/brief.js';
 import { normalizeMemory, rememberFromBrief } from '../data/brief-memory.js';
 
@@ -31,6 +32,8 @@ export const state = {
   rules: null, settings: null, plans: {}, pool: [],
   packRules: null, packMeta: null, packStatus: '',
   undo: null,   // 最後一次「不去了」或「升級成站」的復原資料（一次性；kind 'remove'／'upgrade'）
+  notice: null,   // 二選一／「排到別天」之後的一句狀態 { text }（T16；下一個動作前都在，不搶 undo）
+  busy: false,    // 二選一／「排到別天」正在試排與重排（同步跑、桌機量到接近 1 秒）：先畫一句再算，算完前再按不理（T16 審查後）
   corridorOpen: {},   // 走廊清單哪幾段展開著（鍵 plan:日期:段／now:日期:段；只在記憶體、不存，重排就清；T15）
   route: '#/plan',
   device: loadJSON(SETTINGS_KEY, {}),
@@ -95,7 +98,13 @@ function syncFieldDate() {
   saveJSON(FIELD_KEY, state.field);
 }
 
+/** 重排並重畫；只重排不重畫的是 replan（二選一／排到別天要在重排後比對擠掉了誰再寫那句，寫完才畫一次）。 */
 export function replanAll() {
+  replan();
+  render();
+}
+
+function replan() {
   buildSettings();
   if (!state.trip) return;
   // restPool：整個知識庫都給引擎挑恢復站（trip.js 會篩成當日區域內、沒勾、沒拒絕的幾家）；示範資料也一樣
@@ -108,7 +117,6 @@ export function replanAll() {
   state.plans = restored.plans;
   if (restored.dropped.length) { state.field = mergeField(state.field, { applied: restored.applied }); saveJSON(FIELD_KEY, state.field); }
   state.corridorOpen = {};   // 重排後段的編號會變，展開的走廊清單全收起（「我進去了」只重畫不重排，照舊開著）
-  render();
 }
 
 /** 他在規劃頁改了那天的勾選（不去了、換一家）：那天現場套過的改案清掉，回到引擎排。 */
@@ -123,6 +131,7 @@ export function swapStop(date, fromPoiId, toPoi) {
   const day = state.trip.days.find((d) => d.date === date);
   if (!day) return;
   state.undo = null;   // 換了別家就不再提供上一次「不去了」的復原
+  state.notice = null;
   if (!state.pois[toPoi.id]) state.pois[toPoi.id] = toPoi;
   Object.assign(day, applySwap(day, fromPoiId, toPoi));
   clearApplied(date);
@@ -140,6 +149,7 @@ export function removeStop(date, poiId, insertedBy = null, priority = null) {
   day.removed = [...(day.removed ?? []), removedEntry];   // 不算落選（原話 #91）
   // 一次性的復原（原話 #171「如果我按不去了 也要一次性的恢復按鈕 進行第二次確認或反悔的機會」）：記住剛拿掉的，下一個動作前都能按「復原」
   state.undo = { kind: 'remove', date, poiId, name: state.pois[poiId]?.name_zh ?? poiId, pick, pickIndex, removedEntry };
+  state.notice = null;
   clearApplied(date);
   replanAll();
 }
@@ -150,6 +160,7 @@ export function undoLast() {
   if (!u) return;
   const day = state.trip.days.find((d) => d.date === u.date);
   state.undo = null;
+  state.notice = null;
   if (!day) return;
   if (u.kind === 'upgrade') Object.assign(day, u.before);
   else {
@@ -173,9 +184,78 @@ export function upgradeCorridor(date, poiId) {
   const day = state.trip.days.find((d) => d.date === date);
   if (!day || !state.pois[poiId]) return;
   state.undo = { kind: 'upgrade', date, poiId, name: state.pois[poiId]?.name_zh ?? poiId, before: { picks: day.picks ?? [], removed: day.removed ?? [] } };
+  state.notice = null;
   Object.assign(day, upgradePick(day, poiId));
   clearApplied(date);
   replanAll();
+}
+
+/** planTrip 的其他參數（順延試排用，跟 replanAll 同一份）。 */
+function planArgsOf() {
+  return { rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, legFn: state.legFn, restPool: Object.values(state.pois), options: { visited: visitedDates(state.field.visited) } };
+}
+
+/**
+ * 二選一選了 B（原話 #119「我選一間，到了 17 號就會自動排進另一間」；T16）：那天的 picks 把 A 換成 B（換這一站的邏輯，換掉的不算落選）、A 順延到別天
+ * （engine/choices.js defer：主題日優先、再其餘 normal 日由早到晚，每天用引擎試排，排得進就定案；全排不進就先留在候選池），兩天現場套過的改案清掉、整趟重排；
+ * 頂端一句「A 已排到 8/17」或「A 先留在候選池（別天排不進）」，重排擠掉了別的勾選站就接「擠掉了 8/13 的 X」（displacedPicks；state.notice，跟 undo 列同樣式、不搶 undo）。
+ * 跟「不去了」不同，沒有一次性復原（待確認）。試排的 baseline 用重排前的 state.plans（當日區域、主題日、購物日那幾樣換站前後一樣，fromDate 自己不在候選日裡）。
+ * 試排好幾天再整趟重排是同步的（桌機量到接近 1 秒，10-16 審查）：先畫「正在重排…」再算（afterPaint）。
+ */
+export function chooseOption(date, fromPoiId, toPoi) {
+  if (state.busy || !state.trip?.days.some((d) => d.date === date) || !toPoi || !state.pois[fromPoiId]) return;
+  state.undo = null;
+  if (!state.pois[toPoi.id]) state.pois[toPoi.id] = toPoi;
+  const name = state.pois[fromPoiId].name_zh ?? fromPoiId;
+  afterPaint(() => {
+    const before = state.plans;
+    const r = chooseOptionTrip({ trip: state.trip, pois: state.pois, date, fromPoiId, toPoi, baseline: { days: Object.values(before) }, planArgs: planArgsOf() });
+    state.trip = r.trip;
+    clearApplied(date);
+    if (r.toDate) clearApplied(r.toDate);
+    replan();
+    state.notice = { text: deferNotice(r.entry, name, displacedPicks({ before, after: state.plans, dates: [date, r.toDate] })) };
+  });
+}
+
+/** 排不進清單的「排到別天」（T16）：那站直接順延（沒有選的那家）；排到了就從這天的 picks 搬過去，排不進就留在原處、候選頁標「順延中」。擠掉了誰同 chooseOption。 */
+export function deferStop(date, poiId) {
+  if (state.busy || !state.trip?.days.some((d) => d.date === date) || !state.pois[poiId]) return;
+  state.undo = null;
+  const name = state.pois[poiId].name_zh ?? poiId;
+  afterPaint(() => {
+    const before = state.plans;
+    const r = deferStopTrip({ trip: state.trip, pois: state.pois, date, poiId, baseline: { days: Object.values(before) }, planArgs: planArgsOf() });
+    state.trip = r.trip;
+    clearApplied(date);
+    if (r.toDate) clearApplied(r.toDate);
+    replan();
+    state.notice = { text: deferNotice(r.entry, name, displacedPicks({ before, after: state.plans, dates: [date, r.toDate] })) };
+  });
+}
+
+/**
+ * 先畫一句「正在重排…」（state.busy、state.notice）讓他知道按到了，下一個畫格再跑 work（同步的試排與重排），跑完重畫。
+ * requestAnimationFrame 之後再 setTimeout 0 才保證那句已經畫出來；沒有 rAF 的環境直接 setTimeout。work 丟錯那句也會清掉、busy 放開。
+ */
+function afterPaint(work) {
+  state.busy = true;
+  state.notice = { text: TEXT.working };
+  render();
+  const run = () => {
+    try { work(); } finally {
+      state.busy = false;
+      if (state.notice?.text === TEXT.working) state.notice = null;
+      render();
+    }
+  };
+  if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => setTimeout(run, 0));
+  else setTimeout(run, 0);
+}
+
+export function dismissNotice() {
+  state.notice = null;
+  render();
 }
 
 /** 走廊清單「我進去了」（原話 #57）：只記在這支手機 field.visited[poiId] = { date, at }（DESIGN §4 live），不重排；回國回灌進 KB 還沒接。 */
@@ -331,7 +411,7 @@ export function render() {
   const root = document.getElementById('app');
   if (!root) return;
   clear(root);
-  const actions = { swapStop, removeStop, undoLast, upgradeCorridor, markVisited, saveDevice, setField, replanAll, updateFromUrl, importFile, setBrief, exportBrief, copyBrief, importBrief, clearBrief, undoBrief };
+  const actions = { swapStop, removeStop, undoLast, upgradeCorridor, markVisited, chooseOption, deferStop, dismissNotice, saveDevice, setField, replanAll, updateFromUrl, importFile, setBrief, exportBrief, copyBrief, importBrief, clearBrief, undoBrief };
   const view = !state.trip && !WITHOUT_TRIP.has(state.route) ? renderEmpty : (VIEWS[state.route] ?? renderPlanner);
   root.append(el('main', { class: 'view' }, view({ state, actions })));
   root.append(tabBar());

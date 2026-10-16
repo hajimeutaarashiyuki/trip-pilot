@@ -8,7 +8,7 @@ import { resolveHome, attachCorridor, corridorExclude, visitedBefore } from '../
 import { TEXT } from './text.js';
 
 /** 快照每站存的欄位（POI 本體不存，還原時從 state.pois 對回；跟 planDay 排出的 stop 同名） */
-const STOP_KEYS = ['startMin', 'endMin', 'dwellMin', 'waitMin', 'arriveMin', 'fixedWindow', 'insertedBy', 'priority', 'optional', 'gap', 'isAnchor', 'designated', 'errand'];
+const STOP_KEYS = ['startMin', 'endMin', 'dwellMin', 'waitMin', 'arriveMin', 'fixedWindow', 'insertedBy', 'priority', 'optional', 'gap', 'isAnchor', 'designated', 'errand', 'deferredFrom'];
 
 /**
  * 還沒去的站翻成 planDay 的候選（現場改案的 remaining）。optional、insertedBy、gap 要帶著：引擎插的站重排時還是價值 0、排不進不算落選、
@@ -16,7 +16,7 @@ const STOP_KEYS = ['startMin', 'endMin', 'dwellMin', 'waitMin', 'arriveMin', 'fi
  * 降速釘的「現在就去坐」時刻（fixedWindow.pinned）只對那一次改案有效，再重排就拿掉，不然時間一過它就排不進；他自己的固定時段（訂位、花火）留著。
  */
 export function remainingFrom(seq, idx) {
-  return seq.slice(idx).map((s) => ({ poi: s.poi, priority: s.priority ?? 'want', dwellMin: s.dwellMin, designated: s.designated, isAnchor: s.isAnchor, fixedWindow: s.fixedWindow?.pinned ? null : s.fixedWindow ?? null, optional: Boolean(s.optional), insertedBy: s.insertedBy ?? null, gap: s.gap ?? null, errand: Boolean(s.errand), startMin: s.startMin }));
+  return seq.slice(idx).map((s) => ({ poi: s.poi, priority: s.priority ?? 'want', dwellMin: s.dwellMin, designated: s.designated, isAnchor: s.isAnchor, fixedWindow: s.fixedWindow?.pinned ? null : s.fixedWindow ?? null, optional: Boolean(s.optional), insertedBy: s.insertedBy ?? null, gap: s.gap ?? null, errand: Boolean(s.errand), deferredFrom: s.deferredFrom ?? null, startMin: s.startMin }));
 }
 
 /**
@@ -52,12 +52,12 @@ export function mergeDropped({ engine, sequence, lost = [] }) {
   const placed = new Set(sequence.map((s) => s.poi.id));
   const why = new Map(lost.map((l) => [l.poiId ?? l.poi?.id, l.reason]));
   const out = []; const seen = new Set();
-  const add = (poi, priority, reason) => {
+  const add = (poi, priority, reason, deferredFrom = null) => {
     if (placed.has(poi.id) || seen.has(poi.id)) return;
-    seen.add(poi.id); out.push({ poi, priority, reason: why.get(poi.id) ?? reason });
+    seen.add(poi.id); out.push({ poi, priority, reason: why.get(poi.id) ?? reason, deferredFrom });
   };
-  for (const d of engine.dropped ?? []) add(d.poi, d.priority, d.reason);
-  for (const s of engine.sequence ?? []) if (!s.optional && !s.insertedBy) add(s.poi, s.priority, TEXT.appliedLost);
+  for (const d of engine.dropped ?? []) add(d.poi, d.priority, d.reason, d.deferredFrom ?? null);
+  for (const s of engine.sequence ?? []) if (!s.optional && !s.insertedBy) add(s.poi, s.priority, TEXT.appliedLost, s.deferredFrom ?? null);
   return out;
 }
 
@@ -74,7 +74,8 @@ export function appliedPlan({ planned, sequence, appliedIndex, lost = [], trip, 
   const evalDay = { ...day, resumed: appliedIndex === 0, window: { ...day.window, endMin: day.windowRaw?.endMin ?? day.window.endMin } };
   const home = resolveHome(trip, day.date);
   const ev = evaluateSequence({ sequence, day: evalDay, home, legFn, rules, settings, country, kb });
-  const base = { ...planned.plan, ...ev, sequence, corridor: [], dropped: mergeDropped({ engine: planned.plan, sequence, lost }), applied: true };
+  // 二選一（plan.choices）是對引擎排的序列算的（slot 指引擎序列的位置）：現場改過的那天不出，按了也會先清掉改案再重排（T16）
+  const base = { ...planned.plan, ...ev, sequence, corridor: [], choices: [], dropped: mergeDropped({ engine: planned.plan, sequence, lost }), applied: true };
   const others = Object.values(plans ?? {}).filter((p) => p && p !== planned && p.date !== planned.date).map((p) => p.plan?.sequence);
   const plan = pois ? attachCorridor({ plan: base, home, pool: Object.values(pois), legFn, settings, day, exclude: corridorExclude(trip, others, visitedBefore(visited, day.date)) }) : base;
   return { ...planned, day, plan };

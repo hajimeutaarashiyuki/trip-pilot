@@ -70,10 +70,11 @@ function orderCandidates(list) {
 
 /**
  * planDay({ candidates, day, home, legFn, rules, settings, country, kb, options })
- * - candidates: [{ poi, dwellMin?, priority, designated?, isAnchor?, fixedWindow?, optional?, insertedBy?, gap?, errand? }]
+ * - candidates: [{ poi, dwellMin?, priority, designated?, isAnchor?, fixedWindow?, optional?, insertedBy?, gap?, errand?, deferredFrom? }]
  *   optional：排不進不算落選（不進 dropped）、不佔 maxStopsPerDay 名額（rules/max-stops.js）；insertedBy：誰插的（'engine'），排進去的 stop 會帶著；
  *   gap：填站只能落在的那段空檔 { startMin, endMin }（trip.js fillCandidates，規則 filler-gap 擋），其他站 null；
- *   errand：他勾的待辦站（旅程檔 picks[].errand，順路購買，原話 #29）——購物類排在非購物日不罰（rules/shopping-day.js），排進去的 stop 帶著
+ *   errand：他勾的待辦站（旅程檔 picks[].errand，順路購買，原話 #29）——購物類排在非購物日不罰（rules/shopping-day.js），排進去的 stop 帶著；
+ *   deferredFrom：二選一沒選的那家從哪天順延過來（旅程檔 picks[].deferredFrom，engine/choices.js defer 寫的；T16），排進去的 stop 帶著、規則不看
  * - home: 住宿據點（第一段移動的起點）
  * - legFn(fromPoi, toPoi) → { walkMin, rideMin, climbMin, backtrackMin?, mode }
  * 回 { sequence, score, penaltyMin, warnings, dropped, breakdown, stats }；永遠回得出東西（總則 0）。
@@ -124,7 +125,7 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
       const flex = absorbIntoSpot(prev, placed0, settings, prev?.poi?.category === 'spot' ? spotLatestEnd({ poi: prev.poi, startMin: prev.startMin, day, settings, country, kb }) : Infinity);
       const seqNow = flex.prev === prev ? seq : [...seq.slice(0, -1), flex.prev];
       const placed = flex.placed;
-      const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i, optional: Boolean(c.optional), insertedBy: c.insertedBy ?? null, gap: c.gap ?? null, errand: Boolean(c.errand) };
+      const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i, optional: Boolean(c.optional), insertedBy: c.insertedBy ?? null, gap: c.gap ?? null, errand: Boolean(c.errand), deferredFrom: c.deferredFrom ?? null };
       const ctx = { ...dayCtxBase, stop, prev: flex.prev, next: null, leg, acc, sequence: seqNow };
       const r = evaluateStop(ctx, rules);
       if (r.verdict === 'never') {
@@ -159,7 +160,7 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
         const flex = absorbIntoSpot(prev, placed0, settings, prev?.poi?.category === 'spot' ? spotLatestEnd({ poi: prev.poi, startMin: prev.startMin, day, settings, country, kb }) : Infinity);
         const seqNow = flex.prev === prev ? seq : [...seq.slice(0, -1), flex.prev];
         const placed = flex.placed;
-        const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i, optional: Boolean(c.optional), insertedBy: c.insertedBy ?? null, gap: c.gap ?? null, errand: Boolean(c.errand) };
+        const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i, optional: Boolean(c.optional), insertedBy: c.insertedBy ?? null, gap: c.gap ?? null, errand: Boolean(c.errand), deferredFrom: c.deferredFrom ?? null };
         const r = evaluateStop({ ...dayCtxBase, stop, prev: flex.prev, next: null, leg, acc, sequence: seqNow }, rules);
         if (r.verdict !== 'ok') continue;
         const gain = c.value - r.penaltyMin;
@@ -200,7 +201,7 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
     }
     return '排得進，但排進去整天的分數反而低';
   };
-  const dropped = cands.filter((c) => !placedIdx.has(c._i) && !c.optional).map((c) => ({ poi: c.poi, priority: c.priority, reason: reasonFor(c) }));
+  const dropped = cands.filter((c) => !placedIdx.has(c._i) && !c.optional).map((c) => ({ poi: c.poi, priority: c.priority, reason: reasonFor(c), deferredFrom: c.deferredFrom ?? null }));   // deferredFrom：順延過來卻排不進的，規劃頁排不進清單寫「從 8/13 順延來的」（T16）
   const stopPenalty = best.path.reduce((s, p) => s + p.penaltyMin, 0);
   const warnings = [
     ...best.path.flatMap((p) => p.warnings),

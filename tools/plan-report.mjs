@@ -44,6 +44,8 @@ export function formatReport({ pack, result, legFn }) {
       prev = s;
     }
     if (plan.dropped?.length) lines.push(`排不進：${plan.dropped.map((x) => `${x.poi.name_zh}（${x.reason}）`).join('；')}`);
+    // 二選一（T16）：不是站、不進分數；「A 或 B（來源）」，來源＝今天排不進的同類勾選站／候選池
+    if (plan.choices?.length) lines.push(`二選一：${plan.choices.map((c) => `${plan.sequence[c.slot]?.poi.name_zh ?? c.poiId} 或 ${c.altPoi?.name_zh ?? c.options[1]}（${c.source === 'dropped' ? '今天排不進的勾選站' : `候選池，${c.detourMin > 0 ? `多繞 ${c.detourMin} 分` : '順路'}`}）`).join('；')}`);
     // 走廊清單（T15）：不是站、不進分數；每段列「從→到：店（離路線幾公尺）」，長段提示（leg-suggest）另一行
     if (plan.corridor?.length) {
       const home = resolveHome(pack.trip, d.date);

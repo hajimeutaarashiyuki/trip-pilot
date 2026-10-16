@@ -7,11 +7,14 @@ import { resolveHome } from '../engine/trip.js';
 import { placeUrl, routeUrl, coordQuery, legMode, tripCityName } from './maps.js';
 import { darkBeforeMinOf } from './daylight.js';
 import { corridorOfLeg, legSuggestOf, corridorNames, corridorListNode, corridorDisclosure } from './corridor.js';
+import { choiceOf } from './choices.js';
 
 export function renderPlanner({ state, actions }) {
   const nodes = [el('h1', { text: state.trip.name ?? TEXT.appName })];
   // 剛按過「不去了」或「升級成站」：給一次反悔的機會（原話 #171），下一個動作前都在；列是 sticky 的，在長頁深處按了也看得到（10-16 審查：升級重排會翻動整天、之前沒有回頭路）
   if (state.undo) nodes.push(el('div', { class: 'undo-bar' }, [el('span', { text: state.undo.kind === 'upgrade' ? TEXT.undoUpgraded(state.undo.name, dateLabel(state.undo.date)) : TEXT.undoRemoved(state.undo.name, dateLabel(state.undo.date)) }), el('button', { class: 'btn', type: 'button', onclick: () => actions.undoLast() }, TEXT.undo)]));
+  // 二選一選了 B 或「排到別天」之後的一句（T16）：「A 已排到 8/17」或「A 先留在候選池」，同一種 sticky 列、不搶復原列
+  if (state.notice) nodes.push(el('div', { class: 'undo-bar notice' }, [el('span', { text: state.notice.text }), el('button', { class: 'btn quiet', type: 'button', onclick: () => actions.dismissNotice() }, TEXT.noticeClose)]));
   for (const d of state.trip.days) {
     const planned = state.plans[d.date];
     if (!planned) continue;
@@ -37,12 +40,33 @@ function dayBlock(d, planned, state, actions) {
   plan.sequence.forEach((s, i) => block.append(stopCard(s, i, plan, d, state, actions, seenCumulative)));
   if (dayWarnings.length) block.append(warnList(dayWarnings));
   if (plan.dropped.length) {
+    // 排不進的每一條（must 的除外）多一顆「排到別天」：直接順延到別的排得進的日子（T16；原話 #119）
     block.append(el('details', { class: 'dropped' }, [
       el('summary', { text: `${TEXT.dropped}：${plan.dropped.length}` }),
-      el('ul', {}, plan.dropped.map((x) => el('li', {}, [el('strong', { text: x.poi.name_zh }), ` ${x.reason}`]))),
+      el('ul', {}, plan.dropped.map((x) => el('li', {}, [
+        el('strong', { text: x.poi.name_zh }), ` ${x.reason}`,
+        // 順延過來卻排不進的（picks[].deferredFrom → dropped[].deferredFrom；整趟警告 deferred-dropped 畫面沒畫，這裡寫）
+        x.deferredFrom ? el('span', { class: 'muted small', text: `　${TEXT.deferredDroppedNote(dateLabel(x.deferredFrom))}` }) : null,
+        x.priority === 'must' ? null : el('button', { class: 'btn quiet sm', type: 'button', onclick: () => actions.deferStop(d.date, x.poi.id) }, TEXT.deferButton),
+      ]))),
     ]));
   }
   return block;
+}
+
+/**
+ * 二選一那行（T16；DESIGN §6.3.2「卡上顯示『或 B』」）：這站在 plan.choices 裡就在店名下面寫「或 [B]」——B 是一顆小鍵，按了把 A 換成 B、A 順延到別天（app.js chooseOption）；
+ * B 來自今天排不進的同類勾選站就補一句「今天只塞得下一家」，來自候選池就寫順路／多繞幾分。沒按＝照引擎；選完 B 進 picks、這行就不再出現。
+ */
+function choiceLine(s, plan, d, state, actions) {
+  const c = choiceOf(plan, s.poi.id);
+  if (!c?.altPoi) return null;
+  const b = state.pois[c.altPoi.id] ?? c.altPoi;
+  return el('p', { class: 'choice small' }, [
+    el('span', { class: 'muted', text: TEXT.orChoice }),
+    el('button', { class: 'btn quiet sm', type: 'button', onclick: () => actions.chooseOption(d.date, s.poi.id, b) }, b.name_zh),
+    el('span', { class: 'muted', text: c.source === 'dropped' ? TEXT.choiceDroppedNote : TEXT.swapNote(c.detourMin) }),
+  ]);
 }
 
 /**
@@ -131,6 +155,9 @@ function stopCard(s, i, plan, d, state, actions, seenCumulative = new Set()) {
       poi.item ? el('span', { class: 'cat item', text: poi.item }) : null,
     ]),
     el('h3', { text: poi.name_zh }),
+    choiceLine(s, plan, d, state, actions),
+    // 二選一沒選的那家順延到這天（picks[].deferredFrom → stop.deferredFrom；DESIGN §4 Stop.deferredFrom）
+    s.deferredFrom ? el('p', { class: 'muted small', text: TEXT.deferredFrom(dateLabel(s.deferredFrom)) }) : null,
     el('p', { class: 'muted small', text: [poi.guide?.intro ?? poi.highlight ?? '', limitText].filter(Boolean).join('　') }),
     warns.length ? warnList(warns) : null,
     // 哪一種引擎插的站看 stop.priority（'filler' 填空檔、'rest' 恢復站），不看店型：恢復型的店也可能是填站

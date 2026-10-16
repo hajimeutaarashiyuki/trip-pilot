@@ -56,6 +56,12 @@
   /* 復原列貼在視窗頂端：「升級成站」「不去了」的鍵在長頁深處（8/17 捲到 13,000px），列在頁首會看不到（10-16 審查） */
   .undo-bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--rest); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; margin: 8px 0 12px; font-size: 14px; }
   .undo-bar .btn { white-space: nowrap; flex: none; }
+  .undo-bar.notice { background: var(--bg-elevated); }   /* 二選一／順延後的一句（T16）：同一種 sticky 列，底色淡一階跟復原列分開 */
+  /* 二選一（T16）：店名下一行「或 [B]」，B 是小鍵、旁邊一句來源；排不進清單每條尾巴一顆「排到別天」 */
+  .btn.sm { padding: 6px 10px; font-size: 14px; }
+  .choice { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0 0 4px; }
+  .dropped li { margin: 4px 0; }
+  .dropped li .btn { margin-left: 6px; vertical-align: middle; }
   .status { margin-top: 8px; }
   .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
   .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
