@@ -26,6 +26,7 @@ export function renderSettings({ state, actions }) {
           TEXT.importFile,
           el('input', { type: 'file', accept: '.json,application/json', class: 'hidden-input', onchange: (e) => { const f = e.target.files?.[0]; if (f) actions.importFile(f); e.target.value = ''; } }),
         ]),
+        el('a', { class: 'btn', href: '#/brief' }, TEXT.brief.entry),   // 需求單頁（T26）：出發前填的，不進底部分頁
       ]),
       state.packStatus ? el('p', { class: 'small status', text: state.packStatus }) : null,
     ]),

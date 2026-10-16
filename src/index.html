@@ -95,6 +95,45 @@
   .stars { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 10px 0; }
   .rate-item { border-top: 1px solid var(--line); padding: 8px 0 4px; }
 
+  /* 需求單頁（T26）：很長的一頁，欄位直排；一列多欄位的（固定時段、代購、要辦的事）用 grid，窄螢幕兩欄自動換行、寬螢幕一列排開 */
+  #app:has(.brief) { max-width: 820px; }
+  .brief .intro { margin-bottom: 8px; }
+  .brief h2 { margin-top: 24px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+  .brief h3 { font-size: 16px; color: var(--muted); margin: 16px 0 0; }
+  .brief .hint { margin: -6px 0 8px; }
+  .brief .field input:not([type=checkbox]):not([type=radio]):not([type=file]), .brief .field select, .brief .field textarea { font: inherit; width: 100%; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg-elevated); color: var(--fg); }
+  .brief .field textarea { min-height: 96px; resize: vertical; line-height: 1.4; }
+  .brief .field select { appearance: auto; }
+  .brief .pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .brief .choices { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin: 6px 0; }
+  .brief .choice { display: inline-flex; align-items: center; gap: 6px; }
+  .brief .choice input[type=checkbox], .brief .choice input[type=radio] { width: 24px; height: 24px; margin: 0; }
+  .brief .choice input[type=text] { width: auto; flex: 1; min-width: 140px; padding: 6px 10px; }
+  .brief .choice.other { flex: 1; }
+  .brief .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+  .brief .btn.sm { padding: 6px 10px; font-size: 14px; }
+  .brief .rows > .actions { margin-top: 8px; }
+  .brief .brief-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: end; padding: 10px 0; border-top: 1px solid var(--line); }
+  /* 固定時段的三個日期時間欄不能並排：Chrome 的 date／time 欄最小寬 158＋142＋142 會爆出 358（10-16 實測），窄螢幕日期占整行、開始結束並排 */
+  .brief .brief-row.theme { grid-template-columns: 1.4fr 1fr auto; }
+  .brief .brief-row .field { margin: 0; }
+  .brief .brief-row .wide { grid-column: 1 / -1; }
+  .brief .brief-row .choice { padding-bottom: 10px; }
+  .brief .brief-row .del { grid-column: 1 / -1; justify-self: end; }
+  .brief .brief-row.theme .del, .brief .brief-row.errand .del, .brief .brief-row.task .del { grid-column: auto; }
+  .brief .person-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 24px; }
+  .brief .person-head h2 { flex: 1; margin-top: 0; }
+  .brief .copy-box { width: 100%; min-height: 220px; margin-top: 8px; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg-elevated); color: var(--fg); font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+  .brief .status .btn { margin-left: 8px; }
+  /* 寬螢幕：日期／時間／日期時間欄照瀏覽器的自然寬（auto），不寫死 px——Chrome zh-TW 的 time 自然寬 138、date 154、datetime-local 242（10-16 審查量的），寫 110／210 會切到裡面的字 */
+  @media (min-width: 700px) {
+    .brief .brief-row.fixed { grid-template-columns: auto auto auto 1fr auto; }
+    .brief .brief-row.theme { grid-template-columns: auto 1fr auto; }
+    .brief .brief-row.errand { grid-template-columns: 1fr 1.3fr 80px 1.3fr auto auto; }
+    .brief .brief-row.task { grid-template-columns: 1.4fr auto 1fr auto; }
+    .brief .brief-row .wide, .brief .brief-row .del { grid-column: auto; }
+  }
+
   .tabs { position: fixed; left: 0; right: 0; bottom: 0; height: calc(var(--tabs) + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom); display: flex; background: var(--bg-elevated); border-top: 1px solid var(--line); }
   .tab { flex: 1; display: flex; align-items: center; justify-content: center; text-decoration: none; color: var(--muted); font-size: 15px; }
   .tab.active { color: var(--accent); font-weight: 600; }

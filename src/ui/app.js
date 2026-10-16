@@ -14,11 +14,16 @@ import { renderPlanner } from './planner.js';
 import { renderNow } from './now.js';
 import { renderSettings } from './settings.js';
 import { renderPool } from './pool.js';
+import { renderBrief } from './brief.js';
 import { mergeField, pickFieldDate, catchUpFieldDate } from './ratings.js';
 import { restoreApplied, withoutApplied } from './applied.js';
+import { emptyBrief, normalizeBrief, briefToMarkdown, briefFileName, looksLikeBrief, isBriefEmpty } from '../data/brief.js';
+import { normalizeMemory, rememberFromBrief } from '../data/brief-memory.js';
 
 const SETTINGS_KEY = 'trip-pilot:settings';
 const FIELD_KEY = 'trip-pilot:field';
+const BRIEF_KEY = 'trip-pilot:brief';
+const BRIEF_MEMORY_KEY = 'trip-pilot:brief-memory';
 
 export const state = {
   trip: null, pois: {}, country: null, kb: null, legFn: null,
@@ -28,6 +33,12 @@ export const state = {
   route: '#/plan',
   device: loadJSON(SETTINGS_KEY, {}),
   field: loadJSON(FIELD_KEY, { date: null, index: 0, simulate: false, simNowMin: null, ratings: {}, progress: {} }),
+  // 需求單（T26）：出發前在手機上填，存這支手機；記憶是上一份單子的消耗品與要買的（data/brief-memory.js）
+  brief: normalizeBrief(loadJSON(BRIEF_KEY, null)),
+  briefMemory: normalizeMemory(loadJSON(BRIEF_MEMORY_KEY, null)),
+  briefStatus: '',
+  briefCopyText: null,   // 剪貼簿不給用時，整份文字放進頁上的框讓他自己複製
+  briefUndo: null,       // 載入別份或清空前的那份（一次性「復原上一份」；空單不留）
 };
 
 function loadJSON(key, fallback) { try { const v = JSON.parse(localStorage.getItem(key) ?? 'null'); return v ?? fallback; } catch { return fallback; } }
@@ -195,14 +206,106 @@ export function catchUpToday() {
   setField({ date });
 }
 
-const VIEWS = { '#/plan': renderPlanner, '#/now': renderNow, '#/pool': renderPool, '#/settings': renderSettings };
+// ---- 需求單（T26） ----
+/** 改需求單：updater 收現況、回新單；每改一個欄位就存（打字的欄位傳 rerender:false，重畫會把焦點踢掉）。 */
+export function setBrief(updater, { rerender = true } = {}) {
+  const next = typeof updater === 'function' ? updater(state.brief) : updater;
+  state.brief = { ...next, updatedAt: new Date().toISOString() };
+  saveJSON(BRIEF_KEY, state.brief);
+  if (rerender) render();
+}
+
+/** 把這份單子的消耗品與他要買的記進記憶（存檔、複製、換掉這份之前都做；原話 #87）。 */
+export function rememberBrief() {
+  state.briefMemory = rememberFromBrief(state.briefMemory, state.brief);
+  saveJSON(BRIEF_MEMORY_KEY, state.briefMemory);
+}
+
+/** 整份換掉（載入、清空）：先記憶（畫面承諾「勾了消耗品，下次會帶出來問」，不能因為沒存檔就漏掉），非空的舊單留一份給「復原上一份」。 */
+function replaceBrief(next) {
+  rememberBrief();
+  state.briefUndo = isBriefEmpty(state.brief) ? null : state.brief;
+  state.brief = next;
+  saveJSON(BRIEF_KEY, state.brief);
+}
+
+/** 復原上一份（只對最後一次載入／清空有效）。 */
+export function undoBrief() {
+  if (!state.briefUndo) return;
+  state.brief = state.briefUndo;
+  state.briefUndo = null;
+  saveJSON(BRIEF_KEY, state.brief);
+  state.briefStatus = TEXT.brief.undone;
+  state.briefCopyText = null;
+  render();
+}
+
+/** 存成檔案：JSON 下載，檔名 brief-<城市>-<起日>.json。 */
+export function exportBrief() {
+  rememberBrief();
+  const name = briefFileName(state.brief);
+  downloadText(name, JSON.stringify(state.brief, null, 2), 'application/json');
+  state.briefStatus = TEXT.brief.exported(name);
+  state.briefCopyText = null;
+  render();
+}
+
+/** 複製需求單文字（brief-template 格式）；剪貼簿不給用（非 https、瀏覽器不支援）就把文字放進頁上的框讓他自己複製。 */
+export async function copyBrief() {
+  rememberBrief();
+  const text = briefToMarkdown(state.brief);
+  try {
+    await navigator.clipboard.writeText(text);
+    state.briefStatus = TEXT.brief.copied;
+    state.briefCopyText = null;
+  } catch {
+    state.briefStatus = TEXT.brief.copyFailed;
+    state.briefCopyText = text;
+  }
+  render();
+  return text;
+}
+
+/**
+ * 從檔案載入：只收需求單形狀的 JSON（looksLikeBrief）——旅程檔、打包檔、{} 經 normalizeBrief 都會變成空單，之前會把填好的整份蓋掉還顯示「已載入」。
+ * 不是 JSON 也用中文講，不露瀏覽器的英文錯誤。載入成功才換掉現有的（先記憶、留一次復原）。
+ */
+export async function importBrief(file) {
+  let raw;
+  try { raw = JSON.parse(await file.text()); } catch { raw = undefined; }
+  if (raw === undefined) state.briefStatus = TEXT.brief.importFailed(TEXT.brief.notJson);
+  else if (!looksLikeBrief(raw)) state.briefStatus = TEXT.brief.importFailed(TEXT.brief.notBriefFile);
+  else { replaceBrief(normalizeBrief(raw)); state.briefStatus = TEXT.brief.imported; }
+  state.briefCopyText = null;
+  render();
+}
+
+export function clearBrief() {
+  replaceBrief(emptyBrief());
+  state.briefStatus = TEXT.brief.cleared;
+  state.briefCopyText = null;
+  render();
+}
+
+function downloadText(name, text, type) {
+  const url = URL.createObjectURL(new Blob([text], { type }));
+  const a = el('a', { href: url, download: name });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+const VIEWS = { '#/plan': renderPlanner, '#/now': renderNow, '#/pool': renderPool, '#/settings': renderSettings, '#/brief': renderBrief };
+// 沒有旅程也開得了的頁：設定（去更新）、需求單（出發前填）
+const WITHOUT_TRIP = new Set(['#/settings', '#/brief']);
 
 export function render() {
   const root = document.getElementById('app');
   if (!root) return;
   clear(root);
-  const actions = { swapStop, removeStop, undoRemove, saveDevice, setField, replanAll, updateFromUrl, importFile };
-  const view = !state.trip && state.route !== '#/settings' ? renderEmpty : (VIEWS[state.route] ?? renderPlanner);
+  const actions = { swapStop, removeStop, undoRemove, saveDevice, setField, replanAll, updateFromUrl, importFile, setBrief, exportBrief, copyBrief, importBrief, clearBrief, undoBrief };
+  const view = !state.trip && !WITHOUT_TRIP.has(state.route) ? renderEmpty : (VIEWS[state.route] ?? renderPlanner);
   root.append(el('main', { class: 'view' }, view({ state, actions })));
   root.append(tabBar());
 }
@@ -213,6 +316,7 @@ function renderEmpty() {
     el('p', { class: 'muted', text: TEXT.shellHint }),
     el('div', { class: 'actions' }, [
       el('a', { class: 'btn primary', href: '#/settings' }, TEXT.goUpdate),
+      el('a', { class: 'btn', href: '#/brief' }, TEXT.brief.fillFirst),
       el('button', { class: 'btn', type: 'button', onclick: loadDemo }, TEXT.loadDemo),
     ]),
   ];
