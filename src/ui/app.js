@@ -17,6 +17,7 @@ import { renderPool } from './pool.js';
 import { renderBrief } from './brief.js';
 import { mergeField, pickFieldDate, catchUpFieldDate } from './ratings.js';
 import { restoreApplied, withoutApplied } from './applied.js';
+import { snapshotTripEdits, applyTripEdits, overlayTripEdits, diffTripEdits } from './trip-edits.js';
 import { upgradePick, visitedPatch, visitedDates } from './corridor.js';
 import { chooseOptionTrip, deferStopTrip, deferNotice, displacedPicks } from './choices.js';
 import { emptyBrief, normalizeBrief, briefToMarkdown, briefFileName, looksLikeBrief, isBriefEmpty, themeOptions } from '../data/brief.js';
@@ -27,6 +28,7 @@ const SETTINGS_KEY = 'trip-pilot:settings';
 const FIELD_KEY = 'trip-pilot:field';
 const BRIEF_KEY = 'trip-pilot:brief';
 const BRIEF_MEMORY_KEY = 'trip-pilot:brief-memory';
+const TRIP_EDITS_KEY = 'trip-pilot:trip-edits';   // 規劃頁的改動（T16b；ui/trip-edits.js）：整天的 picks／removed／swapped 與 deferred 快照
 
 export const state = {
   trip: null, pois: {}, country: null, kb: null, legFn: null,
@@ -37,6 +39,7 @@ export const state = {
   busy: false,    // 二選一／「排到別天」正在試排與重排（同步跑、桌機量到接近 1 秒）：先畫一句再算，算完前再按不理（T16 審查後）
   replanPending: false,   // 需求單頁改了會影響排程的東西（同行者的在場、體力、夜間站）還沒重排：離開需求單頁那一下補跑（T19 審查後）
   corridorOpen: {},   // 走廊清單哪幾段展開著（鍵 plan:日期:段／now:日期:段；只在記憶體、不存，重排就清；T15）
+  tripBase: null,   // 打包那版的 days 三個陣列與 deferred（snapshotTripEdits 的形狀，載入時 clone 的）：設定頁「本機改動：N 天有改」的對照、「還原成打包版」放回去的那份（T16b）
   route: '#/plan',
   device: loadJSON(SETTINGS_KEY, {}),
   field: loadJSON(FIELD_KEY, { date: null, index: 0, simulate: false, simNowMin: null, ratings: {}, progress: {}, visited: {} }),
@@ -50,6 +53,7 @@ export const state = {
 
 function loadJSON(key, fallback) { try { const v = JSON.parse(localStorage.getItem(key) ?? 'null'); return v ?? fallback; } catch { return fallback; } }
 function saveJSON(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* 隱私模式 */ } }
+function removeJSON(key) { try { localStorage.removeItem(key); } catch { /* 隱私模式 */ } }
 
 /** 把四個裝置設定套進引擎設定與規則（決策樹 Q17）。 */
 function buildSettings() {
@@ -72,6 +76,7 @@ export function loadDemo() {
   state.kb = demo.KB;
   state.legFn = demo.legFn;
   state.pool = Object.values(demo.POIS).map((poi) => ({ poi }));
+  restoreTripEdits();
   syncFieldDate();
   replanAll();
 }
@@ -88,6 +93,7 @@ export function loadFromPack(packResult) {
   buildSettings();
   state.legFn = makeLegFn({ walk: pack.walk?.pairs ?? {}, settings: state.settings, zoneLinks: pack.zones?.links ?? {} });
   state.pool = pois.map((poi) => ({ poi }));
+  restoreTripEdits();   // 規劃頁的改動（T16b）：打包時間與旅程相同才蓋回，重排之前
   syncFieldDate();
   replanAll();
 }
@@ -131,6 +137,56 @@ function clearApplied(date) {
   saveJSON(FIELD_KEY, state.field);
 }
 
+/** 打包時間（meta.generatedAt）：現場改案與規劃頁改動的對照鍵；示範旅程沒有打包是 null。 */
+const packAtNow = () => state.packMeta?.generatedAt ?? null;
+
+/**
+ * 載入旅程（loadFromPack／loadDemo）之後、重排之前（T16b；原話 #154 手機是操作端、#121 改了要留著）：先留一份打包那版的對照（tripBase），
+ * 再把手機上存的規劃頁改動蓋回 state.trip（trip-edits.js applyTripEdits）；打包時間或旅程不同（手機更新了新打包）就丟掉那份、規劃頁頂端一句
+ * 「旅程更新過了，上一版的改動已丟掉」（state.notice，跟順延那句同一條列）。舊旅程的復原列與那句狀態都不再適用，一起清掉。
+ */
+function restoreTripEdits() {
+  state.tripBase = JSON.parse(JSON.stringify(snapshotTripEdits(state.trip, packAtNow())));
+  state.undo = null;
+  state.notice = null;
+  const edits = loadJSON(TRIP_EDITS_KEY, null);
+  if (!edits) return;
+  const r = applyTripEdits(state.trip, edits, packAtNow());
+  if (r.dropped) {
+    // 載入示範旅程（沒有打包，packMeta null）時鍵是真旅程的：不刪、也不講——打包檔只是暫時讀不到（IndexedDB 被別的分頁擋住那種），同一包回來時改動還要在（10-16 審查）
+    if (!state.packMeta && edits.tripId !== state.trip?.id) return;
+    removeJSON(TRIP_EDITS_KEY); state.notice = { text: TEXT.tripEdits.dropped }; return;
+  }
+  state.trip = r.trip;
+}
+
+/**
+ * 規劃頁每個動作改完 state.trip 之後存一次（swapStop／removeStop／undoLast／upgradeCorridor／chooseOption／deferStop，重排之前）：
+ * 整天的 picks／removed／swapped 與整趟的 deferred 快照，不是差分（跟 applied 一樣簡單）。跟打包那版一模一樣（不去了又復原）就把鍵刪掉：
+ * 不然下次更新打包會白講一句「上一版的改動已丟掉」。
+ */
+function saveTripEdits() {
+  if (!state.trip) return;
+  if (!diffTripEdits(state.trip, state.tripBase).any) { removeJSON(TRIP_EDITS_KEY); return; }
+  saveJSON(TRIP_EDITS_KEY, snapshotTripEdits(state.trip, packAtNow()));
+}
+
+/**
+ * 設定頁「還原成打包版」（按兩次確認，settings.js）：鍵刪掉、days 的三個陣列與 deferred 放回打包那版（tripBase）、
+ * 改過的那幾天現場套過的改案也清掉（那些改案是對改過的勾選套的，跟「不去了」「換一家」清掉那天的快照同一個理由；待確認）、整趟重排；復原列與狀態列那句都不再適用。
+ */
+export function resetTripEdits() {
+  if (!state.trip || !state.tripBase) return;
+  const { dates } = diffTripEdits(state.trip, state.tripBase);
+  state.trip = overlayTripEdits(state.trip, JSON.parse(JSON.stringify(state.tripBase)));
+  removeJSON(TRIP_EDITS_KEY);
+  state.undo = null;
+  state.notice = null;
+  for (const date of dates) clearApplied(date);
+  state.packStatus = TEXT.tripEdits.restored;
+  replanAll();
+}
+
 export function swapStop(date, fromPoiId, toPoi) {
   const day = state.trip.days.find((d) => d.date === date);
   if (!day) return;
@@ -139,6 +195,7 @@ export function swapStop(date, fromPoiId, toPoi) {
   if (!state.pois[toPoi.id]) state.pois[toPoi.id] = toPoi;
   Object.assign(day, applySwap(day, fromPoiId, toPoi));
   clearApplied(date);
+  saveTripEdits();
   replanAll();
 }
 
@@ -155,6 +212,7 @@ export function removeStop(date, poiId, insertedBy = null, priority = null) {
   state.undo = { kind: 'remove', date, poiId, name: state.pois[poiId]?.name_zh ?? poiId, pick, pickIndex, removedEntry };
   state.notice = null;
   clearApplied(date);
+  saveTripEdits();
   replanAll();
 }
 
@@ -176,6 +234,7 @@ export function undoLast() {
     }
   }
   clearApplied(u.date);
+  saveTripEdits();
   replanAll();
 }
 
@@ -191,6 +250,7 @@ export function upgradeCorridor(date, poiId) {
   state.notice = null;
   Object.assign(day, upgradePick(day, poiId));
   clearApplied(date);
+  saveTripEdits();
   replanAll();
 }
 
@@ -217,6 +277,7 @@ export function chooseOption(date, fromPoiId, toPoi) {
     state.trip = r.trip;
     clearApplied(date);
     if (r.toDate) clearApplied(r.toDate);
+    saveTripEdits();
     replan();
     state.notice = { text: deferNotice(r.entry, name, displacedPicks({ before, after: state.plans, dates: [date, r.toDate] })) };
   });
@@ -233,6 +294,7 @@ export function deferStop(date, poiId) {
     state.trip = r.trip;
     clearApplied(date);
     if (r.toDate) clearApplied(r.toDate);
+    saveTripEdits();
     replan();
     state.notice = { text: deferNotice(r.entry, name, displacedPicks({ before, after: state.plans, dates: [date, r.toDate] })) };
   });
@@ -244,12 +306,13 @@ export function deferStop(date, poiId) {
  */
 function afterPaint(work) {
   state.busy = true;
+  const before = state.notice;   // 本來就在的那句（例如「旅程更新過了，上一版的改動已丟掉」）work 沒換掉就放回去，不被「正在重排…」吃掉（10-16 審查）
   state.notice = { text: TEXT.working };
   render();
   const run = () => {
     try { work(); } finally {
       state.busy = false;
-      if (state.notice?.text === TEXT.working) state.notice = null;
+      if (state.notice?.text === TEXT.working) state.notice = before ?? null;
       render();
     }
   };
@@ -448,7 +511,7 @@ export function render() {
   const root = document.getElementById('app');
   if (!root) return;
   clear(root);
-  const actions = { swapStop, removeStop, undoLast, upgradeCorridor, markVisited, chooseOption, deferStop, dismissNotice, saveDevice, setField, replanAll, updateFromUrl, importFile, setBrief, exportBrief, copyBrief, importBrief, clearBrief, undoBrief };
+  const actions = { swapStop, removeStop, undoLast, upgradeCorridor, markVisited, chooseOption, deferStop, dismissNotice, resetTripEdits, saveDevice, setField, replanAll, updateFromUrl, importFile, setBrief, exportBrief, copyBrief, importBrief, clearBrief, undoBrief };
   const view = !state.trip && !WITHOUT_TRIP.has(state.route) ? renderEmpty : (VIEWS[state.route] ?? renderPlanner);
   root.append(el('main', { class: 'view' }, view({ state, actions })));
   root.append(tabBar());

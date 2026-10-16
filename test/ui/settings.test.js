@@ -1,7 +1,8 @@
-// 設定頁「同行：…」那行（T19；原話 #136、#144）：純函式，不碰 DOM——一個人、多人（名字、同行哪幾天、體力、夜間站、不去的店型）、來源是需求單時尾巴「（需求單）」。
+// 設定頁的純函式（不碰 DOM）：「同行：…」那行（T19；原話 #136、#144——一個人、多人（名字、同行哪幾天、體力、夜間站、不去的店型）、來源是需求單時尾巴「（需求單）」）
+// 與「本機改動：…」那行（T16b，tripEditsText）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { personsLine, dateRanges } from '../../src/ui/settings.js';
+import { personsLine, dateRanges, tripEditsText } from '../../src/ui/settings.js';
 
 const home = { id: 'home', name_zh: '飯店', zoneId: 'town' };
 const trip = (over = {}) => ({ id: 't', cityName: '仙台', party: 1, homeBases: [{ poi: home }], days: [{ date: '2026-08-13', type: 'normal', picks: [] }, { date: '2026-08-14', type: 'normal', picks: [] }, { date: '2026-08-15', type: 'normal', picks: [] }], ...over });
@@ -46,4 +47,12 @@ test('personsLine：旅程檔沒 persons、需求單 city／dates 對得上 → 
   assert.equal(personsLine(trip(), brief({ city: 'Sendai' }), ['sendai', '仙台']), '同行：我、同學（8/14，輕鬆，不排夜間站）（需求單）', '打包檔的城市 id 給了就對得上');
   assert.equal(personsLine(trip({ persons: [{ id: 'me', isMe: true }, { id: 'gf', name: '女友' }] }), brief()), '同行：我、女友', '旅程檔有 persons 以旅程檔為準');
   assert.equal(personsLine(trip({ persons: [{ id: 'me', isMe: true }, { id: 'gf', name: '女友' }] }), brief({ city: '東京' })), '同行：我、女友', '旅程檔有 persons 就不提需求單對不對得上');
+});
+
+test('tripEditsText（T16b）：沒改「本機改動：沒有」、N 天有改、picks 沒動只有順延紀錄；不露鍵值', () => {
+  assert.equal(tripEditsText({ dates: [], deferredChanged: false, any: false }), '本機改動：沒有');
+  assert.equal(tripEditsText({ dates: ['2026-08-13', '2026-08-17'], deferredChanged: false, any: true }), '本機改動：2 天有改');
+  assert.equal(tripEditsText({ dates: ['2026-08-13'], deferredChanged: true, any: true }), '本機改動：1 天有改', '有改到哪一天就寫天數，順延不另寫');
+  assert.equal(tripEditsText({ dates: [], deferredChanged: true, any: true }), '本機改動：只有順延紀錄');
+  assert.equal(tripEditsText(null), '本機改動：沒有');
 });

@@ -1,7 +1,8 @@
-// 設定頁：四個數字（決策樹 Q17），改了立刻重排；加上旅程資料（桌機打包檔的網址、更新、從檔案載入、誰同行）。
+// 設定頁：四個數字（決策樹 Q17），改了立刻重排；加上旅程資料（桌機打包檔的網址、更新、從檔案載入、誰同行、本機改動與還原成打包版）。
 import { el } from './dom.js';
 import { TEXT, CATEGORY } from './text.js';
 import { personsOf, briefApplies, cityNamesOf } from '../engine/persons.js';
+import { diffTripEdits } from './trip-edits.js';
 
 /** '2026-08-13' → '8/13'（同行哪幾天那串；dateLabel 帶星期太長）。 */
 function md(date) {
@@ -47,6 +48,33 @@ export function personsLine(trip, brief = null, cityNames = []) {
   return `${L.label}：${body}${fromBrief ? L.fromBrief : ''}${mismatch ? L.briefMismatch : ''}`;
 }
 
+let resetArm = null;   // 「還原成打包版」第一下只武裝幾秒、再按一下才還原（比照需求單的清空）；記住是哪顆鍵：重畫出來的新鍵要重新武裝，不會一按就還原
+
+/** 「本機改動：…」那行的字（T16b）：diff 是 trip-edits.js diffTripEdits 的結果——N 天有改；picks 沒動、只有順延紀錄（排到別天但別天排不進）寫「只有順延紀錄」；都沒有寫「沒有」。 */
+export function tripEditsText(diff) {
+  const L = TEXT.tripEdits;
+  const body = diff?.dates?.length ? L.days(diff.dates.length) : diff?.deferredChanged ? L.deferredOnly : L.none;
+  return `${L.label}：${body}`;
+}
+
+/**
+ * 「本機改動：N 天有改」＋「還原成打包版」（T16b；原話 #154 手機是操作端、#121 改了要留著）：規劃頁的改動跟打包那版（state.tripBase）比；有改才給還原鍵，
+ * 按兩次才還原（app.js resetTripEdits：刪鍵、三個陣列與 deferred 放回打包那版、改過那幾天的現場改案也清掉、重排）。
+ */
+function tripEditsRow(state, actions) {
+  const diff = diffTripEdits(state.trip, state.tripBase);
+  const L = TEXT.tripEdits;
+  const btn = diff.any ? el('button', { class: 'btn quiet sm', type: 'button' }, L.reset) : null;
+  btn?.addEventListener('click', () => {
+    if (resetArm?.btn === btn) { disarmReset(); actions.resetTripEdits(); return; }
+    disarmReset();
+    btn.textContent = L.resetConfirm;
+    resetArm = { btn, timer: setTimeout(() => { if (resetArm?.btn === btn) resetArm = null; btn.textContent = L.reset; }, 4000) };
+  });
+  return el('p', { class: 'muted small edits' }, [tripEditsText(diff), btn]);
+}
+function disarmReset() { if (resetArm) clearTimeout(resetArm.timer); resetArm = null; }
+
 export function renderSettings({ state, actions }) {
   const d = state.device;
   const s = state.settings;
@@ -63,6 +91,8 @@ export function renderSettings({ state, actions }) {
       el('p', { class: 'muted small', text: packLine }),
       // 誰同行（T19）：旅程檔的 persons、沒有就對得上的需求單、再沒有就 party；沒旅程就不寫
       state.trip ? el('p', { class: 'muted small', text: personsLine(state.trip, state.brief, cityNamesOf(state.kb)) }) : null,
+      // 規劃頁的改動存在手機（T16b）：跟打包那版比有幾天改過、「還原成打包版」按兩次
+      state.trip ? tripEditsRow(state, actions) : null,
       el('label', { class: 'field' }, [
         el('span', { text: TEXT.packUrl }),
         el('input', { type: 'url', inputmode: 'url', autocapitalize: 'off', autocorrect: 'off', spellcheck: 'false', value: d.packUrl ?? '', placeholder: 'https://…/trip-pilot/pack.json', onchange: (e) => actions.saveDevice({ packUrl: e.target.value.trim() }) }),
