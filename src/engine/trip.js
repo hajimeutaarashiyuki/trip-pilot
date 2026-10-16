@@ -3,6 +3,7 @@
 import { planDay } from './core.js';
 import { hmToMin, openIntervals, overlapMin } from './time.js';
 import { haversineM } from '../geo/matrix.js';
+import { distToSegmentM } from '../geo/corridor.js';
 import { evaluateSequence, retimeSequence } from './sequence.js';
 import { SHOPPING_CATEGORIES } from '../rules/_helpers.js';   // 只借購物類店型清單篩順路站，不是規則邏輯（規則在 rules/shopping-day.js）
 import { CATEGORIES, classifyCategory } from '../data/schema.js';   // 主題日的店型要對得上知識庫的店型（themeCategoryOf）
@@ -79,15 +80,17 @@ export function regionZonesOf({ home, candidates, anchorPoi }) {
  * - 每天的 day 上下文：window 是扣過留白的時窗（硬規則 window、搜尋用）、windowRaw 原時窗（畫面、夜間站）、openSlotMin 真的扣掉的分鐘、openSlotSkipped 時窗太短沒扣（整趟 warnings 另有一條 open-slot-skipped）、
  *   shoppingDay（這天是不是購物日）、shoppingFromMin（購物時段從幾分起，整天都是就 null；非購物日 false／null）
  * - pois：{ [poiId]: poi }（已 normalize）
- * - restPool：引擎可插的站的來源（已規範化的 POI 陣列，可空；畫面與報告傳整個知識庫），每天由 restCandidates（恢復站）、fillCandidates（填空檔）、onTheWayCandidates（順路站）篩，三個池都先過 engineMayInsert
+ * - restPool：引擎可插的站的來源（已規範化的 POI 陣列，可空；畫面與報告傳整個知識庫），每天由 restCandidates（恢復站）、fillCandidates（填空檔）、onTheWayCandidates（順路站）篩，三個池都先過 engineMayInsert；
+ *   走廊清單（corridorFor，T15）也從這裡挑：每段走路旁 ≤ corridorListRadiusM、經過時開著的店，掛在 plan.corridor，不是站、不進分數；七天都排完才算（exclude 含任何一天引擎插過的站）
+ * - 每天的 plan 多兩樣（attachCorridor）：plan.corridor [{ legIndex, pois[{ poi, distM, open }] }]（legIndex 0＝住宿→第一站；open true 經過時有開、null 沒營業時間資料）、長段提示 leg-suggest（warnings 裡 hint: true 的一條，不罰）
  */
 export function planTrip({ trip, pois, rules, settings, country, kb, legFn, restPool = [], options = {} }) {
   const out = []; const warnings = [];
   let prevTheme = null; let prevType = null;
-  // 引擎不插的站：任何一天勾了的（含主行程；他勾的站由 picks 走）、任何一天按過「不去了」的（他拿掉的勾選站、拒絕過的引擎插站）、
-  // 前幾天已經插過的（同一家店不在兩天都被插）
-  const pickedAnywhere = new Set(trip.days.flatMap((d) => [...(d.picks ?? []).map((p) => p.poiId), d.anchor?.poiId, ...(d.anchor?.poiIds ?? [])]).filter(Boolean));
-  const removedAnywhere = new Set(trip.days.flatMap((d) => (d.removed ?? []).map((r) => r?.poiId)).filter(Boolean));
+  // 引擎不插的站：任何一天勾了的（含主行程；他勾的站由 picks 走）、任何一天按過「不去了」的（他拿掉的勾選站、拒絕過的引擎插站）（pickedOrRemoved）、
+  // 前幾天已經插過的（同一家店不在兩天都被插）、走廊清單按過「我進去了」之後的日子（options.visited: { [poiId]: 'YYYY-MM-DD' }，裝置端 field.visited；
+  // 原話 #138 去過的不再出現；進去那天本身照舊——visitedBefore）
+  const pickedOrRemovedAnywhere = pickedOrRemoved(trip);
   const insertedSoFar = new Set();
   const shopping = shoppingDaysOf(trip, settings, warnings);   // 購物日欄位寫壞了記整趟警告、照樣排（總則 0）
   trip.days.forEach((d, index) => {
@@ -121,7 +124,7 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
     // 不每天都加：價值 0 的候選不受上界剪枝，試走包的 8/15 一加就從 276 節點變 6 萬節點、撞 800 ms 預算（2026-10-11 實測），結果還一樣。
     // 他拒絕過哪一種（原話 #126；profile §2.4「當天不再重插，連跑警告降成提示」）那天就不插那一種、它的觸發警告標 hint，畫面用提示樣式。
     const rejected = rejectedKinds(d.removed);
-    const exclude = new Set([...pickedAnywhere, ...removedAnywhere, ...insertedSoFar]);
+    const exclude = new Set([...pickedOrRemovedAnywhere, ...insertedSoFar, ...visitedBefore(options.visited, d.date)]);
     // 坐下來的地方（spot：海邊、公園、展望台）每天都進第一趟候選（optional、價值 0、最多 settings.spotPoolMax 家）：它的用處是把等固定時段的時間坐掉，
     // 第二趟才加會看不到（第一趟為了少等會跑去別區再回來）；拒絕過恢復站的那天不加（原話 #172 採的做法；10-16）
     const spots = rejected.has('rest') ? [] : restPool
@@ -145,6 +148,11 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
     out.push({ date: d.date, day, plan });
     prevTheme = themeCategory; prevType = d.dayTrip ? 'daytrip' : (d.type ?? 'normal');
   });
+  // 走廊清單與長段提示（T15）：七天都排完才算，掛在排好的序列旁，不進分數、不改時刻。exclude 比引擎插站多扣「任何一天引擎插過的站」（不只前幾天）：
+  // 同一家店在別天是站就不當走廊——10-16 審查：仙台朝市早餐是 8/16 的引擎站卻列在 8/12、8/15 的走廊，8/12 按「升級」會把它變成 8/12 的站、8/16 就不插了。今天序列裡的站 corridorFor 自己扣。
+  // 按過「我進去了」的（options.visited）從進去那天之後不再列（visitedBefore；原話 #138），進去那天照列、勾要看得到
+  const sequences = out.map((x) => x.plan.sequence);
+  for (const x of out) x.plan = attachCorridor({ plan: x.plan, home: resolveHome(trip, x.date), pool: restPool, legFn, settings, day: x.day, exclude: corridorExclude(trip, sequences, visitedBefore(options.visited, x.date)) });
   return { days: out, warnings };
 }
 
@@ -234,6 +242,118 @@ export function onTheWayCandidates({ restPool = [], day, exclude = new Set(), ho
   return [...best.values()].sort((x, y) => x.detour - y.detour).slice(0, settings.onTheWayPoolMax ?? 4)
     // 順路是看一下，不是待一下午：停留最多 onTheWayMaxDwellMin（預設 45；10-13 試走包把 135 分的商店街整條塞進 8/17）
     .map(({ p, detour }) => ({ poi: p, priority: 'onway', optional: true, insertedBy: 'engine', detourMin: detour, dwellMin: Math.min(p.dwellMin ?? settings.defaultDwellMin ?? 60, settings.onTheWayMaxDwellMin ?? 45) }));
+}
+
+/**
+ * 走廊清單（原話 #57「在路程的旁邊塞我會經過的店家，讓我可以留意跟有個預期，如果我有進去我再從那裡面填寫我有進去」；DESIGN §1.9「走廊清單不是站」；T15）：
+ * 排好的每一段走路（住宿→第一站也算；搭車段不算，人在車上經過什麼都進不去），知識庫裡離這段直線 ≤ settings.corridorListRadiusM（預設 100 m，DESIGN §4）的店。
+ * 候選的門是 corridorEligible、不是引擎插站的 engineMayInsert（10-16 主控覆核：挖寶型、落選兩次、代購研究站都列，走廊清單正是被過濾掉的長尾回到他手上；只有他評 ≤2 星與 unlockWhen 未達的不列）、
+ * 不是 NO_FILL_CATEGORIES（交通、活動、錢湯、一日遊、會場）、
+ * 不是坐下來的地方（spot：他說的是「店家」，海邊、公園不是店；推導）、在當日區域、不在今天序列裡、不在 exclude（任何一天勾過、按過「不去了」的、任何一天引擎插過的、進去那天之後——corridorExclude）；沒座標的算不出距離、不列。
+ * 經過那段的時間要開著（openIntervals；離開上一站→到下一站之間任一分鐘有開就算，出門那段用到第一站的時刻倒推走路分鐘）：午休、當天休息的不列
+ * （10-16 審查：喜助 8/13 14:39–14:54 午休卻列在提示鍵裡、仙台朝市早餐 17:30 已關卻在現場頁「會經過」，升級還會落到「不在營業時間內」）；
+ * 沒有營業時間資料的照列、標 open: null（畫面寫「營業時間沒查到」）；序列沒帶時刻（純幾何的呼叫）就只看當天有沒有營業。藏掉還是標「沒開」待確認，先藏。
+ * 同一家店靠近兩段時歸離它最近、而且經過時有開的那段（相鄰兩段共用一站，不然站旁的店會在前後兩段各出現一次；推導，跟 fillCandidates 歸空檔同一種做法）。
+ * 每段最多 settings.corridorListMaxPerLeg（預設 5）家，依離路線的距離近到遠（DESIGN §4 寫按 itemRank 排，品項命中還沒做，先用距離；推導）。
+ * 回 [{ legIndex, pois: [{ poi, distM, open }] }]，legIndex 0＝住宿→第一站，沒店的段不列；不排時間、不算步行預算、不進分數——
+ * 順路繞得進去又插得下的店已由順路站直接排（原話 #170），這裡是順路站不拿的（恢復站、購物類、沒營業時間；10-16 審查：仙台包 36 家走廊店 35 家繞路 ≤ 8 分）與插不下的（每日上限、分數沒變好）。
+ */
+export function corridorFor({ plan, home = null, pool = [], legFn, settings = {}, day, exclude = new Set() }) {
+  const seq = plan?.sequence ?? [];
+  if (!pool.length || !seq.length || !legFn) return [];
+  const radius = settings.corridorListRadiusM ?? 100;
+  const maxPerLeg = settings.corridorListMaxPerLeg ?? 5;
+  const inSeq = new Set(seq.map((s) => s.poi.id));
+  const cands = pool.filter((p) => p && hasCoords(p) && corridorEligible(p) && !NO_FILL_CATEGORIES.has(p.category) && p.category !== 'spot' && (day?.regionZones ?? []).includes(p.zoneId) && !inSeq.has(p.id) && !exclude.has(p.id));
+  if (!cands.length) return [];
+  const best = new Map();   // poiId → 離它最近、經過時有開的那段
+  for (let i = 0; i < seq.length; i++) {
+    const from = i === 0 ? home : seq[i - 1].poi; const to = seq[i].poi;
+    if (!hasCoords(from) || !hasCoords(to)) continue;
+    const leg = legFn(from, to);
+    if (!leg || (leg.rideMin ?? 0) > 0) continue;
+    // 經過這段的時間：離開上一站 → 到下一站（出門那段＝到第一站的時刻倒推走路分鐘）；序列沒帶時刻就是 NaN，openWhilePassing 只看當天有沒有營業
+    const arriveMin = seq[i].arriveMin ?? seq[i].startMin;
+    const leaveMin = i === 0 ? arriveMin - (leg.walkMin ?? 0) : seq[i - 1].endMin;
+    for (const p of cands) {
+      const distM = distToSegmentM(p, from, to);
+      if (distM > radius || distM >= (best.get(p.id)?.distM ?? Infinity)) continue;
+      const open = openWhilePassing(p, day?.date, leaveMin, arriveMin);
+      if (open === false) continue;
+      best.set(p.id, { poi: p, legIndex: i, distM, open });
+    }
+  }
+  const byLeg = new Map();
+  for (const hit of best.values()) byLeg.set(hit.legIndex, [...(byLeg.get(hit.legIndex) ?? []), hit]);
+  const name = (p) => String(p.name_zh ?? p.id);
+  return [...byLeg.keys()].sort((a, b) => a - b).map((legIndex) => ({
+    legIndex,
+    pois: byLeg.get(legIndex)
+      .sort((a, b) => a.distM - b.distM || name(a.poi).localeCompare(name(b.poi)))
+      .slice(0, maxPerLeg)
+      .map(({ poi, distM, open }) => ({ poi, distM: Math.round(distM), open })),
+  }));
+}
+
+/** 經過這段（leaveMin→arriveMin）時這家店開著嗎：true 有開、false 沒開（午休、當天休息）、null 沒有營業時間資料。沒給時刻（NaN）就只看當天有沒有營業；沒給日期算不出，當有開。 */
+function openWhilePassing(poi, date, leaveMin, arriveMin) {
+  if (!date) return poi?.hours ? true : null;
+  const iv = openIntervals(poi, date);
+  if (iv === null) return null;
+  if (!Number.isFinite(leaveMin) || !Number.isFinite(arriveMin)) return iv.length > 0;
+  return iv.some(([open, close]) => open <= arriveMin && close >= leaveMin);
+}
+
+/**
+ * 把走廊清單掛上一天的 plan，順便出長段提示（DESIGN §5.2「長段可升級」；原話 #124「在路途中還有可挖掘的地點…有興趣的話，應該是可以升級成大站」、#101）：
+ * 一段走路 ≥ settings.legSuggestMin（預設 10）分、而且那段走廊清單有店 → plan.warnings 多一條 { ruleId: 'leg-suggest', code: 'hint', hint: true, legIndex, walkMin, msg }。
+ * 純提示：不罰、不自動插（profile §2.4「長移動段只提示、不自動提站」），升級是他按的（規劃頁那段的鍵 → app.js upgradeCorridor）。
+ * 放這裡當後處理、不進規則檔：它不影響搜尋與分數。DESIGN §5.2 寫的「兩個恢復站之間」是它的特例——沒店可升級的長段不提示（提示了也沒東西可按；推導）；
+ * 「時間軸空檔 > 留白」那種等開門已有 wait-at-door，不重複出。
+ * 回新的 plan：corridor 掛上、提示加進 warnings；sequence、score、penaltyMin、時刻都不動。現場套過改案的序列也走這裡重算（applied.js appliedPlan）。
+ */
+export function attachCorridor({ plan, home = null, pool = [], legFn, settings = {}, day, exclude = new Set() }) {
+  const corridor = corridorFor({ plan, home, pool, legFn, settings, day, exclude });
+  const minWalk = settings.legSuggestMin ?? 10;
+  const hints = [];
+  for (const c of corridor) {
+    const from = c.legIndex === 0 ? home : plan.sequence[c.legIndex - 1].poi; const to = plan.sequence[c.legIndex].poi;
+    const walkMin = legFn(from, to)?.walkMin ?? 0;
+    if (walkMin < minWalk) continue;
+    const names = c.pois.slice(0, 3).map((x) => x.poi.name_zh ?? x.poi.id).join('、');
+    const more = c.pois.length > 3 ? ` 等 ${c.pois.length} 家` : '';
+    hints.push({ ruleId: 'leg-suggest', code: 'hint', hint: true, legIndex: c.legIndex, walkMin, msg: `${from?.name_zh ?? '住宿'}→${to.name_zh ?? to.id} 這段走 ${walkMin} 分，經過 ${names}${more}，可升級成站` });
+  }
+  return { ...plan, corridor, warnings: hints.length ? [...(plan.warnings ?? []), ...hints] : (plan.warnings ?? []) };
+}
+
+/**
+ * 走廊清單不列的站：任何一天勾過／拒絕過的（pickedOrRemoved）∪ 任何一天引擎插過的（sequences 裡 insertedBy 的站；同一家店在別天是站就不當走廊，不只前幾天）
+ * ∪ visitedIds（那天之前按過「我進去了」的，呼叫端用 visitedBefore 算）。
+ * planTrip 每天算一次、現場改案重算（applied.js appliedPlan）共用；今天序列裡的站 corridorFor 自己扣，不用放進來。
+ */
+export function corridorExclude(trip, sequences = [], visitedIds = []) {
+  const out = pickedOrRemoved(trip);
+  for (const seq of sequences) for (const s of seq ?? []) if (s?.insertedBy && s.poi?.id) out.add(s.poi.id);
+  for (const id of visitedIds ?? []) if (id) out.add(id);
+  return out;
+}
+
+/**
+ * 按過「我進去了」之後的日子不再出現（原話 #138「如果前面已經去過，怎麼還會再次出現？有出現但我沒選擇，還是可以再次出現」）：
+ * visited 是 { [poiId]: 'YYYY-MM-DD' }（裝置端 field.visited 的日期，ui/corridor.js visitedDates 轉的），回 date 之前去過的店 id；
+ * 進去那天本身不算（那天的走廊清單上要看得到勾）。引擎插站的 exclude 與走廊清單都吃這份；他自己勾的 picks 不受影響。
+ */
+export function visitedBefore(visited = {}, date = '') {
+  return Object.entries(visited ?? {}).filter(([, on]) => typeof on === 'string' && on < date).map(([id]) => id);
+}
+
+/** 引擎不插、走廊清單也不列的站：任何一天勾了的（含主行程；他勾的站由 picks 走）、任何一天按過「不去了」的（他拿掉的勾選站、拒絕過的引擎插站）。planTrip 與現場套改案後重算（applied.js）共用。 */
+export function pickedOrRemoved(trip) {
+  const days = trip?.days ?? [];
+  const picked = days.flatMap((d) => [...(d.picks ?? []).map((p) => p.poiId), d.anchor?.poiId, ...(d.anchor?.poiIds ?? [])]);
+  const removed = days.flatMap((d) => (d.removed ?? []).map((r) => r?.poiId));
+  return new Set([...picked, ...removed].filter(Boolean));
 }
 
 /**
@@ -364,6 +484,19 @@ export function engineMayInsert(p) {
   if ((p.poolLosses ?? 0) >= 2) return false;
   if (p.unlockWhen) return false;
   if (p.item) return false;
+  return true;
+}
+
+/**
+ * 走廊清單的門（T15，10-16 主控覆核）：跟 engineMayInsert 不同——走廊清單正是「被系統過濾掉的店以『你自己決定要不要進去』的形式回到手上」
+ * （profile §8 走廊清單；DESIGN §4 poolLosses ≥2「排程不主動排（只進走廊清單）」；知識庫 Second Street／JAM／Florida／What'z up 的 _curated說明「留在知識庫給走廊清單與他自己勾」），
+ * 所以挖寶型（curated:false）、落選兩次（poolLosses ≥2）、代購研究站（item；DESIGN §4 走廊按 itemRank 排，品項落點本來就該在走廊上）都列。
+ * 不列的只有他自己鎖掉的：評過 ≤2 星（「不會再去」「踩雷」，profile §7）與 unlockWhen 未達（「下次再說」層）。實作代理原本借用 engineMayInsert，跟上面三處文件相反，10-16 改回。
+ */
+export function corridorEligible(p) {
+  if (!p) return false;
+  if (Number.isFinite(p.my?.rating) && p.my.rating <= 2) return false;
+  if (p.unlockWhen) return false;
   return true;
 }
 

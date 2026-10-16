@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { readPack } from '../src/data/pack.js';
 import { loadRules } from '../src/rules/index.js';
 import { BUILTIN } from '../src/rules/builtin.js';
-import { planTrip } from '../src/engine/trip.js';
+import { planTrip, resolveHome } from '../src/engine/trip.js';
 import { makeLegFn } from '../src/geo/matrix.js';
 import { minToHm } from '../src/engine/time.js';
 import rulesJson from '../src/rules.json' with { type: 'json' };
@@ -44,9 +44,17 @@ export function formatReport({ pack, result, legFn }) {
       prev = s;
     }
     if (plan.dropped?.length) lines.push(`排不進：${plan.dropped.map((x) => `${x.poi.name_zh}（${x.reason}）`).join('；')}`);
+    // 走廊清單（T15）：不是站、不進分數；每段列「從→到：店（離路線幾公尺）」，長段提示（leg-suggest）另一行
+    if (plan.corridor?.length) {
+      const home = resolveHome(pack.trip, d.date);
+      const legName = (i) => `${i === 0 ? home.name_zh ?? '住宿' : plan.sequence[i - 1].poi.name_zh}→${plan.sequence[i].poi.name_zh}`;
+      lines.push(`走廊清單（不是站，不進分數）：${plan.corridor.map((c) => `${legName(c.legIndex)}：${c.pois.map((x) => `${x.poi.name_zh}（${x.distM} m${x.open === null ? '，營業時間不明' : ''}）`).join('、')}`).join('；')}`);
+    }
     const warns = (plan.warnings ?? []).filter((w) => w.code !== 'skipped-missing' && !w.hint);
     if (warns.length) lines.push(`警告：${warns.map((w) => w.msg).join('；')}`);
-    const hints = (plan.warnings ?? []).filter((w) => w.hint);
+    const suggests = (plan.warnings ?? []).filter((w) => w.ruleId === 'leg-suggest');
+    if (suggests.length) lines.push(`可升級（只提示，不罰、不自動插）：${suggests.map((w) => w.msg).join('；')}`);
+    const hints = (plan.warnings ?? []).filter((w) => w.hint && w.ruleId !== 'leg-suggest');
     if (hints.length) lines.push(`提示（拒絕過引擎插的站，不再插）：${hints.map((w) => w.msg).join('；')}`);
     const skipped = (plan.warnings ?? []).filter((w) => w.code === 'skipped-missing');
     if (skipped.length) lines.push(`規則因缺欄位跳過：${skipped.length} 次（${[...new Set(skipped.map((w) => w.ruleId ?? w.rule ?? '?'))].join('、')}）`);

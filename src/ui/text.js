@@ -36,10 +36,22 @@ export const TEXT = {
   onTheWayInserted: '順路，引擎排進來的，不要就按『不去了』',
   spotInserted: (hm) => `坐下來的地方，引擎排的；坐到 ${hm} 再去下一站，不要就按『不去了』`,
   undoRemoved: (name, day) => `已把 ${name} 從 ${day} 拿掉`,
+  undoUpgraded: (name, day) => `已把 ${name} 升級成 ${day} 的站，那天重排了`,
   undo: '復原',
   appliedLine: '現場改過',
   appliedLost: '現場改案拿掉的',
   appliedDropped: '旅程更新過了，現場改過的走法已丟掉，照引擎重排的走',
+  // 走廊清單（T15；原話 #57、#124）：掛在移動那行旁邊，不是站
+  corridorCount: (n) => `經過 ${n} 家`,
+  corridorList: (names, more) => `${names.join('、')}${more > 0 ? ` 等 ${names.length + more} 家` : ''}`,
+  corridorSuggest: (min, list) => `這段走 ${min} 分，經過 ${list}，可升級`,
+  corridorTitle: '這段路會經過的店，不是站：不排時間；進去了算落後，先吃留白',
+  corridorDwell: (min) => `進去約 ${min} 分`,
+  corridorDist: (m) => `離路線 ${m} 公尺`,
+  upgradeStop: '升級成站',
+  visitedMark: '我進去了',
+  visitedDone: '進去過了',
+  corridorNow: (list) => `會經過：${list}`,
 
   // 現場
   nextStop: '下一站',

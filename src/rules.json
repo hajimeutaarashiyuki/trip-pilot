@@ -57,7 +57,9 @@
     "shoppingAfternoonHM": "13:00",
     "fillerValuePerMin": 0.5,
     "spotFlexMaxMin": 120,
-    "spotPoolMax": 2
+    "spotPoolMax": 2,
+    "corridorListRadiusM": 100,
+    "corridorListMaxPerLeg": 5
   },
   "rules": {
     "dim-walk": {

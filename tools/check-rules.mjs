@@ -30,6 +30,9 @@ export const CHECKS = [
   // 固定時段的提前量與散場緩衝同一句（profile §2「固定時段前 40 分、後 30 分不排站」，DESIGN §11.1 Q7；10-14 T23）
   { label: '固定時段提前量', pattern: /固定時段前 (\d+) 分、後 \d+ 分不排站/, key: 'fixedBeforeMin' },
   { label: '固定時段散場緩衝', pattern: /固定時段前 \d+ 分、後 (\d+) 分不排站/, key: 'fixedAfterMin' },
+  // 走廊清單的半徑與每段上限同一句（profile §8「路線兩側各 100 公尺、一段移動最多 5 家」，DESIGN §4；10-16 T15）
+  { label: '走廊清單半徑', pattern: /路線兩側各 (\d+) 公尺、一段移動最多 \d+ 家/, key: 'corridorListRadiusM' },
+  { label: '走廊清單每段上限', pattern: /路線兩側各 \d+ 公尺、一段移動最多 (\d+) 家/, key: 'corridorListMaxPerLeg' },
 ];
 
 /** 純函式：回 { ok, mismatches[], notFound[] }，給測試與 CLI 共用。 */

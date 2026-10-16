@@ -11,6 +11,7 @@ import { routeUrl, legMode, tripCityName } from './maps.js';
 import { darkBeforeMinOf } from './daylight.js';
 import { pendingRatings, progressOf, daysBetween, skipStopPatch } from './ratings.js';
 import { remainingFrom, lostStops, appliedPlan, snapshotPlan } from './applied.js';
+import { corridorOfLeg, corridorNames, corridorListNode, corridorDisclosure, visitedDates } from './corridor.js';
 
 export function renderNow({ state, actions }) {
   const f = state.field;
@@ -69,6 +70,8 @@ export function renderNow({ state, actions }) {
     el('p', { class: 'muted small', text: TEXT.nextStop + (status ? `　${status}` : '') }),
     el('h2', { text: next.poi.name_zh }),
     el('p', { class: 'big-line', text: `${legText}${ends != null ? `　${TEXT.endsAt(hm(ends))}` : closes != null ? `　${TEXT.closesAt(hm(closes))}` : dark != null ? `　${TEXT.darkBefore(hm(dark))}` : ''}` }),
+    // 走廊清單（T15，原話 #57）：這段路會經過的店，一行小字「會經過：X、Y」，點了展開清單（有「我進去了」）；legIndex＝idx（0＝住宿→第一站）
+    corridorLine({ pois: corridorOfLeg(planned.plan, idx), date, idx, state, actions }),
     el('p', { class: 'muted small', text: `${hm(next.startMin)} 到，待 ${next.dwellMin} 分` }),
     next.insertedBy === 'engine' ? el('p', { class: 'muted small', text: next.poi.category === 'spot' ? TEXT.spotInsertedNow(hm(next.endMin)) : next.priority === 'filler' ? TEXT.fillerInsertedNow : next.priority === 'onway' ? TEXT.onTheWayInsertedNow : TEXT.restInsertedNow }) : null,
     // 路線深連結：不帶 origin（Google Maps 用現在位置），搭車段 transit、其餘 walking（原話 #157）
@@ -88,6 +91,21 @@ export function renderNow({ state, actions }) {
     el('div', { class: 'list' }, seq.map((s, i) => el('button', { class: 'btn alt', type: 'button', onclick: () => actions.setField({ index: i }) }, `${hm(s.startMin)} ${s.poi.name_zh}`))),
   ]));
   return nodes;
+}
+
+/**
+ * 下一站卡的走廊清單（T15；原話 #57「在路程的旁邊塞我會經過的店家，讓我可以留意跟有個預期」）：移動那行下面一行小字「會經過：X、Y」（最多 3 家，多的寫「等 N 家」），
+ * 點了展開同一份清單（corridorListNode）、有「我進去了」；升級成站只在規劃頁（現場重排會把整天翻掉）。
+ * 開合記在 state.corridorOpen（corridorDisclosure，鍵 now:日期:段）：按「我進去了」重畫後還開著、列上有勾；出發到下一站就是另一段，自然收起。
+ */
+function corridorLine({ pois, date, idx, state, actions }) {
+  if (!pois.length) return null;
+  const { names, more } = corridorNames(pois, 3);
+  const box = el('div', { class: 'corridor-now' });
+  const btn = el('button', { class: 'btn text', type: 'button' }, TEXT.corridorNow(TEXT.corridorList(names, more)));
+  box.append(btn);
+  corridorDisclosure({ key: `now:${date}:${idx}`, state, button: btn, box, build: () => corridorListNode({ pois, date, state, actions }) });
+  return box;
 }
 
 /**
@@ -214,7 +232,7 @@ function applyProposal({ state, actions, date, planned, idx, proposal }) {
   const before = state.field.applied?.[date] ?? null;
   const lost = [...(before?.lost ?? []), ...lostStops(proposal, remainingFrom(planned.plan.sequence, idx)).map((l) => ({ poiId: l.poi.id, reason: l.reason }))];
   const appliedIndex = Math.min(idx, before?.appliedIndex ?? idx);
-  const next = appliedPlan({ planned, sequence, appliedIndex, lost, trip: state.trip, legFn: state.legFn, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb });
+  const next = appliedPlan({ planned, sequence, appliedIndex, lost, trip: state.trip, legFn: state.legFn, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, pois: state.pois, plans: state.plans, visited: visitedDates(state.field.visited) });
   state.plans[date] = next;
   actions.setField({ index: idx, applied: { ...(state.field.applied ?? {}), [date]: snapshotPlan(next.plan, appliedIndex, { packAt: state.packMeta?.generatedAt ?? null, lost }) } });
 }

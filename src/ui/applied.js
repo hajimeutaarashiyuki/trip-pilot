@@ -4,7 +4,7 @@
 // 打包時間（packAt）不同＝手機更新了新打包，快照丟掉並在那天警告一行；他在規劃頁改了勾選（不去了、換一家）就清掉那天的快照、回到引擎排。
 // 這裡只有純邏輯（可測）；寫回在 app.js、畫面在 now.js／planner.js。
 import { evaluateSequence } from '../engine/sequence.js';
-import { resolveHome } from '../engine/trip.js';
+import { resolveHome, attachCorridor, corridorExclude, visitedBefore } from '../engine/trip.js';
 import { TEXT } from './text.js';
 
 /** 快照每站存的欄位（POI 本體不存，還原時從 state.pois 對回；跟 planDay 排出的 stop 同名） */
@@ -66,12 +66,18 @@ export function mergeDropped({ engine, sequence, lost = [] }) {
  * 重算時第一站的「出門」語意看 appliedIndex：改案從第 0 站就接上才是從當下接著排（late-departure 不罰、等開門照罰，跟 replanDay 算這案時一樣）；
  * 走過的前綴還在時第一站是早上真的出門，照原本算，分數才不會因為套了案少掉一筆太晚出門。
  * 收工時刻用原時窗：改案本來就准吃留白（strategies/index.js），用扣過的收工會冒出「超過收工」的硬警告。
+ * 走廊清單（T15）跟著新序列重算：legIndex 指的是這條序列的段，不重算會指到改案前的段；pool＝整個知識庫（pois），扣掉任何一天勾過／拒絕過的與別天引擎插過的
+ * （corridorExclude；plans 給了才扣得到別天的，跟 planTrip 一樣）與這天之前按過「我進去了」的（visited: { poiId: date }，visitedBefore）；沒給 pois 就沒有走廊（舊呼叫端）。長段提示也跟著重出。
  */
-export function appliedPlan({ planned, sequence, appliedIndex, lost = [], trip, legFn, rules, settings, country, kb }) {
+export function appliedPlan({ planned, sequence, appliedIndex, lost = [], trip, legFn, rules, settings, country, kb, pois = null, plans = null, visited = {} }) {
   const day = { ...planned.day, resumed: true };
   const evalDay = { ...day, resumed: appliedIndex === 0, window: { ...day.window, endMin: day.windowRaw?.endMin ?? day.window.endMin } };
-  const ev = evaluateSequence({ sequence, day: evalDay, home: resolveHome(trip, day.date), legFn, rules, settings, country, kb });
-  return { ...planned, day, plan: { ...planned.plan, ...ev, sequence, dropped: mergeDropped({ engine: planned.plan, sequence, lost }), applied: true } };
+  const home = resolveHome(trip, day.date);
+  const ev = evaluateSequence({ sequence, day: evalDay, home, legFn, rules, settings, country, kb });
+  const base = { ...planned.plan, ...ev, sequence, corridor: [], dropped: mergeDropped({ engine: planned.plan, sequence, lost }), applied: true };
+  const others = Object.values(plans ?? {}).filter((p) => p && p !== planned && p.date !== planned.date).map((p) => p.plan?.sequence);
+  const plan = pois ? attachCorridor({ plan: base, home, pool: Object.values(pois), legFn, settings, day, exclude: corridorExclude(trip, others, visitedBefore(visited, day.date)) }) : base;
+  return { ...planned, day, plan };
 }
 
 /**
@@ -79,7 +85,7 @@ export function appliedPlan({ planned, sequence, appliedIndex, lost = [], trip, 
  * 不同（手機更新了新打包）就丟掉那筆、那天的警告多一行（TEXT.appliedDropped）；日期不在這趟裡的也丟（舊旅程留下的，不警告）。
  * 不改傳入的 plans／applied，回 { plans, applied, dropped: [date] }。
  */
-export function restoreApplied({ plans, applied = {}, packAt = null, pois, trip, legFn, rules, settings, country, kb }) {
+export function restoreApplied({ plans, applied = {}, packAt = null, pois, trip, legFn, rules, settings, country, kb, visited = {} }) {
   const nextPlans = { ...plans }; const nextApplied = { ...(applied ?? {}) }; const dropped = [];
   for (const [date, snap] of Object.entries(applied ?? {})) {
     const planned = plans[date];
@@ -88,7 +94,7 @@ export function restoreApplied({ plans, applied = {}, packAt = null, pois, trip,
       if (planned) nextPlans[date] = { ...planned, plan: { ...planned.plan, warnings: [...planned.plan.warnings, { code: 'applied-dropped', msg: TEXT.appliedDropped }] } };
       continue;
     }
-    nextPlans[date] = appliedPlan({ planned, sequence: restorePlan(snap, pois), appliedIndex: snap.appliedIndex ?? 0, lost: snap.lost ?? [], trip, legFn, rules, settings, country, kb });
+    nextPlans[date] = appliedPlan({ planned, sequence: restorePlan(snap, pois), appliedIndex: snap.appliedIndex ?? 0, lost: snap.lost ?? [], trip, legFn, rules, settings, country, kb, pois, plans, visited });
   }
   return { plans: nextPlans, applied: nextApplied, dropped };
 }

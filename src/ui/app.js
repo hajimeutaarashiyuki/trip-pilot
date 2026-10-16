@@ -17,6 +17,7 @@ import { renderPool } from './pool.js';
 import { renderBrief } from './brief.js';
 import { mergeField, pickFieldDate, catchUpFieldDate } from './ratings.js';
 import { restoreApplied, withoutApplied } from './applied.js';
+import { upgradePick, visitedPatch, visitedDates } from './corridor.js';
 import { emptyBrief, normalizeBrief, briefToMarkdown, briefFileName, looksLikeBrief, isBriefEmpty } from '../data/brief.js';
 import { normalizeMemory, rememberFromBrief } from '../data/brief-memory.js';
 
@@ -29,10 +30,11 @@ export const state = {
   trip: null, pois: {}, country: null, kb: null, legFn: null,
   rules: null, settings: null, plans: {}, pool: [],
   packRules: null, packMeta: null, packStatus: '',
-  undo: null,   // 最後一次「不去了」的復原資料（一次性）
+  undo: null,   // 最後一次「不去了」或「升級成站」的復原資料（一次性；kind 'remove'／'upgrade'）
+  corridorOpen: {},   // 走廊清單哪幾段展開著（鍵 plan:日期:段／now:日期:段；只在記憶體、不存，重排就清；T15）
   route: '#/plan',
   device: loadJSON(SETTINGS_KEY, {}),
-  field: loadJSON(FIELD_KEY, { date: null, index: 0, simulate: false, simNowMin: null, ratings: {}, progress: {} }),
+  field: loadJSON(FIELD_KEY, { date: null, index: 0, simulate: false, simNowMin: null, ratings: {}, progress: {}, visited: {} }),
   // 需求單（T26）：出發前在手機上填，存這支手機；記憶是上一份單子的消耗品與要買的（data/brief-memory.js）
   brief: normalizeBrief(loadJSON(BRIEF_KEY, null)),
   briefMemory: normalizeMemory(loadJSON(BRIEF_MEMORY_KEY, null)),
@@ -97,12 +99,15 @@ export function replanAll() {
   buildSettings();
   if (!state.trip) return;
   // restPool：整個知識庫都給引擎挑恢復站（trip.js 會篩成當日區域內、沒勾、沒拒絕的幾家）；示範資料也一樣
-  const r = planTrip({ trip: state.trip, pois: state.pois, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, legFn: state.legFn, restPool: Object.values(state.pois) });
+  // 走廊清單按過「我進去了」的（field.visited）：進去那天之後引擎不再插它、走廊也不列（原話 #138）；按的當下只重畫，下次重排才生效
+  const visited = visitedDates(state.field.visited);
+  const r = planTrip({ trip: state.trip, pois: state.pois, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, legFn: state.legFn, restPool: Object.values(state.pois), options: { visited } });
   state.plans = Object.fromEntries(r.days.map((d) => [d.date, d]));
   // 現場套過的改案（field.applied）活過重排與重開：打包相同就還原整條序列、整天重算；不同（手機更新了新打包）就丟掉並在那天警告一行
-  const restored = restoreApplied({ plans: state.plans, applied: state.field.applied, packAt: state.packMeta?.generatedAt ?? null, pois: state.pois, trip: state.trip, legFn: state.legFn, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb });
+  const restored = restoreApplied({ plans: state.plans, applied: state.field.applied, packAt: state.packMeta?.generatedAt ?? null, pois: state.pois, trip: state.trip, legFn: state.legFn, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, visited });
   state.plans = restored.plans;
   if (restored.dropped.length) { state.field = mergeField(state.field, { applied: restored.applied }); saveJSON(FIELD_KEY, state.field); }
+  state.corridorOpen = {};   // 重排後段的編號會變，展開的走廊清單全收起（「我進去了」只重畫不重排，照舊開著）
   render();
 }
 
@@ -134,26 +139,48 @@ export function removeStop(date, poiId, insertedBy = null, priority = null) {
   day.picks = (day.picks ?? []).filter((p) => p.poiId !== poiId);
   day.removed = [...(day.removed ?? []), removedEntry];   // 不算落選（原話 #91）
   // 一次性的復原（原話 #171「如果我按不去了 也要一次性的恢復按鈕 進行第二次確認或反悔的機會」）：記住剛拿掉的，下一個動作前都能按「復原」
-  state.undo = { date, poiId, name: state.pois[poiId]?.name_zh ?? poiId, pick, pickIndex, removedEntry };
+  state.undo = { kind: 'remove', date, poiId, name: state.pois[poiId]?.name_zh ?? poiId, pick, pickIndex, removedEntry };
   clearApplied(date);
   replanAll();
 }
 
-/** 復原剛才的「不去了」：勾選站放回原位、removed 那筆拿掉；只對最後一次有效。 */
-export function undoRemove() {
+/** 復原剛才的「不去了」（勾選站放回原位、removed 那筆拿掉）或「升級成站」（那天的 picks 與 removed 放回升級前的那兩個陣列）；只對最後一次有效。 */
+export function undoLast() {
   const u = state.undo;
   if (!u) return;
   const day = state.trip.days.find((d) => d.date === u.date);
   state.undo = null;
   if (!day) return;
-  day.removed = (day.removed ?? []).filter((r) => r !== u.removedEntry);
-  if (u.pick && !(day.picks ?? []).some((p) => p.poiId === u.poiId)) {
-    const picks = [...(day.picks ?? [])];
-    picks.splice(Math.min(u.pickIndex, picks.length), 0, u.pick);
-    day.picks = picks;
+  if (u.kind === 'upgrade') Object.assign(day, u.before);
+  else {
+    day.removed = (day.removed ?? []).filter((r) => r !== u.removedEntry);
+    if (u.pick && !(day.picks ?? []).some((p) => p.poiId === u.poiId)) {
+      const picks = [...(day.picks ?? [])];
+      picks.splice(Math.min(u.pickIndex, picks.length), 0, u.pick);
+      day.picks = picks;
+    }
   }
   clearApplied(u.date);
   replanAll();
+}
+
+/**
+ * 走廊清單升級成站（原話 #124；T15）：加進那天的 picks（priority want）、那天現場套過的改案清掉、重排；它就不再是走廊清單、變成他勾的站（「不去了」照一般站走）。
+ * 重排會動整天（10-16 審查：8/13 升級 Room-9 後指定站換位、他勾的珈巣多夢落到排不進），所以跟「不去了」一樣留一次性的復原（原話 #171）：
+ * 升級前那天的 picks 與 removed 原封記著（upgradePick 回新陣列、不改舊的），按「復原」放回去重排。
+ */
+export function upgradeCorridor(date, poiId) {
+  const day = state.trip.days.find((d) => d.date === date);
+  if (!day || !state.pois[poiId]) return;
+  state.undo = { kind: 'upgrade', date, poiId, name: state.pois[poiId]?.name_zh ?? poiId, before: { picks: day.picks ?? [], removed: day.removed ?? [] } };
+  Object.assign(day, upgradePick(day, poiId));
+  clearApplied(date);
+  replanAll();
+}
+
+/** 走廊清單「我進去了」（原話 #57）：只記在這支手機 field.visited[poiId] = { date, at }（DESIGN §4 live），不重排；回國回灌進 KB 還沒接。 */
+export function markVisited(date, poiId) {
+  setField(visitedPatch(state.field, date, poiId, new Date().toISOString()));
 }
 
 /** 收一份打包檔 JSON：格式不對在 readPack 丟；先寫進 IndexedDB（手機是真相）再載入畫面。 */
@@ -188,7 +215,7 @@ export function saveDevice(partial) {
   replanAll();
 }
 
-/** 現場狀態：index 是選的那天走到第幾站，progress[date] 按日期記著（換日期接那天的進度，不歸零；T13）；applied[date] 是現場套過的改案快照。 */
+/** 現場狀態：index 是選的那天走到第幾站，progress[date] 按日期記著（換日期接那天的進度，不歸零；T13）；applied[date] 是現場套過的改案快照；visited[poiId] 是走廊清單按過「我進去了」的（T15）。 */
 export function setField(partial) {
   state.field = mergeField(state.field, partial);
   saveJSON(FIELD_KEY, state.field);
@@ -304,7 +331,7 @@ export function render() {
   const root = document.getElementById('app');
   if (!root) return;
   clear(root);
-  const actions = { swapStop, removeStop, undoRemove, saveDevice, setField, replanAll, updateFromUrl, importFile, setBrief, exportBrief, copyBrief, importBrief, clearBrief, undoBrief };
+  const actions = { swapStop, removeStop, undoLast, upgradeCorridor, markVisited, saveDevice, setField, replanAll, updateFromUrl, importFile, setBrief, exportBrief, copyBrief, importBrief, clearBrief, undoBrief };
   const view = !state.trip && !WITHOUT_TRIP.has(state.route) ? renderEmpty : (VIEWS[state.route] ?? renderPlanner);
   root.append(el('main', { class: 'view' }, view({ state, actions })));
   root.append(tabBar());
