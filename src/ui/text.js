@@ -169,6 +169,7 @@ export const TEXT = {
     s3: '3. 同行者',
     companionIntro: '他要去的一樣當指定行程排、要買的一樣找店，只是不進你的偏好檔。',
     addPerson: '新增同行者',
+    companionsHint: '一個人去就跳過；有同行者按下面加一段，一位一段，他要去的、要買的各填各的。',
     removePerson: '移除這位',
     personName: '名字或稱呼',
     partialDays: '只同行哪幾天（空＝整趟）',

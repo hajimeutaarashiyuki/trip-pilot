@@ -28,7 +28,8 @@ export function renderBrief({ state, actions }) {
     state.briefCopyText ? el('textarea', { class: 'copy-box', readonly: true, onfocus: (e) => e.target.select() }, state.briefCopyText) : null,
     skeletonSection(b, put, putRender),
     personSection(me, put, putRender, sugg.ownItems),
-    ...companions.map((c) => personSection(c, put, putRender, [])),
+    // 沒有同行者也留「3. 同行者」這一節（編號不跳 2 → 4，他看得到這段是給誰填的）；有的話每位一段、標題帶名字
+    ...(companions.length ? companions.map((c) => personSection(c, put, putRender, [])) : [el('section', { class: 'group' }, [el('h2', { text: L.s3 }), el('p', { class: 'muted small', text: L.companionsHint })])]),
     el('div', { class: 'actions' }, [el('button', { class: 'btn', type: 'button', onclick: () => putRender((x) => ({ ...x, persons: [...x.persons, emptyPerson()] })) }, L.addPerson)]),
     errandsSection(b, sugg.consumables, put, putRender),
     tasksSection(b, put, putRender),
