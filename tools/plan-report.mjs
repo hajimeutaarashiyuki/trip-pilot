@@ -34,7 +34,8 @@ export function formatReport({ pack, result, legFn }) {
     // 時窗印扣過留白的收工時刻（引擎用的），括號裡附原時窗；離境日沒留白、太短的沒扣
     const raw = day.windowRaw ?? day.window;
     const slot = day.openSlotMin > 0 ? `（原 ${minToHm(raw.startMin)}–${minToHm(raw.endMin)}，留白 ${day.openSlotMin} 分排在最後）` : day.openSlotSkipped ? '（時窗太短，留白沒扣）' : '（這天沒留白）';
-    lines.push(`## ${d.date}（${day.type}${day.themeCategory ? `，${day.themeCategory} 主題` : ''}）主行程：${day.anchorName ?? '—'}　時窗 ${minToHm(day.window.startMin)}–${minToHm(day.window.endMin)}${slot}`);
+    // 同行（T19）：那天在場 ≥2 人才印（一個人的旅程這行跟以前一樣）
+    lines.push(`## ${d.date}（${day.type}${day.themeCategory ? `，${day.themeCategory} 主題` : ''}）主行程：${day.anchorName ?? '—'}　時窗 ${minToHm(day.window.startMin)}–${minToHm(day.window.endMin)}${slot}${day.party >= 2 ? `　同行 ${day.party} 人` : ''}`);
     lines.push(`分數 ${plan.score}　罰分 ${Math.round(plan.penaltyMin)} 分鐘　${plan.complete ? '全排進' : '沒全排進'}　節點 ${plan.stats?.nodes ?? '?'}　${plan.stats?.ms ?? '?'} ms${plan.stats?.truncated ? '　（預算到了，截斷）' : ''}`);
     let prev = null;
     for (const s of plan.sequence) {
@@ -52,11 +53,13 @@ export function formatReport({ pack, result, legFn }) {
       const legName = (i) => `${i === 0 ? home.name_zh ?? '住宿' : plan.sequence[i - 1].poi.name_zh}→${plan.sequence[i].poi.name_zh}`;
       lines.push(`走廊清單（不是站，不進分數）：${plan.corridor.map((c) => `${legName(c.legIndex)}：${c.pois.map((x) => `${x.poi.name_zh}（${x.distM} m${x.open === null ? '，營業時間不明' : ''}）`).join('、')}`).join('；')}`);
     }
-    const warns = (plan.warnings ?? []).filter((w) => w.code !== 'skipped-missing' && !w.hint);
-    if (warns.length) lines.push(`警告：${warns.map((w) => w.msg).join('；')}`);
+    // person-avoid（T19，他勾了同行者不想去的店型）在畫面上是站卡的提示、不用寫店名；報告裡照一般警告印、前面補店名（兩家神社會印兩句一樣的），不混進「拒絕過引擎插的站」那行
+    const warns = (plan.warnings ?? []).filter((w) => w.code !== 'skipped-missing' && (!w.hint || w.ruleId === 'person-avoid'));
+    const warnText = (w) => (w.ruleId === 'person-avoid' ? `${plan.sequence.find((s) => s.poi.id === w.poiId)?.poi.name_zh ?? w.poiId}：${w.msg}` : w.msg);
+    if (warns.length) lines.push(`警告：${warns.map(warnText).join('；')}`);
     const suggests = (plan.warnings ?? []).filter((w) => w.ruleId === 'leg-suggest');
     if (suggests.length) lines.push(`可升級（只提示，不罰、不自動插）：${suggests.map((w) => w.msg).join('；')}`);
-    const hints = (plan.warnings ?? []).filter((w) => w.hint && w.ruleId !== 'leg-suggest');
+    const hints = (plan.warnings ?? []).filter((w) => w.hint && w.ruleId !== 'leg-suggest' && w.ruleId !== 'person-avoid');
     if (hints.length) lines.push(`提示（拒絕過引擎插的站，不再插）：${hints.map((w) => w.msg).join('；')}`);
     const skipped = (plan.warnings ?? []).filter((w) => w.code === 'skipped-missing');
     if (skipped.length) lines.push(`規則因缺欄位跳過：${skipped.length} 次（${[...new Set(skipped.map((w) => w.ruleId ?? w.rule ?? '?'))].join('、')}）`);

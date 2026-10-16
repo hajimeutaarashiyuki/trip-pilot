@@ -2,7 +2,8 @@
 // 夜間時窗讀 country.nightSlot（20:00–24:00），不讀 day.window：留白從當日時窗尾端扣掉後（trip.js dayWindow，收工 24:00 → 22:30）
 // 夜間站的時段判定不跟著縮，站排不排得進收工前由硬規則 window 管。
 // 「每晚都要」是通則：normal 日與 fixed 日（研討會那種整天被釘住的日子，晚上照排）都看；只有飛機日（arrival／departure）與城際移動日（transfer）不管
-// （那幾天的晚上是飛機或車，推導；10-14 T23 之前只看 normal 日）。早起日前一晚的取消由 day.nightSlotOff 處理。
+// （那幾天的晚上是飛機或車，推導；10-14 T23 之前只看 normal 日）。早起日前一晚的取消由 day.nightSlotOff 處理（在場有人「不排夜間站」也走這條，engine/persons.js；T19）；
+// 在場有人「少排」（day.nightSlotLess）那天缺席的罰分減半（推導，10-16 T19）。
 // 跨進夜間時窗的固定時段本身也算夜間站（演唱會 19:00–22:00、20:00 的花火：那晚就是那件事，不再要一家 bar；看固定時段的起訖、不含散場緩衝；
 // 研討會 09:30–19:30 沒跨進去，晚上照要夜間站——他勾了 賓，累了就不去，#18）。推導；10-14 T23 審查後加。
 // 引擎插的恢復站（stop.insertedBy）不算夜間站：跟 meal-slots 一樣，不讓引擎為了補夜間站自己挑 bar。降速策略釘的「現在就去坐」（fixedWindow.pinned）不是固定時段。
@@ -24,7 +25,8 @@ export default {
     const hit = ctx.sequence.some((s) => !s.insertedBy && (
       (NIGHT.has(s.poi.category) && overlapMin(s.startMin, s.endMin, from, to) > 0) || eventIntoNight(s, from, to)
     ));
-    return hit ? 0 : ctx.params.missMin;
+    if (hit) return 0;
+    return ctx.day.nightSlotLess ? ctx.params.missMin / 2 : ctx.params.missMin;
   },
   warn() {
     return '今晚沒排夜間站';

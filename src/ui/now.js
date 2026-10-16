@@ -7,6 +7,7 @@ import { TEXT } from './text.js';
 import { openIntervals } from '../engine/time.js';
 import { replanDay, TIRED_STRATEGIES } from '../strategies/index.js';
 import { resolveHome, engineMayInsert } from '../engine/trip.js';
+import { personAvoids } from '../engine/persons.js';
 import { routeUrl, legMode, tripCityName } from './maps.js';
 import { darkBeforeMinOf } from './daylight.js';
 import { pendingRatings, progressOf, daysBetween, skipStopPatch } from './ratings.js';
@@ -82,7 +83,8 @@ export function renderNow({ state, actions }) {
     ]),
   ]));
 
-  if (threatened) nodes.push(proposalsBlock({ state, actions, date, planned, seq, idx, nowMin, title: TEXT.proposals, tone: 'warn', limitText: ends != null ? TEXT.hardLimitEnds(next.poi.name_zh, hm(ends)) : closes != null ? TEXT.hardLimit(next.poi.name_zh, hm(closes)) : TEXT.hardLimitDark(next.poi.name_zh, hm(dark)) }));
+  // 硬時限受威脅那組（五種策略）跟「累了」那組拿同一個池（fieldPool）：之前這組退到整個知識庫，降速那案會插同行者不想去的店型、錢湯、引擎本來就不主動排的店（10-16 T19 審查）
+  if (threatened) nodes.push(proposalsBlock({ state, actions, date, planned, seq, idx, nowMin, title: TEXT.proposals, tone: 'warn', pool: fieldPool(state, planned, seq), limitText: ends != null ? TEXT.hardLimitEnds(next.poi.name_zh, hm(ends)) : closes != null ? TEXT.hardLimit(next.poi.name_zh, hm(closes)) : TEXT.hardLimitDark(next.poi.name_zh, hm(dark)) }));
 
   nodes.push(el('button', { class: 'btn primary huge', type: 'button', onclick: () => leave({ state, actions, idx, prev: next }) }, TEXT.leaveNow));
   nodes.push(tiredToggle({ state, actions, date, planned, seq, idx, nowMin }));
@@ -166,33 +168,36 @@ function tiredToggle({ state, actions, date, planned, seq, idx, nowMin }) {
   btn.addEventListener('click', () => {
     const open = box.querySelector('.card');
     if (open) { open.remove(); btn.textContent = TEXT.tired; btn.classList.remove('on'); return; }
-    box.append(proposalsBlock({ state, actions, date, planned, seq, idx, nowMin, title: TEXT.tiredTitle, tone: 'rest', strategies: TIRED_STRATEGIES, pool: tiredPool(state, planned, seq) }));
+    box.append(proposalsBlock({ state, actions, date, planned, seq, idx, nowMin, title: TEXT.tiredTitle, tone: 'rest', strategies: TIRED_STRATEGIES, pool: fieldPool(state, planned, seq) }));
     btn.textContent = TEXT.tiredClose; btn.classList.add('on');
   });
   return box;
 }
 
 /**
- * 累了時可以拿來坐的站：當日區域內整個知識庫（原話 #126），扣掉今天排了的、別天排進去的（同一家不在兩天出現）、任何一天按過「不去了」的；
+ * 現場改案可以拿來插的站（「累了」那組與硬時限受威脅那組共用；之前只有「累了」用、受威脅那組退到整個知識庫，10-16 T19 審查後合一）：
+ * 當日區域內整個知識庫（原話 #126），扣掉今天排了的、別天排進去的（同一家不在兩天出現）、任何一天按過「不去了」的；
  * 今天勾了但排不進的（示範 8/13 的火星の庭）留著——它就在附近、他本來就想去，正好拿來坐。錢湯要準備、不臨時提（profile §5.9）。形狀同 state.pool（{ poi }）。
  * 知識庫裡本來就不主動排的店（挖寶型、2 星、落選兩次、未解鎖、代購研究站）也不拿：跟引擎插的恢復站、填站、順路站同一道門（trip.js engineMayInsert，10-14 T22）。
+ * 那天在場的人不想去的店型（planned.day.adjust.avoidCategories，T19）也不拿。
+ * 受威脅那組裡拿 pool 的只有降速（slow-down 插恢復站）與換備案（swap-alt 對 poi.alternatives）：備案因此也只在當日區域、不是別天排了的。
  */
-function tiredPool(state, planned, seq) {
+export function fieldPool(state, planned, seq) {
   const zones = new Set(planned.day.regionZones ?? []);
   const skip = new Set(seq.map((s) => s.poi.id));
   for (const other of Object.values(state.plans)) if (other !== planned) for (const s of other.plan.sequence) skip.add(s.poi.id);
   for (const d of state.trip.days) for (const r of d.removed ?? []) if (r?.poiId) skip.add(r.poiId);
-  return Object.values(state.pois).filter((p) => engineMayInsert(p) && zones.has(p.zoneId) && !skip.has(p.id) && p.category !== 'onsen').map((poi) => ({ poi }));
+  return Object.values(state.pois).filter((p) => engineMayInsert(p) && zones.has(p.zoneId) && !skip.has(p.id) && p.category !== 'onsen' && !personAvoids(planned.day.adjust, p)).map((poi) => ({ poi }));
 }
 
 /**
  * 改案清單（DESIGN §6.3）：每案寫標題、一句話、新的時間表、插了哪家休息、會少掉什麼、吃掉多少留白；他點了才套。
- * strategies 不給就跑五種（硬時限受威脅）；pool 不給就用整個候選池。跟目前剩下的排程一模一樣的案 replanDay 已拿掉，一案都沒有就寫一句。
+ * strategies 不給就跑五種（硬時限受威脅）；pool 不給就用 fieldPool（兩組改案同一個池，不退到整個知識庫）。跟目前剩下的排程一模一樣的案 replanDay 已拿掉，一案都沒有就寫一句。
  */
 function proposalsBlock({ state, actions, date, planned, seq, idx, nowMin, title, tone = 'warn', limitText = null, strategies, pool }) {
   const remaining = remainingFrom(seq, idx);
   const here = idx > 0 ? seq[idx - 1].poi : resolveHome(state.trip, date);
-  const { proposals } = replanDay({ day: planned.day, remaining, here, nowMin, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, legFn: state.legFn, pool: pool ?? state.pool, strategies });
+  const { proposals } = replanDay({ day: planned.day, remaining, here, nowMin, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, legFn: state.legFn, pool: pool ?? fieldPool(state, planned, seq), strategies });
   const slackMin = planned.day.openSlotMin ?? 0;
   const block = el('section', { class: `card ${tone}` }, [
     limitText ? el('p', { class: 'warn-line', text: limitText }) : null,

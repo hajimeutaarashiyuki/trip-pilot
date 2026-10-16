@@ -181,6 +181,25 @@ test('walk-budget：一日遊本身 ×0.7（原話 #160，跟早起日同值）�
   assert.match(warnOf('walk-budget', dt), /超過上限 105/);
 });
 
+test('walk-budget 同行者體力（T19，day.adjust.stamina；人之間取最鬆是 engine/persons.js 的事）：easy 0.85 進 min、hard 最後乘 1.15；跟早起日同時中先取最嚴再乘 hard；normal 與沒 adjust 不動', () => {
+  assert.equal(settings.staminaEasyFactor, 0.85);
+  assert.equal(settings.staminaHardFactor, 1.15);
+  assert.equal(budgetMultiplier({ adjust: { stamina: 'easy' } }, settings), 0.85);
+  assert.equal(budgetMultiplier({ adjust: { stamina: 'hard' } }, settings), 1.15);
+  assert.equal(budgetMultiplier({ adjust: { stamina: 'normal' } }, settings), 1);
+  assert.equal(budgetMultiplier({ party: 2, adjust: { stamina: 'easy' } }, settings), 0.85, '同行 0.85 跟 easy 0.85 取最嚴還是 0.85，不相乘');
+  assert.equal(budgetMultiplier({ earlyDay: true, adjust: { stamina: 'easy' } }, settings), 0.7, '早起日 0.7 比 easy 嚴');
+  assert.equal(budgetMultiplier({ earlyDay: true, adjust: { stamina: 'hard' } }, settings), 0.7 * 1.15, '早起日取最嚴 0.7 之後再乘 hard');
+  assert.equal(budgetMultiplier({ earlyDay: true, party: 2, dayTripNext: true, adjust: { stamina: 'hard' } }, settings), 0.7 * 1.15);
+  assert.equal(budgetMultiplier({ adjust: { stamina: 'easy' } }, { ...settings, staminaEasyFactor: 0.9 }), 0.9, '讀 settings');
+  assert.equal(budgetMultiplier({ adjust: { stamina: 'hard' } }, { ...settings, staminaHardFactor: 1.2 }), 1.2);
+  const easy = ctx(stop('x'), { acc: { 'dim-walk': 140 }, day: { adjust: { stamina: 'easy' } } });
+  assert.equal(run('walk-budget', easy), 140 - 150 * 0.85, 'easy 的預算是 150×0.85');
+  assert.match(warnOf('walk-budget', easy), /超過上限 128/);
+  const hard = ctx(stop('x'), { acc: { 'dim-walk': 170 }, day: { adjust: { stamina: 'hard' } } });
+  assert.equal(run('walk-budget', hard), 0, 'hard 的預算 172.5，170 沒超');
+});
+
 test('filler-gap：填站自己還要等開門就 never（原話 #164「禁」）', () => {
   const gap = { startMin: 600, endMin: 720 };
   const base = { ...stop('藥妝店', { startMin: 610, dwellMin: 30, category: 'drugstore', walkFactor: 0 }), priority: 'filler', optional: true, insertedBy: 'engine', gap };

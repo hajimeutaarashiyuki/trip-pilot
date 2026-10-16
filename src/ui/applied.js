@@ -5,6 +5,7 @@
 // 這裡只有純邏輯（可測）；寫回在 app.js、畫面在 now.js／planner.js。
 import { evaluateSequence } from '../engine/sequence.js';
 import { resolveHome, attachCorridor, corridorExclude, visitedBefore } from '../engine/trip.js';
+import { personAvoidWarnings } from '../engine/persons.js';
 import { TEXT } from './text.js';
 
 /** 快照每站存的欄位（POI 本體不存，還原時從 state.pois 對回；跟 planDay 排出的 stop 同名） */
@@ -75,7 +76,8 @@ export function appliedPlan({ planned, sequence, appliedIndex, lost = [], trip, 
   const home = resolveHome(trip, day.date);
   const ev = evaluateSequence({ sequence, day: evalDay, home, legFn, rules, settings, country, kb });
   // 二選一（plan.choices）是對引擎排的序列算的（slot 指引擎序列的位置）：現場改過的那天不出，按了也會先清掉改案再重排（T16）
-  const base = { ...planned.plan, ...ev, sequence, corridor: [], choices: [], dropped: mergeDropped({ engine: planned.plan, sequence, lost }), applied: true };
+  // 他勾的站是同行者不想去的店型（T19）：重算後的警告是規則出的，person-avoid 那句（trip.js 的後處理）要再掛一次
+  const base = { ...planned.plan, ...ev, sequence, warnings: [...(ev.warnings ?? []), ...personAvoidWarnings(sequence, day.adjust)], corridor: [], choices: [], dropped: mergeDropped({ engine: planned.plan, sequence, lost }), applied: true };
   const others = Object.values(plans ?? {}).filter((p) => p && p !== planned && p.date !== planned.date).map((p) => p.plan?.sequence);
   const plan = pois ? attachCorridor({ plan: base, home, pool: Object.values(pois), legFn, settings, day, exclude: corridorExclude(trip, others, visitedBefore(visited, day.date)) }) : base;
   return { ...planned, day, plan };

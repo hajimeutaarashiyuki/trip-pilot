@@ -21,6 +21,7 @@ import { upgradePick, visitedPatch, visitedDates } from './corridor.js';
 import { chooseOptionTrip, deferStopTrip, deferNotice, displacedPicks } from './choices.js';
 import { emptyBrief, normalizeBrief, briefToMarkdown, briefFileName, looksLikeBrief, isBriefEmpty } from '../data/brief.js';
 import { normalizeMemory, rememberFromBrief } from '../data/brief-memory.js';
+import { personsOf, cityNamesOf } from '../engine/persons.js';
 
 const SETTINGS_KEY = 'trip-pilot:settings';
 const FIELD_KEY = 'trip-pilot:field';
@@ -34,6 +35,7 @@ export const state = {
   undo: null,   // 最後一次「不去了」或「升級成站」的復原資料（一次性；kind 'remove'／'upgrade'）
   notice: null,   // 二選一／「排到別天」之後的一句狀態 { text }（T16；下一個動作前都在，不搶 undo）
   busy: false,    // 二選一／「排到別天」正在試排與重排（同步跑、桌機量到接近 1 秒）：先畫一句再算，算完前再按不理（T16 審查後）
+  replanPending: false,   // 需求單頁改了會影響排程的東西（同行者的在場、體力、夜間站）還沒重排：離開需求單頁那一下補跑（T19 審查後）
   corridorOpen: {},   // 走廊清單哪幾段展開著（鍵 plan:日期:段／now:日期:段；只在記憶體、不存，重排就清；T15）
   route: '#/plan',
   device: loadJSON(SETTINGS_KEY, {}),
@@ -80,7 +82,7 @@ export function loadFromPack(packResult) {
   state.trip = pack.trip;
   state.pois = Object.fromEntries(pois.map((p) => [p.id, p]));
   state.country = pack.country;
-  state.kb = { zones: pack.zones?.zones ?? {} };
+  state.kb = { zones: pack.zones?.zones ?? {}, city: pack.city ?? null };   // city：需求單的城市也對打包檔的 id 與名字（engine/persons.js cityNamesOf，T19）
   state.packRules = pack.rules ?? null;
   state.packMeta = { ...(pack.meta ?? {}), tripId: pack.trip.id, tripName: pack.trip.name ?? pack.trip.id, city: pack.city ?? null };
   buildSettings();
@@ -106,11 +108,13 @@ export function replanAll() {
 
 function replan() {
   buildSettings();
+  state.replanPending = false;
   if (!state.trip) return;
   // restPool：整個知識庫都給引擎挑恢復站（trip.js 會篩成當日區域內、沒勾、沒拒絕的幾家）；示範資料也一樣
   // 走廊清單按過「我進去了」的（field.visited）：進去那天之後引擎不再插它、走廊也不列（原話 #138）；按的當下只重畫，下次重排才生效
   const visited = visitedDates(state.field.visited);
-  const r = planTrip({ trip: state.trip, pois: state.pois, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, legFn: state.legFn, restPool: Object.values(state.pois), options: { visited } });
+  // brief：旅程檔沒 persons 時，手機需求單的同行者（city／dates 對得上才算）直接生效（T19，engine/persons.js personsOf）
+  const r = planTrip({ trip: state.trip, pois: state.pois, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, legFn: state.legFn, restPool: Object.values(state.pois), brief: state.brief, options: { visited } });
   state.plans = Object.fromEntries(r.days.map((d) => [d.date, d]));
   // 現場套過的改案（field.applied）活過重排與重開：打包相同就還原整條序列、整天重算；不同（手機更新了新打包）就丟掉並在那天警告一行
   const restored = restoreApplied({ plans: state.plans, applied: state.field.applied, packAt: state.packMeta?.generatedAt ?? null, pois: state.pois, trip: state.trip, legFn: state.legFn, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, visited });
@@ -192,7 +196,7 @@ export function upgradeCorridor(date, poiId) {
 
 /** planTrip 的其他參數（順延試排用，跟 replanAll 同一份）。 */
 function planArgsOf() {
-  return { rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, legFn: state.legFn, restPool: Object.values(state.pois), options: { visited: visitedDates(state.field.visited) } };
+  return { rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, legFn: state.legFn, restPool: Object.values(state.pois), brief: state.brief, options: { visited: visitedDates(state.field.visited) } };
 }
 
 /**
@@ -316,10 +320,37 @@ export function catchUpToday() {
 // ---- 需求單（T26） ----
 /** 改需求單：updater 收現況、回新單；每改一個欄位就存（打字的欄位傳 rerender:false，重畫會把焦點踢掉）。 */
 export function setBrief(updater, { rerender = true } = {}) {
+  const prev = state.brief;
   const next = typeof updater === 'function' ? updater(state.brief) : updater;
   state.brief = { ...next, updatedAt: new Date().toISOString() };
   saveJSON(BRIEF_KEY, state.brief);
+  replanIfPersonsChanged(prev);
   if (rerender) render();
+}
+
+/** 需求單的同行者會影響排程的那幾樣（engine/persons.js 覆蓋層：在場（dates，含「只同行哪幾天」讀出來的）、體力、夜間站、不去的店型；名字、要去的不算）。 */
+function personsKey(brief) {
+  return JSON.stringify(personsOf(state.trip, brief, null, cityNamesOf(state.kb)).map((p) => [p.source, p.dates, p.adjustments.stamina, p.adjustments.nightSlot, p.adjustments.avoidCategories]));
+}
+
+/**
+ * 需求單改了（T19）：旅程檔沒 persons、而需求單的 city／dates 對得上時，同行者的在場、體力與夜間站直接生效在排程上，所以那幾樣變了就要重排；
+ * 打名字、要去的那些不重排（跟排程無關）。在需求單頁上不當場排：重排一次接近 1 秒（T16 量的，仙台包 8/13 常撞 800 ms 預算），select 一改就凍住、
+ * 「只同行哪幾天」與城市欄每打一個字都可能對上、重畫又會踢掉焦點——所以只記著（replanPending），離開需求單頁那一下再排（flushPendingReplan，先畫「正在重排…」）；
+ * 不在需求單頁改的（沒有這種入口，保險）走 afterPaint 當場排。重開 App 時 loadFromPack 本來就整趟重排，記著的不會漏。
+ */
+function replanIfPersonsChanged(prevBrief) {
+  if (!state.trip) return;
+  if (personsKey(prevBrief) === personsKey(state.brief)) return;
+  if (state.route === '#/brief') { state.replanPending = true; return; }
+  afterPaint(replan);
+}
+
+/** 換頁時補跑需求單頁欠下的重排（有排就回 true，afterPaint 自己會畫兩次：先「正在重排…」、排完再畫）。 */
+function flushPendingReplan() {
+  if (!state.replanPending || state.route === '#/brief' || !state.trip) return false;
+  afterPaint(replan);
+  return true;
 }
 
 /** 把這份單子的消耗品與他要買的記進記憶（存檔、複製、換掉這份之前都做；原話 #87）。 */
@@ -331,17 +362,21 @@ export function rememberBrief() {
 /** 整份換掉（載入、清空）：先記憶（畫面承諾「勾了消耗品，下次會帶出來問」，不能因為沒存檔就漏掉），非空的舊單留一份給「復原上一份」。 */
 function replaceBrief(next) {
   rememberBrief();
+  const prev = state.brief;
   state.briefUndo = isBriefEmpty(state.brief) ? null : state.brief;
   state.brief = next;
   saveJSON(BRIEF_KEY, state.brief);
+  replanIfPersonsChanged(prev);
 }
 
 /** 復原上一份（只對最後一次載入／清空有效）。 */
 export function undoBrief() {
   if (!state.briefUndo) return;
+  const prev = state.brief;
   state.brief = state.briefUndo;
   state.briefUndo = null;
   saveJSON(BRIEF_KEY, state.brief);
+  replanIfPersonsChanged(prev);
   state.briefStatus = TEXT.brief.undone;
   state.briefCopyText = null;
   render();
@@ -438,7 +473,7 @@ function tabBar() {
 
 export async function boot() {
   buildSettings();
-  const apply = () => { state.route = location.hash && VIEWS[location.hash] ? location.hash : '#/plan'; render(); };
+  const apply = () => { state.route = location.hash && VIEWS[location.hash] ? location.hash : '#/plan'; if (!flushPendingReplan()) render(); };
   window.addEventListener('hashchange', apply);
   if (!state.field.date) state.field.date = todayStr();
   readPackParam();

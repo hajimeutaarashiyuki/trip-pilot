@@ -33,6 +33,9 @@ export const CHECKS = [
   // 走廊清單的半徑與每段上限同一句（profile §8「路線兩側各 100 公尺、一段移動最多 5 家」，DESIGN §4；10-16 T15）
   { label: '走廊清單半徑', pattern: /路線兩側各 (\d+) 公尺、一段移動最多 \d+ 家/, key: 'corridorListRadiusM' },
   { label: '走廊清單每段上限', pattern: /路線兩側各 \d+ 公尺、一段移動最多 (\d+) 家/, key: 'corridorListMaxPerLeg' },
+  // 同行者體力的倍率同一句（profile §9「體力「輕鬆一點」→ 步行預算 ×0.85、「可以操」→ ×1.15」；10-16 T19，都是預設）
+  { label: '體力輕鬆倍率', pattern: /體力「輕鬆一點」→ 步行預算 ×(0\.\d+)、「可以操」→ ×\d+\.\d+/, key: 'staminaEasyFactor' },
+  { label: '體力可以操倍率', pattern: /體力「輕鬆一點」→ 步行預算 ×0\.\d+、「可以操」→ ×(\d+\.\d+)/, key: 'staminaHardFactor' },
 ];
 
 /** 純函式：回 { ok, mismatches[], notFound[] }，給測試與 CLI 共用。 */

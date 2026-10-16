@@ -50,6 +50,11 @@ test('meal-slots：午晚餐各缺一個罰 20；night-slot：normal 日 20:00 �
   assert.equal(run('night-slot', ctx(null, { sequence: [lunch, late], day: { window: { startMin: 540, endMin: 22 * 60 + 30 }, windowRaw: { startMin: 540, endMin: 1440 } } })), 0, '留白扣掉後收工 22:30，20:30–22:00 的 bar 仍算夜間站（讀 country.nightSlot，不讀 day.window）');
   assert.equal(run('night-slot', ctx(null, { sequence: [lunch], day: { type: 'arrival' } })), 0);
   assert.equal(run('night-slot', ctx(null, { sequence: [lunch], day: { nightSlotOff: true } })), 0, '早起日前一晚取消');
+  // 同行者（T19，engine/persons.js）：在場有人「不排」走 nightSlotOff；「少排」（nightSlotLess）罰分減半；排了就不罰
+  assert.equal(run('night-slot', ctx(null, { sequence: [lunch, dinner], day: { nightSlotLess: true } })), 5, '少排：缺席罰一半');
+  assert.equal(run('night-slot', ctx(null, { sequence: [lunch, late], day: { nightSlotLess: true } })), 0, '少排但有排就不罰');
+  assert.equal(run('night-slot', ctx(null, { sequence: [lunch, dinner], day: { nightSlotLess: true, nightSlotOff: true } })), 0, '不排蓋過少排');
+  assert.equal(warnOf('night-slot', ctx(null, { sequence: [lunch, dinner], day: { nightSlotLess: true } })), '今晚沒排夜間站');
 });
 
 test('固定時段日（type fixed，研討會；10-14 T23）：night-slot 照罰（原話 #18「每晚都要安排」是通則）、arrival／departure／transfer 不管；meal-slots 被固定時段的站蓋住的餐段不算缺（餐段開始前就在進行、到餐段過半還沒散）、餐段中途才開始或早上就散的照算、沒有固定時段的長站不算', () => {

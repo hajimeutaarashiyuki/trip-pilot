@@ -41,14 +41,21 @@ export function legLoad(leg, climbFactor) {
   return walk + climb * (climbFactor - 1);
 }
 
-/** 步行預算的倍率：早起日、一日遊、女友同行、一日遊翌日同時中取最嚴（原話 #128）。一日遊本身也鬆（原話 #160「一日遊會舟車勞頓」），跟早起日同值。 */
+/**
+ * 步行預算的倍率：早起日、一日遊、女友同行、一日遊翌日同時中取最嚴（原話 #128）。一日遊本身也鬆（原話 #160「一日遊會舟車勞頓」），跟早起日同值。
+ * 同行者的體力（day.adjust.stamina，engine/persons.js 人之間取最鬆，原話 #144；T19）：easy 多一個 settings.staminaEasyFactor（預設 0.85，推導：跟同行倍率同值）進 min；
+ * hard 在取最嚴之後最後乘 settings.staminaHardFactor（預設 1.15，推導）；normal 不動。
+ */
 export function budgetMultiplier(day, settings) {
   const m = [1];
   if (day?.earlyDay) m.push(settings.earlyDayWalkFactor ?? 0.7);
   if (day?.dayTrip) m.push(settings.dayTripWalkFactor ?? 0.7);
   if ((day?.party ?? 1) >= 2) m.push(settings.partyWalkFactor ?? 0.85);
   if (day?.dayTripNext) m.push(settings.dayTripNextWalkFactor ?? 0.85);
-  return Math.min(...m);
+  const stamina = day?.adjust?.stamina;
+  if (stamina === 'easy') m.push(settings.staminaEasyFactor ?? 0.85);
+  const strictest = Math.min(...m);
+  return stamina === 'hard' ? strictest * (settings.staminaHardFactor ?? 1.15) : strictest;
 }
 
 /** 設定裡的 "13:00" 之類轉分鐘；已是數字就原樣。 */

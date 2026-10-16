@@ -17,6 +17,8 @@
     "partyWalkFactor": 0.85,
     "dayTripNextWalkFactor": 0.85,
     "dayTripWalkFactor": 0.7,
+    "staminaEasyFactor": 0.85,
+    "staminaHardFactor": 1.15,
     "openSlotMinPerDay": 90,
     "openSlotSkipBelowMin": 60,
     "lateThresholdMin": 15,
@@ -48,7 +50,9 @@
       "maxShopRunMin": "#103（題目寫 240 他答可以）",
       "walkBudgetMin": "#114（先留）",
       "sameTypeMaxPerDay": "#123、#143",
-      "dayTripWalkFactor": "#160（跟早起日同值 0.7，取最嚴）"
+      "dayTripWalkFactor": "#160（跟早起日同值 0.7，取最嚴）",
+      "staminaEasyFactor": "預設，不是原話：同行者體力「輕鬆一點」的步行預算倍率，跟同行倍率 partyWalkFactor 同值（推導，10-16 T19）；人之間取最鬆是原話 #144",
+      "staminaHardFactor": "預設，不是原話：「可以操」在日型倍率取最嚴之後最後乘 1.15（推導，10-16 T19）"
     },
     "onTheWayDetourMin": 8,
     "onTheWayPoolMax": 4,

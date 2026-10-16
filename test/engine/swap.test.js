@@ -41,3 +41,18 @@ test('餐段的站放寬到所有吃的類；沒開的不列', () => {
   assert.ok(names.includes('星山珈琲店') || names.includes('喫茶 Elbe') || names.includes('たん焼き一隆'), `吃的類要能互換：${names.join('、')}`);
   assert.ok(!names.includes('Utah'));
 });
+
+test('在場的人不想去的店型（day.adjust，T19）：餐段放寬進來的別類不列（他勾的食堂不列同行者不去的咖啡廳、酒吧）；跟這一站同 category 的照列（他勾的那一類由他）；沒 adjust 照舊', () => {
+  const plan = planDay({ candidates: CANDS_0817, day: DAY_0817, home: HOME, legFn, rules, settings, country: COUNTRY, kb: KB });
+  const pool = Object.values(POIS).map((poi) => ({ poi }));
+  const catOf = (id) => Object.values(POIS).find((p) => p.id === id)?.category;
+  const base = { plan, stopId: POIS['おやま'].id, pool, legFn, date: DAY_0817.date, settings: { ...settings, swapDetourMaxMin: 999 } };
+  const plain = swapCandidates(base).map((c) => c.poi.id);
+  assert.ok(plain.some((id) => catOf(id) === 'cafe'), `對照組要有咖啡廳：${plain.join('、')}`);
+  const avoid = (list) => ({ stamina: 'normal', nightSlot: 'default', avoidCategories: list, avoidBy: {} });
+  const noCafe = swapCandidates({ ...base, adjust: avoid(['cafe', 'bar']) }).map((c) => c.poi.id);
+  assert.ok(noCafe.length > 0 && noCafe.every((id) => catOf(id) === 'food'), `只剩吃的：${noCafe.join('、')}`);
+  assert.deepEqual(noCafe, plain.filter((id) => catOf(id) === 'food'), '吃的那幾家一家不少');
+  assert.deepEqual(swapCandidates({ ...base, adjust: avoid(['food']) }).map((c) => c.poi.id), plain, '同行者不去食堂、但這一站就是他勾的食堂：同類照列，候選跟沒 adjust 一樣');
+  assert.deepEqual(swapCandidates({ ...base, adjust: undefined }).map((c) => c.poi.id), plain);
+});

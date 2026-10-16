@@ -128,6 +128,24 @@ export const TEXT = {
   lastPack: (name, at) => `手機裡的旅程：${name}（打包於 ${fmtAt(at)}）`,
   goUpdate: '去更新',
   saved: '已存',
+  // 同行者（T19；原話 #136、#144）：設定頁「同行：我、女友（8/13–8/15，輕鬆）」一行；來源是需求單時尾巴「（需求單）」
+  companions: {
+    label: '同行',
+    alone: '一個人',
+    me: '我',
+    you: '你',
+    unnamed: '同行者',
+    fromBrief: '（需求單）',
+    stamina: { easy: '輕鬆', hard: '可以操' },
+    nightSlot: { less: '少排夜間站', none: '不排夜間站' },
+    avoid: (list) => `不去${list}`,
+    // 需求單「只同行哪幾天」寫了但讀不懂（例：「8/14 晚上到」）：當整趟、這裡講明，他知道要改成 8/14–16 這種寫法
+    partialUnread: (text) => `「${text}」看不出是哪幾天，先整趟都算`,
+    // 旅程檔沒 persons、需求單有同行者、但城市或日期跟這趟對不上：講明為什麼那些同行者沒算（不是壞掉）
+    briefMismatch: '；需求單的城市或日期跟這趟對不上，裡面的同行者沒算',
+  },
+  // 他勾了在場的人不想去的店型：照排，站卡多一句提示（engine/persons.js personAvoidWarnings；不罰）
+  personAvoid: (who, what) => `${who}這趟不想去${what}，你勾了就照排`,
 
   // 候選
   poolTitle: '候選',

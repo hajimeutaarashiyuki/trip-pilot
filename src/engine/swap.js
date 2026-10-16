@@ -1,14 +1,17 @@
 // 換這一站（DESIGN §6.3.1，原話 #90、#91）：點某一站，列出同類型、順路、那個時段有開的候選；換掉的站不算落選。
 // 規劃頁與現場都用；候選來源＝候選池 ∪ 走廊清單 ∪ 當日區域內的知識庫（這裡統一收成 pool）。
 import { openIntervals } from './time.js';
+import { personAvoids } from './persons.js';
 
 /**
- * swapCandidates({ plan, stopId, pool, legFn, date, settings }) → [{ poi, detourMin, open }]
+ * swapCandidates({ plan, stopId, pool, legFn, date, settings, adjust }) → [{ poi, detourMin, open }]
  * - 同 category；餐段的站放寬到所有吃的類（food／bar／cafe）
  * - 順路：以前後站算 detourMin ＝ (前→候選＋候選→後) − (前→後)，≤ settings.swapDetourMaxMin（預設 10）
  * - 那個時段有開（hours 查得到的才判；查不到的列出來但標 open: null）
+ * - adjust（那天的 day.adjust，T19）：在場的人不想去的店型不列——除了跟這一站同 category 的（他勾的那一類照排、換同類也由他；餐段放寬進來的別類才擋：
+ *   他勾的食堂按「換一家」不列同行者不去的咖啡廳、酒吧；10-16 審查）
  */
-export function swapCandidates({ plan, stopId, pool, legFn, date, settings = {} }) {
+export function swapCandidates({ plan, stopId, pool, legFn, date, settings = {}, adjust = null }) {
   const seq = plan.sequence;
   const i = seq.findIndex((s) => s.poi.id === stopId);
   if (i < 0) return [];
@@ -21,6 +24,7 @@ export function swapCandidates({ plan, stopId, pool, legFn, date, settings = {} 
   for (const c of pool) {
     const poi = c.poi ?? c;
     if (poi.id === cur.poi.id || inPlan.has(poi.id) || !sameType(poi)) continue;
+    if (poi.category !== cur.poi.category && personAvoids(adjust, poi)) continue;
     const detourMin = swapDetourMin(seq, i, poi, legFn);
     if (detourMin > maxDetour) continue;
     const iv = openIntervals(poi, date);

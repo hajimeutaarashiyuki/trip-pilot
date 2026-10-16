@@ -182,7 +182,8 @@ function stopCard(s, i, plan, d, state, actions, seenCumulative = new Set()) {
 function toggleSwap(card, s, plan, d, state, actions) {
   const existing = card.querySelector('.swap-list');
   if (existing) { existing.remove(); return; }
-  const cands = swapCandidates({ plan, stopId: s.poi.id, pool: state.pool, legFn: state.legFn, date: d.date, settings: state.settings });
+  // adjust：那天在場的人不想去的店型（T19）——餐段放寬進來的別類不列，同類照列（他勾的那一類由他）
+  const cands = swapCandidates({ plan, stopId: s.poi.id, pool: state.pool, legFn: state.legFn, date: d.date, settings: state.settings, adjust: state.plans[d.date]?.day?.adjust ?? null });
   const list = el('div', { class: 'swap-list' });
   if (!cands.length) list.append(el('p', { class: 'muted small', text: TEXT.noSwap }));
   for (const c of cands.slice(0, 6)) {

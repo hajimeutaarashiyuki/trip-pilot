@@ -8,6 +8,7 @@ import { evaluateSequence, retimeSequence } from './sequence.js';
 import { SHOPPING_CATEGORIES } from '../rules/_helpers.js';   // 只借購物類店型清單篩順路站，不是規則邏輯（規則在 rules/shopping-day.js）
 import { CATEGORIES, classifyCategory } from '../data/schema.js';   // 主題日的店型要對得上知識庫的店型（themeCategoryOf）
 import { proposeChoices, swappedAwayFrom } from './choices.js';   // 二選一（T16）：七天排完才對每天的序列算，不進分數與時刻；choices.js 的 defer 反過來用 planTrip 試排（模組互相引用只在呼叫時用到，沒問題）
+import { personsOf, presentOn, mergeAdjustments, personAvoids, personAvoidWarnings, cityNamesOf } from './persons.js';   // 同行者（T19）：每天在場的人、合併後的調整（取最鬆，原話 #144）、不想去的店型
 
 /**
  * 引擎插站的觸發：照他勾的排完後出現這些規則的警告才跑第二趟。
@@ -90,11 +91,19 @@ export function regionZonesOf({ home, candidates, anchorPoi }) {
  *   順延過來卻排不進（落在那天的 plan.dropped）記整趟警告 deferred-dropped（不罰、不自動改 trip.deferred）
  * - options.onlyDates: ['YYYY-MM-DD']：只排清單內的日子，其餘日子跳過 planDay（那天回 { date, day, plan: null }；day 上下文照算，整趟的 exclude 也照常算）——
  *   順延試排用，一天一天試不用整趟重算（推導）；跳過的日子沒插過的站不會進 insertedSoFar，試排的那天可能插到別天已插的引擎站，只影響引擎插站、不影響試排的結論
+ * - 同行者（T19，engine/persons.js；原話 #136、#144）：trip.persons[]: [{ id, name, isMe, dates?: ['YYYY-MM-DD']（同行哪幾天；缺或空＝整趟）, adjustments: { stamina: normal|easy|hard, nightSlot: default|less|none, dislikes, avoidCategories[] } }]，persons[0] 是他；
+ *   沒有 persons 就從 trip.party 合成（行為跟現在一樣）；沒有 persons 而 brief（手機需求單）的 city／dates 對得上就用需求單的 persons（stamina／nightSlot 生效、
+ *   「只同行哪幾天」讀得懂的轉成 dates；城市也對 kb.city＝打包檔的城市 id 與名字，persons.js cityNamesOf）。
+ *   每天的 day 多三樣：party（那天在場人數，有 dates 的只算那幾天）、persons（在場的）、adjust: { stamina, nightSlot, avoidCategories, avoidBy }（人之間取最鬆）——
+ *   stamina 進 rules/_helpers.js budgetMultiplier（easy 進 min、hard 最後乘）；nightSlot none → day.nightSlotOff（跟早起日前一晚同一條路）、less → day.nightSlotLess（rules/night-slot.js 罰分減半）；
+ *   avoidCategories：引擎自己插的站（恢復站、填站、順路站、坐下來的地方；現場改案的池 ui/now.js fieldPool 同）與走廊清單都不拿那些店型，他勾的照排（總則 3）＋那站一條提示 person-avoid（hint，不罰；personAvoidWarnings）；
+ *   avoidCategories 翻不出店型的記整趟警告 person-avoid-unknown
  */
-export function planTrip({ trip, pois, rules, settings, country, kb, legFn, restPool = [], options = {} }) {
+export function planTrip({ trip, pois, rules, settings, country, kb, legFn, restPool = [], brief = null, options = {} }) {
   const out = []; const warnings = [];
   let prevTheme = null; let prevType = null;
   const onlyDates = Array.isArray(options.onlyDates) ? new Set(options.onlyDates) : null;
+  const persons = personsOf(trip, brief, warnings, cityNamesOf(kb));   // 同行者（T19）：旅程檔 persons → 對得上的需求單（城市也對打包檔的 kb.city）→ 從 party 合成
   // 引擎不插的站：任何一天勾了的（含主行程；他勾的站由 picks 走）、任何一天按過「不去了」的（他拿掉的勾選站、拒絕過的引擎插站）（pickedOrRemoved）、
   // 前幾天已經插過的（同一家店不在兩天都被插）、走廊清單按過「我進去了」之後的日子（options.visited: { [poiId]: 'YYYY-MM-DD' }，裝置端 field.visited；
   // 原話 #138 去過的不再出現；進去那天本身照舊——visitedBefore）
@@ -116,15 +125,21 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
     if (d.type === 'fixed' && !candidates.some((c) => c.fixedWindow)) warnings.push({ code: 'fixed-day-no-window', date: d.date, msg: `${d.date} 標了固定時段日，但沒有一站帶固定時段（picks[].fixedWindow），會場會照營業時間當普通站排` });
     const win = dayWindow(d, index, settings, d.type === 'arrival' || d.type === 'departure' ? airportTransitMin({ legFn, home, settings }) : 0);
     for (const w of win.warnings) warnings.push({ ...w, date: d.date, msg: `${d.date} ${w.msg}` });
+    // 那天在場的人與合併後的調整（T19）：party＝在場人數（有 dates 的只算那幾天；倍率那條照舊 ≥2 就 partyWalkFactor）；人之間取最鬆（原話 #144）
+    const present = presentOn(persons, d.date);
+    const adjust = mergeAdjustments(present);
     const day = {
-      date: d.date, type: d.type ?? 'normal', earlyDay: Boolean(d.earlyDay), dayTrip: Boolean(d.dayTrip), party: trip.party ?? 1,
+      date: d.date, type: d.type ?? 'normal', earlyDay: Boolean(d.earlyDay), dayTrip: Boolean(d.dayTrip), party: present.length,
+      persons: present, adjust,
       dayTripNext: prevType === 'daytrip' || Boolean(trip.days[index - 1]?.dayTrip),
       themeCategory, prevThemeCategory: prevTheme,
       anchorPoiId: anchorPoi?.id ?? null, anchorName: anchorPoi?.name_zh ?? d.anchor?.theme ?? null,
       designated: d.designated ?? [], regionZones: regionZonesOf({ home, candidates, anchorPoi }), homeZoneId: home?.zoneId ?? null,
       window: { startMin: win.startMin, endMin: win.endMin }, windowRaw: win.raw, openSlotMin: win.openSlotMin,
       openSlotSkipped: win.warnings.some((w) => w.code === 'open-slot-skipped'),
-      nightSlotOff: Boolean(d.nightSlotOff) || Boolean(trip.days[index + 1]?.earlyDay),
+      // 夜間站：早起日前一晚、旅程檔手標、在場有人「不排」（adjust.nightSlot none）都不排；「少排」（less）那天 night-slot 的罰分減半（推導）
+      nightSlotOff: Boolean(d.nightSlotOff) || Boolean(trip.days[index + 1]?.earlyDay) || adjust.nightSlot === 'none',
+      nightSlotLess: adjust.nightSlot === 'less',
       // 購物日（原話 #36、#55；DESIGN §1.5）：規則 shopping-day 讀；非購物日 false／null
       shoppingDay: shopping.has(d.date), shoppingFromMin: shopping.get(d.date)?.fromMin ?? null,
     };
@@ -142,9 +157,9 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
     // （別天照舊可以——原話 #138 沒選的可以再出現；推導，T16；choices.js swappedAwayFrom）
     const exclude = new Set([...pickedOrRemovedAnywhere, ...insertedSoFar, ...visitedBefore(options.visited, d.date), ...swappedAwayFrom(trip, d.date)]);
     // 坐下來的地方（spot：海邊、公園、展望台）每天都進第一趟候選（optional、價值 0、最多 settings.spotPoolMax 家）：它的用處是把等固定時段的時間坐掉，
-    // 第二趟才加會看不到（第一趟為了少等會跑去別區再回來）；拒絕過恢復站的那天不加（原話 #172 採的做法；10-16）
+    // 第二趟才加會看不到（第一趟為了少等會跑去別區再回來）；拒絕過恢復站的那天不加（原話 #172 採的做法；10-16）；在場的人不想去的店型不拿（T19）
     const spots = rejected.has('rest') ? [] : restPool
-      .filter((p) => p && p.category === 'spot' && engineMayInsert(p) && (day.regionZones ?? []).includes(p.zoneId) && !exclude.has(p.id))
+      .filter((p) => p && p.category === 'spot' && engineMayInsert(p) && (day.regionZones ?? []).includes(p.zoneId) && !exclude.has(p.id) && !personAvoids(day.adjust, p))
       .slice(0, settings.spotPoolMax ?? 2)
       .map((p) => ({ poi: p, priority: 'rest', optional: true, insertedBy: 'engine', dwellMin: p.dwellMin ?? 30 }));
     let plan = planDay({ candidates: [...candidates, ...spots], day, home, legFn, rules, settings, country, kb, options });
@@ -165,6 +180,9 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
     for (const c of candidates) {
       if (c.deferredFrom && plan.dropped.some((x) => x.poi.id === c.poi.id)) warnings.push({ code: 'deferred-dropped', date: d.date, poiId: c.poi.id, msg: `${c.poi.name_zh ?? c.poi.id} 從 ${monthDay(c.deferredFrom)} 順延到這天，但這天排不進了` });
     }
+    // 他勾的站是在場的人不想去的店型（T19）：照排，那站多一條提示 person-avoid（hint、不罰、不進規則檔——跟 leg-suggest 同一種後處理）
+    const avoidHints = personAvoidWarnings(plan.sequence, adjust);
+    if (avoidHints.length) plan = { ...plan, warnings: [...(plan.warnings ?? []), ...avoidHints] };
     out.push({ date: d.date, day, plan });
     prevTheme = themeCategory; prevType = d.dayTrip ? 'daytrip' : (d.type ?? 'normal');
   });
@@ -252,8 +270,8 @@ export function insertOnTheWay({ plan, onway = [], day, home, legFn, rules, sett
 export function onTheWayCandidates({ restPool = [], day, exclude = new Set(), home = null, plan, legFn, settings = {} }) {
   if (!restPool.length || !plan?.sequence?.length) return [];
   const maxDetour = settings.onTheWayDetourMin ?? 8;
-  // 順路站是「值得逛」的店，不拿恢復站（咖啡廳、餐廳、酒吧由恢復站與填站的邏輯管）
-  const pool = restPool.filter((p) => engineMayInsert(p) && !NO_FILL_CATEGORIES.has(p.category) && !SHOPPING_CATEGORIES.includes(p.category) && p.recovery !== true && p.hours && (day.regionZones ?? []).includes(p.zoneId) && !exclude.has(p.id));
+  // 順路站是「值得逛」的店，不拿恢復站（咖啡廳、餐廳、酒吧由恢復站與填站的邏輯管）；在場的人不想去的店型不拿（T19）
+  const pool = restPool.filter((p) => engineMayInsert(p) && !NO_FILL_CATEGORIES.has(p.category) && !SHOPPING_CATEGORIES.includes(p.category) && p.recovery !== true && p.hours && (day.regionZones ?? []).includes(p.zoneId) && !exclude.has(p.id) && !personAvoids(day.adjust, p));
   if (!pool.length) return [];
   const walkOnly = (leg) => leg && (leg.rideMin ?? 0) === 0 ? (leg.walkMin ?? 0) : null;
   const stops = [home, ...plan.sequence.map((s) => s.poi)].filter(Boolean);
@@ -294,7 +312,8 @@ export function corridorFor({ plan, home = null, pool = [], legFn, settings = {}
   const radius = settings.corridorListRadiusM ?? 100;
   const maxPerLeg = settings.corridorListMaxPerLeg ?? 5;
   const inSeq = new Set(seq.map((s) => s.poi.id));
-  const cands = pool.filter((p) => p && hasCoords(p) && corridorEligible(p) && !NO_FILL_CATEGORIES.has(p.category) && p.category !== 'spot' && (day?.regionZones ?? []).includes(p.zoneId) && !inSeq.has(p.id) && !exclude.has(p.id));
+  // 在場的人不想去的店型（day.adjust.avoidCategories，T19）也不列：清單是給他決定要不要進去的，但同行者已經說了不去
+  const cands = pool.filter((p) => p && hasCoords(p) && corridorEligible(p) && !NO_FILL_CATEGORIES.has(p.category) && p.category !== 'spot' && (day?.regionZones ?? []).includes(p.zoneId) && !inSeq.has(p.id) && !exclude.has(p.id) && !personAvoids(day?.adjust, p));
   if (!cands.length) return [];
   const best = new Map();   // poiId → 離它最近、經過時有開的那段
   for (let i = 0; i < seq.length; i++) {
@@ -397,8 +416,8 @@ export function restCandidates({ restPool = [], candidates = [], day, exclude = 
   const center = centroidOf(candidates.map((c) => c.poi)) ?? (hasCoords(home) ? { lat: home.lat, lng: home.lng } : null);
   const distance = (p) => (center && hasCoords(p) ? haversineM(center, p) : Infinity);
   return restPool
-    // 錢湯／日歸溫泉要準備（毛巾、換洗，profile §5.9），引擎不自己插；他勾了才會在 picks 裡
-    .filter((p) => engineMayInsert(p) && p.recovery === true && p.category !== 'onsen' && (day.regionZones ?? []).includes(p.zoneId) && !exclude.has(p.id))
+    // 錢湯／日歸溫泉要準備（毛巾、換洗，profile §5.9），引擎不自己插；他勾了才會在 picks 裡；在場的人不想去的店型不拿（T19）
+    .filter((p) => engineMayInsert(p) && p.recovery === true && p.category !== 'onsen' && (day.regionZones ?? []).includes(p.zoneId) && !exclude.has(p.id) && !personAvoids(day.adjust, p))
     .map((p) => ({ p, d: distance(p) }))
     .sort((a, b) => (a.d === b.d ? 0 : a.d < b.d ? -1 : 1))
     .slice(0, settings.restPoolMax ?? 6)
@@ -421,7 +440,7 @@ export function restCandidates({ restPool = [], candidates = [], day, exclude = 
  */
 export function fillCandidates({ restPool = [], candidates = [], day, exclude = new Set(), home = null, plan, settings = {}, legFn = null }) {
   if (!restPool.length || !plan?.sequence?.length) return [];
-  const pool = restPool.filter((p) => engineMayInsert(p) && !NO_FILL_CATEGORIES.has(p.category) && (day.regionZones ?? []).includes(p.zoneId) && !exclude.has(p.id));
+  const pool = restPool.filter((p) => engineMayInsert(p) && !NO_FILL_CATEGORIES.has(p.category) && (day.regionZones ?? []).includes(p.zoneId) && !exclude.has(p.id) && !personAvoids(day.adjust, p));   // 在場的人不想去的店型不拿（T19）
   const out = new Map();
   const minGap = settings.fillMinGapMin ?? 15;
   // 一段空檔 → 離它最近、開始時有開的幾家店；同一家店靠近兩段空檔時歸離它比較近的那段（城裡的店不該綁在松島那段空檔裡，T24）
