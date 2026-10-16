@@ -34,7 +34,8 @@ function missing(ctx) {
     const a = hmToMin(from); const b = hmToMin(to);
     if (win && overlapMin(win.startMin, win.endMin, a, b) <= 0) continue;
     if (pinned.some((s) => s.startMin <= a && s.endMin >= (a + b) / 2)) continue;
-    const hit = ctx.sequence.some((s) => !s.insertedBy && s.poi.recovery && EATING.has(s.poi.category) && overlapMin(s.startMin, s.endMin, a, b) > 0);
+    // 知識庫標 meal: true 的站（祭典的縁日攤位）也算那一餐（原話 #172 採的做法：縁日攤位算晚餐；10-16）
+    const hit = ctx.sequence.some((s) => !s.insertedBy && ((s.poi.recovery && EATING.has(s.poi.category)) || s.poi.meal === true) && overlapMin(s.startMin, s.endMin, a, b) > 0);
     if (!hit) out.push(slot);
   }
   return out;

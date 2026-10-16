@@ -1,4 +1,11 @@
 {
-  "_說明": "白天站：沒有營業時段（hours 是 null）又是這些店型的站，推成只能白天去（daylightOnly），由 rules/daylight.js 擋在「日出+30 到日落−30」之外（原話 #159「這類型的限制在白天就好了 晚上黑漆漆的 要怎麼參觀」）。境內自由參拜的神社寺院、靈廟、庭園、一日遊的戶外景點都算；有時段的站交給 hours 規則、不在這裡。知識庫明寫 daylightOnly（含 false）優先於推導。",
-  "categories": ["shrine", "temple", "mausoleum", "garden", "daytrip"]
+  "_說明": "白天站：沒有營業時段（hours 是 null）又是這些店型的站，推成只能白天去（daylightOnly），由 rules/daylight.js 擋在「日出+30 到日落−30」之外（原話 #159「這類型的限制在白天就好了 晚上黑漆漆的 要怎麼參觀」）。境內自由參拜的神社寺院、靈廟、庭園、一日遊的戶外景點都算；有時段的站交給 hours 規則、不在這裡。知識庫明寫 daylightOnly（含 false）優先於推導。 spot（海邊、公園、展望台）沒時段就只能白天去（10-16）。",
+  "categories": [
+    "shrine",
+    "temple",
+    "mausoleum",
+    "garden",
+    "daytrip",
+    "spot"
+  ]
 }

@@ -4,17 +4,21 @@
 // 對 planDay 排出的序列算，結果要跟 planDay 一模一樣（test/engine/sequence.test.js 拿示範與試走包對）。
 import { evaluateStop, evaluateDay } from './evaluate.js';
 import { emptyAcc } from './dims.js';
-import { candidateValue, legBetween, dedupeWarnings } from './core.js';
+import { candidateValue, legBetween, dedupeWarnings, absorbIntoSpot, spotLatestEnd } from './core.js';
 import { placeStop } from './schedule.js';
 
-/** 整條序列從頭重定時刻（插站、換位後用）：照 core.js 的 placeStop 鏈，時刻重算、其他欄位照舊。 */
-export function retimeSequence({ sequence, day, home, legFn }) {
+/** 整條序列從頭重定時刻（插站、換位後用）：照 core.js 的 placeStop 鏈，時刻重算、其他欄位照舊。
+ *  坐下來的地方（spot）先回到它原本的停留（扣掉上次併進去的 flexedMin）再重算，下一站要等時再併一次（absorbIntoSpot），重定幾次都不會越坐越久。 */
+export function retimeSequence({ sequence, day, home, legFn, settings = {}, country = null, kb = null }) {
   const out = [];
   for (const stop of sequence) {
     const prev = out.length ? out[out.length - 1] : null;
     const leg = legBetween(legFn, out, home, stop.poi);
-    const placed = placeStop({ prevEndMin: prev ? prev.endMin : day.window.startMin, leg, poi: stop.poi, dwellMin: stop.dwellMin, date: day.date, fixedWindow: stop.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev && !day.resumed });
-    out.push({ ...stop, ...placed });
+    const dwellMin = stop.dwellMin - (stop.flexedMin ?? 0);
+    const placed0 = placeStop({ prevEndMin: prev ? prev.endMin : day.window.startMin, leg, poi: stop.poi, dwellMin, date: day.date, fixedWindow: stop.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev && !day.resumed });
+    const flex = absorbIntoSpot(prev, placed0, settings, prev?.poi?.category === 'spot' ? spotLatestEnd({ poi: prev.poi, startMin: prev.startMin, day, settings, country, kb }) : Infinity);
+    if (flex.prev !== prev) out[out.length - 1] = flex.prev;
+    out.push({ ...stop, dwellMin, flexedMin: 0, ...flex.placed });
   }
   return out;
 }

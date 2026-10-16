@@ -120,12 +120,18 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
     // 先照他勾的排；走路連跑破表（插恢復站）或等開門超過留白（填空檔）才把那種站加進候選重排一次，有比較好才採用。
     // 不每天都加：價值 0 的候選不受上界剪枝，試走包的 8/15 一加就從 276 節點變 6 萬節點、撞 800 ms 預算（2026-10-11 實測），結果還一樣。
     // 他拒絕過哪一種（原話 #126；profile §2.4「當天不再重插，連跑警告降成提示」）那天就不插那一種、它的觸發警告標 hint，畫面用提示樣式。
-    let plan = planDay({ candidates, day, home, legFn, rules, settings, country, kb, options });
     const rejected = rejectedKinds(d.removed);
     const exclude = new Set([...pickedAnywhere, ...removedAnywhere, ...insertedSoFar]);
+    // 坐下來的地方（spot：海邊、公園、展望台）每天都進第一趟候選（optional、價值 0、最多 settings.spotPoolMax 家）：它的用處是把等固定時段的時間坐掉，
+    // 第二趟才加會看不到（第一趟為了少等會跑去別區再回來）；拒絕過恢復站的那天不加（原話 #172 採的做法；10-16）
+    const spots = rejected.has('rest') ? [] : restPool
+      .filter((p) => p && p.category === 'spot' && engineMayInsert(p) && (day.regionZones ?? []).includes(p.zoneId) && !exclude.has(p.id))
+      .slice(0, settings.spotPoolMax ?? 2)
+      .map((p) => ({ poi: p, priority: 'rest', optional: true, insertedBy: 'engine', dwellMin: p.dwellMin ?? 30 }));
+    let plan = planDay({ candidates: [...candidates, ...spots], day, home, legFn, rules, settings, country, kb, options });
     const extra = extraCandidates({ restPool, candidates, day, exclude, home, plan, settings, rejected, legFn });
     if (extra.length) {
-      const withExtra = planDay({ candidates: [...candidates, ...extra], day, home, legFn, rules, settings, country, kb, options });
+      const withExtra = planDay({ candidates: [...candidates, ...spots, ...extra], day, home, legFn, rules, settings, country, kb, options });
       if ((withExtra.complete && !plan.complete) || (withExtra.complete === plan.complete && withExtra.score > plan.score)) plan = withExtra;
     }
     // 順路站（原話 #170）：不進 DFS（價值 30 的候選會把節點吃爆，試走包兩天都撞 800 ms），改成貪婪插入——
@@ -181,7 +187,7 @@ export function insertOnTheWay({ plan, onway = [], day, home, legFn, rules, sett
     let bestTrial = null;
     for (let i = 0; i < seq.length; i++) {
       if (!onWayAt(i)) continue;
-      const trial = retimeSequence({ sequence: [...seq.slice(0, i), stop, ...seq.slice(i)], day, home, legFn });
+      const trial = retimeSequence({ sequence: [...seq.slice(0, i), stop, ...seq.slice(i)], day, home, legFn, settings, country, kb });
       // 順路站自己不等開門，也不能害後面的站等：插在 11:00 才開的第一站前面，等於把「太晚出門」換成「在門口等 81 分」，
       // 分數上差不多、人卻站在門口（10-13 七天實驗 8/13）。填站同一條（原話 #164）。
       if ((trial[i].waitMin ?? 0) > 0 || waitSum(trial) > waitSum(seq)) continue;

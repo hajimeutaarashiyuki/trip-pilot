@@ -1,4 +1,4 @@
-exports[`仙台 151 筆全部通過 normalize，分佈進 snapshot 1`] = `
+exports[`仙台 152 筆全部通過 normalize，分佈進 snapshot 1`] = `
 {
   "stats": {
     "byCategory": {
@@ -23,14 +23,15 @@ exports[`仙台 151 筆全部通過 normalize，分佈進 snapshot 1`] = `
       "logistics": 10,
       "event": 10,
       "vintage": 14,
-      "venue": 1
+      "venue": 1,
+      "spot": 1
     },
     "byWalkFactor": {
-      "0": 105,
+      "0": 106,
       "1": 6,
       "0.5": 40
     },
-    "recovery": 44,
+    "recovery": 45,
     "cafeLike": 12
   },
   "unknown": []

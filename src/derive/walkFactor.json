@@ -28,9 +28,14 @@
     "outlet": 1,
     "street": 1,
     "venue": 0,
-    "other": 0.5
+    "other": 0.5,
+    "spot": 0
   },
-  "walkAround": ["department", "electronics", "outlet"],
+  "walkAround": [
+    "department",
+    "electronics",
+    "outlet"
+  ],
   "_待確認": "商店街、市場、縁日押 0.5 他答「可以」（#111）；書店歸 store 但他說書店是慢慢逛（#117）→ 研究標 category=bookstore 時走 0.5",
   "bookstoreFactor": 0.5
 }

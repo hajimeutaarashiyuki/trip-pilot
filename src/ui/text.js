@@ -34,6 +34,7 @@ export const TEXT = {
   restInserted: '引擎插的恢復站，不要就按『不去了』',
   fillerInserted: '引擎排進來填空檔的站，不要就按『不去了』',
   onTheWayInserted: '順路，引擎排進來的，不要就按『不去了』',
+  spotInserted: (hm) => `坐下來的地方，引擎排的；坐到 ${hm} 再去下一站，不要就按『不去了』`,
   undoRemoved: (name, day) => `已把 ${name} 從 ${day} 拿掉`,
   undo: '復原',
   appliedLine: '現場改過',
@@ -81,6 +82,7 @@ export const TEXT = {
   restInsertedNow: '引擎插的恢復站，不想休息可以略過',
   fillerInsertedNow: '引擎排進來填空檔的站，不想去可以略過',
   onTheWayInsertedNow: '順路排進來的，不想去可以略過',
+  spotInsertedNow: (hm) => `坐下來的地方，坐到 ${hm} 再走；不想坐可以略過`,
   openMaps: 'Google Maps 路線',
 
   // 設定
@@ -114,7 +116,7 @@ export const TEXT = {
 export const CATEGORY = {
   shrine: '神社', temple: '寺院', mausoleum: '靈廟', museum: '博物館', garden: '庭園', arcade: '商店街', market: '市場', event: '活動', experience: '體驗', daytrip: '一日遊',
   vintage: '古著店', record: '唱片行', store: '店', bookstore: '書店', drugstore: '藥妝', gift: '伴手禮', department: '百貨', electronics: '電器', outlet: 'Outlet', street: '街區',
-  food: '吃的', cafe: '咖啡廳', bar: '酒吧', brewery: '酒藏', onsen: '溫泉', cruise: '遊覽船', logistics: '交通', venue: '會場', other: '其他',
+  food: '吃的', cafe: '咖啡廳', bar: '酒吧', brewery: '酒藏', onsen: '溫泉', cruise: '遊覽船', logistics: '交通', venue: '會場', spot: '坐下來的地方', other: '其他',
 };
 
 export const PRIORITY = { must: '必去', want: '想去', maybe: '可去' };

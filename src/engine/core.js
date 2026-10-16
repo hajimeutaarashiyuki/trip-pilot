@@ -7,6 +7,8 @@ import { evaluateStop, evaluateDay } from './evaluate.js';
 import { SAME_TYPE_CATEGORIES, SHOP_CATEGORIES } from '../rules/_helpers.js';   // 只借店型清單寫落選理由，不是規則邏輯
 import { emptyAcc } from './dims.js';
 import { placeStop } from './schedule.js';
+import { openIntervals } from './time.js';
+import { daylightWindow } from '../geo/sun.js';
 import { warnText } from '../rules/index.js';
 
 // rest＝引擎插的恢復站（trip.js restCandidates）、filler＝引擎填等開門空檔的任何站（trip.js fillCandidates，原話 #161）：
@@ -24,6 +26,37 @@ export function candidateValue(c, settings = {}) {
   const rating = c.poi?.my?.rating;
   const bonus = rating === 6 ? 60 : rating === 5 ? 30 : 0;
   return base + bonus;
+}
+
+/**
+ * 坐下來的地方（category spot：海邊、公園、展望台）可以坐多久都行：下一站要等（等開門、固定時段的卡位時刻）時，等的分鐘併進上一站的停留，
+ * 最多 settings.spotFlexMaxMin（預設 120）——人在海邊多坐一下，不是站在門口等（原話 #172 採 10-14 驗收報告 Q2 的提案；10-16）。
+ * 回 { prev: 調整後的上一站（停留加長、flexedMin 記併進去的分鐘）, placed: 調整後的時刻（arriveMin 延後、waitMin 減掉）}；不適用就原樣回。
+ */
+export function absorbIntoSpot(prev, placed, settings = {}, maxEndMin = Infinity) {
+  if (!prev || prev.poi?.category !== 'spot' || prev.fixedWindow || !(placed.waitMin > 0)) return { prev, placed };
+  // 坐到幾點為止：日落前（白天站）、它的關門時刻、當天收工，取最早的（spotLatestEnd）；不然坐到天黑、評分器一重算就撞 daylight
+  const absorb = Math.min(placed.waitMin, settings.spotFlexMaxMin ?? 120, Number.isFinite(maxEndMin) ? maxEndMin - prev.endMin : Infinity);
+  if (!(absorb > 0)) return { prev, placed };
+  const flexedPrev = { ...prev, endMin: prev.endMin + absorb, dwellMin: prev.dwellMin + absorb, flexedMin: (prev.flexedMin ?? 0) + absorb };
+  return { prev: flexedPrev, placed: { ...placed, arriveMin: placed.arriveMin + absorb, waitMin: placed.waitMin - absorb } };
+}
+
+/** 坐下來的地方最晚坐到幾點：白天站＝日落−margin（位置照 daylight 規則：站的座標 → 區中心）、有時段＝所在區間的關門、再跟當天收工取最早；算不出的回 Infinity。 */
+export function spotLatestEnd({ poi, startMin, day, settings = {}, country = null, kb = null }) {
+  let latest = day?.window?.endMin ?? Infinity;
+  const intervals = openIntervals(poi, day?.date);
+  if (intervals && intervals.length) {
+    const cur = intervals.find(([o, c]) => startMin >= o && startMin < c);
+    if (cur) latest = Math.min(latest, cur[1]);
+  }
+  if (poi?.daylightOnly === true && Number.isFinite(country?.utcOffsetMin)) {
+    const zone = poi.zoneId ? kb?.zones?.[poi.zoneId] : null;
+    const at = Number.isFinite(poi.lat) && Number.isFinite(poi.lng) ? { lat: poi.lat, lng: poi.lng } : zone && Number.isFinite(zone.lat) && Number.isFinite(zone.lng) ? { lat: zone.lat, lng: zone.lng } : null;
+    const w = at ? daylightWindow(day.date, at, settings.daylightMarginMin ?? 30, country.utcOffsetMin) : null;
+    if (w) latest = Math.min(latest, w.endMin);
+  }
+  return Number.isFinite(latest) ? Math.floor(latest) : latest;   // 日落算出來有小數，時刻取整分
 }
 
 function orderCandidates(list) {
@@ -86,9 +119,13 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
       const leg = legBetween(legFn, seq, home, c.poi);
       // first：當天第一站開門前到就改成晚點出門（schedule.js）。現場改案（day.resumed）是從當下接著排，人已經在外面，
       // 第一個剩下的站等開門是真的在門口等，照站與站之間算、讓 wait-at-door 罰——不然引擎會把第一站推到 17:00 才開的酒吧、中間空四小時（2026-10-12 試走包 8/13 12:50 實測）
-      const placed = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev && !day.resumed });
+      const placed0 = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev && !day.resumed });
+      // 上一站是坐下來的地方：等的分鐘併進它的停留（absorbIntoSpot），序列裡那一站換成加長後的
+      const flex = absorbIntoSpot(prev, placed0, settings, prev?.poi?.category === 'spot' ? spotLatestEnd({ poi: prev.poi, startMin: prev.startMin, day, settings, country, kb }) : Infinity);
+      const seqNow = flex.prev === prev ? seq : [...seq.slice(0, -1), flex.prev];
+      const placed = flex.placed;
       const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i, optional: Boolean(c.optional), insertedBy: c.insertedBy ?? null, gap: c.gap ?? null, errand: Boolean(c.errand) };
-      const ctx = { ...dayCtxBase, stop, prev, next: null, leg, acc, sequence: seq };
+      const ctx = { ...dayCtxBase, stop, prev: flex.prev, next: null, leg, acc, sequence: seqNow };
       const r = evaluateStop(ctx, rules);
       if (r.verdict === 'never') {
         nowDead.push(c._i);
@@ -98,7 +135,7 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
       if (r.verdict === 'no') continue;
       const nextRemaining = remaining.filter((o) => o._i !== c._i && !nowDead.includes(o._i));
       placedEver.add(c._i);
-      search([...seq, stop], nextRemaining, r.acc, score + c.value - r.penaltyMin, [...path, { stop, penaltyMin: r.penaltyMin, breakdown: r.breakdown, warnings: r.warnings, acc: r.acc }]);
+      search([...seqNow, stop], nextRemaining, r.acc, score + c.value - r.penaltyMin, [...path, { stop, penaltyMin: r.penaltyMin, breakdown: r.breakdown, warnings: r.warnings, acc: r.acc }]);
       if (stats.truncated) return;
     }
   }
@@ -118,16 +155,19 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
       for (const c of remaining) {
         if (c.optional && optionalPlaced >= maxOptional) continue;
         const leg = legBetween(legFn, seq, home, c.poi);
-        const placed = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev && !day.resumed });
+        const placed0 = placeStop({ prevEndMin: prevEnd, leg, poi: c.poi, dwellMin: c.dwellMin, date: day.date, fixedWindow: c.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev && !day.resumed });
+        const flex = absorbIntoSpot(prev, placed0, settings, prev?.poi?.category === 'spot' ? spotLatestEnd({ poi: prev.poi, startMin: prev.startMin, day, settings, country, kb }) : Infinity);
+        const seqNow = flex.prev === prev ? seq : [...seq.slice(0, -1), flex.prev];
+        const placed = flex.placed;
         const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i, optional: Boolean(c.optional), insertedBy: c.insertedBy ?? null, gap: c.gap ?? null, errand: Boolean(c.errand) };
-        const r = evaluateStop({ ...dayCtxBase, stop, prev, next: null, leg, acc, sequence: seq }, rules);
+        const r = evaluateStop({ ...dayCtxBase, stop, prev: flex.prev, next: null, leg, acc, sequence: seqNow }, rules);
         if (r.verdict !== 'ok') continue;
         const gain = c.value - r.penaltyMin;
-        if (!pick || gain > pick.gain || (gain === pick.gain && placed.startMin < pick.stop.startMin)) pick = { c, stop, r, gain };
+        if (!pick || gain > pick.gain || (gain === pick.gain && placed.startMin < pick.stop.startMin)) pick = { c, stop, r, gain, seqNow };
       }
       if (!pick || pick.gain <= 0) break;
       placedEver.add(pick.c._i);
-      seq = [...seq, pick.stop]; acc = pick.r.acc; score += pick.gain;
+      seq = [...pick.seqNow, pick.stop]; acc = pick.r.acc; score += pick.gain;
       path.push({ stop: pick.stop, penaltyMin: pick.r.penaltyMin, breakdown: pick.r.breakdown, warnings: pick.r.warnings, acc: pick.r.acc });
       remaining = remaining.filter((o) => o._i !== pick.c._i);
     }

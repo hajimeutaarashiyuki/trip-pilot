@@ -378,3 +378,16 @@ test('T24 錨點前的空檔倒推：等的那站前面整塊能往後挪時，�
   assert.ok(fw2.waitMin < fw.waitMin, `花火前的空等要變短：${fw.waitMin} → ${fw2.waitMin}`);
   assert.equal(withPool.plan.sequence.find((s) => s.poi.id === '城裡咖啡廳').gap.startMin, a.endMin, '填站綁在上游空檔');
 });
+
+test('坐下來的地方每天都進第一趟候選（原話 #172）：當日區域裡的 spot 排在固定時段前面把等待坐掉；拒絕過恢復站的那天不加', () => {
+  const sea = poi('海邊', { category: 'spot', walkFactor: 0, recovery: true, hours: null, dwellMin: 30, daylightOnly: false });
+  const shrine = poi('神社', { hours: { thu: [['09:00', '12:00']] } });
+  const fw = poi('花火', { category: 'event', walkFactor: 0, hours: null, dwellMin: 60, daylightOnly: false });
+  const mk = (removed = []) => ({ id: 't', party: 1, homeBases: [{ poi: home }], days: [{ date: '2026-08-13', type: 'normal', designated: ['神社', '花火'], picks: [{ poiId: '神社', priority: 'must' }, { poiId: '花火', priority: 'must', fixedWindow: { startMin: 13 * 60, arriveEarlyMin: 30 } }], removed }] });
+  const plan = planTrip({ trip: mk(), pois: { 神社: shrine, 花火: fw }, rules, settings, country, kb, legFn, restPool: [sea] }).days[0].plan;
+  assert.deepEqual(ids(plan), ['神社', '海邊', '花火'], `海邊要排在花火前：${ids(plan).join('→')}`);
+  assert.equal(plan.sequence[2].waitMin, 0);
+  assert.equal(plan.sequence[1].insertedBy, 'engine');
+  const rejected = planTrip({ trip: mk([{ poiId: '海邊', insertedBy: 'engine', priority: 'rest' }]), pois: { 神社: shrine, 花火: fw }, rules, settings, country, kb, legFn, restPool: [sea] }).days[0].plan;
+  assert.ok(!ids(rejected).includes('海邊'), '拒絕過恢復站那天不插坐下來的地方');
+});

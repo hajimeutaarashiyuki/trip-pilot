@@ -1,7 +1,7 @@
 // T4：核心搜尋。小候選集就能看出：守營業時間、never 的站進 dropped 帶理由、會避開咖啡廳連排、永遠回得出東西、節點預算。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planDay } from '../../src/engine/core.js';
+import { planDay, absorbIntoSpot, spotLatestEnd as absorbIntoSpotLatest } from '../../src/engine/core.js';
 import { placeStop } from '../../src/engine/schedule.js';
 import { loadRules } from '../../src/rules/index.js';
 import { BUILTIN } from '../../src/rules/builtin.js';
@@ -167,4 +167,36 @@ test('落選理由：主題日那一類沒有家數上限，第 5 家被逛店�
   const withLunch = [...cands, { poi: poi('午餐', { category: 'food', walkFactor: 0, recovery: true }), priority: 'must' }];
   const rl = planDay({ candidates: withLunch, day: day({ themeCategory: 'vintage' }), home, legFn: flatLeg, rules, settings, country, kb });
   assert.deepEqual(rl.dropped, []);
+});
+
+test('坐下來的地方（spot，原話 #172）：排在固定時段前面，等的時間併進它的停留（坐到卡位時刻），花火前不空等；最多 spotFlexMaxMin；重定時刻不會越坐越久', async () => {
+  const { retimeSequence } = await import('../../src/engine/sequence.js');
+  const seaside = poi('海邊', { category: 'spot', walkFactor: 0, recovery: true, hours: null, dwellMin: 30, daylightOnly: false });
+  const cands = [
+    { poi: poi('神社', { hours: { thu: [['09:00', '12:00']] } }), priority: 'want' },
+    { poi: seaside, priority: 'rest', optional: true, insertedBy: 'engine', dwellMin: 30 },
+    { poi: poi('花火', { category: 'event', walkFactor: 0, hours: null, dwellMin: 60 }), priority: 'must', fixedWindow: { startMin: 13 * 60 + 30, arriveEarlyMin: 30 } },
+  ];
+  const r = planDay({ candidates: cands, day: day(), home, legFn: flatLeg, rules, settings, country, kb });
+  const ids = r.sequence.map((s) => s.poi.id);
+  assert.deepEqual(ids, ['神社', '海邊', '花火'], ids.join('→'));
+  const sea = r.sequence[1]; const fw = r.sequence[2];
+  assert.equal(fw.waitMin, 0, '花火前不空等：時間坐在海邊');
+  assert.equal(sea.endMin + 10, fw.startMin, '海邊坐到走過去剛好卡位');
+  assert.ok(sea.flexedMin > 0 && sea.dwellMin === 30 + sea.flexedMin, `併進去的分鐘記在 flexedMin：${sea.flexedMin}`);
+  assert.ok(!r.warnings.some((w) => w.ruleId === 'wait-at-door'), '沒有等開門警告');
+  // 最多 spotFlexMaxMin：等 200 分只坐掉 120，剩下照罰
+  const a = absorbIntoSpot({ poi: seaside, endMin: 600, dwellMin: 30, fixedWindow: null }, { arriveMin: 610, startMin: 810, waitMin: 200, endMin: 870 }, { spotFlexMaxMin: 120 });
+  assert.equal(a.prev.endMin, 720); assert.equal(a.prev.flexedMin, 120); assert.equal(a.placed.waitMin, 80); assert.equal(a.placed.arriveMin, 730);
+  assert.equal(absorbIntoSpot({ poi: poi('店'), endMin: 600, dwellMin: 30 }, { arriveMin: 610, startMin: 700, waitMin: 90, endMin: 760 }, settings).placed.waitMin, 90, '不是坐下來的地方就不併');
+  // 重定時刻：併過的停留先扣掉再算，重定兩次結果一樣
+  const once = retimeSequence({ sequence: r.sequence, day: day(), home, legFn: flatLeg, settings, country, kb });
+  const twice = retimeSequence({ sequence: once, day: day(), home, legFn: flatLeg, settings, country, kb });
+  // 白天站：最晚坐到日落−30（spotLatestEnd）；位置不明或不是白天站就不設限
+  const lit = { ...seaside, daylightOnly: true, lat: 38.37, lng: 141.06 };
+  const latest = absorbIntoSpotLatest({ poi: lit, startMin: 16 * 60, day: day(), settings, country: { ...country, utcOffsetMin: 540 }, kb });
+  assert.ok(latest > 17 * 60 && latest < 19 * 60, `8/13 松島日落前 30 分應落在 17–19 點之間：${latest}`);
+  assert.equal(absorbIntoSpotLatest({ poi: seaside, startMin: 16 * 60, day: day(), settings, country, kb }), day().window.endMin, '不是白天站、沒時段：只受當天收工限制');
+  assert.deepEqual(once.map((s) => [s.startMin, s.endMin, s.waitMin, s.flexedMin ?? 0]), r.sequence.map((s) => [s.startMin, s.endMin, s.waitMin, s.flexedMin ?? 0]));
+  assert.deepEqual(twice.map((s) => [s.startMin, s.endMin, s.waitMin, s.flexedMin ?? 0]), once.map((s) => [s.startMin, s.endMin, s.waitMin, s.flexedMin ?? 0]));
 });

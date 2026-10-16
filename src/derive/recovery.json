@@ -1,6 +1,21 @@
 {
-  "_說明": "店型→恢復站（有坐下或吃喝，profile §2.4 恢復）與咖啡廳類（坐下型態是喝咖啡，含書店咖啡、有座位的咖啡豆店；#113、#143）。",
-  "recovery": ["food", "cafe", "bar", "brewery", "onsen", "cruise"],
-  "cafeLike": ["cafe"],
-  "prepNeeded": { "onsen": ["毛巾", "換洗衣物"] }
+  "_說明": "店型→恢復站（有坐下或吃喝，profile §2.4 恢復）與咖啡廳類（坐下型態是喝咖啡，含書店咖啡、有座位的咖啡豆店；#113、#143）。 spot（海邊、公園這種坐下來的地方）也算恢復站（原話 #172，10-16）。",
+  "recovery": [
+    "food",
+    "cafe",
+    "bar",
+    "brewery",
+    "onsen",
+    "cruise",
+    "spot"
+  ],
+  "cafeLike": [
+    "cafe"
+  ],
+  "prepNeeded": {
+    "onsen": [
+      "毛巾",
+      "換洗衣物"
+    ]
+  }
 }

@@ -70,7 +70,7 @@ export function renderNow({ state, actions }) {
     el('h2', { text: next.poi.name_zh }),
     el('p', { class: 'big-line', text: `${legText}${ends != null ? `　${TEXT.endsAt(hm(ends))}` : closes != null ? `　${TEXT.closesAt(hm(closes))}` : dark != null ? `　${TEXT.darkBefore(hm(dark))}` : ''}` }),
     el('p', { class: 'muted small', text: `${hm(next.startMin)} 到，待 ${next.dwellMin} 分` }),
-    next.insertedBy === 'engine' ? el('p', { class: 'muted small', text: next.priority === 'filler' ? TEXT.fillerInsertedNow : next.priority === 'onway' ? TEXT.onTheWayInsertedNow : TEXT.restInsertedNow }) : null,
+    next.insertedBy === 'engine' ? el('p', { class: 'muted small', text: next.poi.category === 'spot' ? TEXT.spotInsertedNow(hm(next.endMin)) : next.priority === 'filler' ? TEXT.fillerInsertedNow : next.priority === 'onway' ? TEXT.onTheWayInsertedNow : TEXT.restInsertedNow }) : null,
     // 路線深連結：不帶 origin（Google Maps 用現在位置），搭車段 transit、其餘 walking（原話 #157）
     // 引擎插的站多一顆「略過這站」：記成略過（跟略過評分同形，補評卡不問）、進度前進、不彈評分；一般站沒有（跳過一般站走「我現在在這站」）
     el('div', { class: 'actions' }, [

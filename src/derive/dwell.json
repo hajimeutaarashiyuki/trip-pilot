@@ -29,6 +29,7 @@
     "outlet": 120,
     "street": 30,
     "venue": 60,
-    "other": 60
+    "other": 60,
+    "spot": 30
   }
 }

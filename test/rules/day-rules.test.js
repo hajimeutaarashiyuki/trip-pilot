@@ -41,6 +41,9 @@ test('meal-slots：午晚餐各缺一個罰 20；night-slot：normal 日 20:00 �
   assert.equal(run('meal-slots', ctx(null, { sequence: [night], day: { type: 'arrival', windowRaw: { startMin: 17 * 60, endMin: 1440 } } })), 0, '抵達日 17:00 才開始：午餐不在時窗內不罰，bar 18:45 起算晚餐');
   assert.equal(run('meal-slots', ctx(null, { sequence: [lunch], day: { type: 'departure', windowRaw: { startMin: 540, endMin: 13 * 60 } } })), 0, '離境日 13:00 收工：晚餐不在時窗內不罰');
   assert.equal(run('meal-slots', ctx(null, { sequence: [], day: { windowRaw: { startMin: 540, endMin: 1440 } } })), 40, '整天都在時窗內、兩餐都沒排罰 40');
+  const ennichi = stop('縁日廣場', { category: 'event', walkFactor: 0.5, recovery: false, startMin: 17 * 60, dwellMin: 90, meal: true });
+  ennichi.poi.meal = true;
+  assert.equal(run('meal-slots', ctx(null, { sequence: [lunch, ennichi] })), 0, '知識庫標 meal 的縁日攤位算晚餐（原話 #172）');
   assert.equal(run('night-slot', ctx(null, { sequence: [lunch, night] })), 0, '18:45–20:15 跨到 20:00 算有');
   assert.equal(run('night-slot', ctx(null, { sequence: [lunch, dinner] })), 10);
   assert.equal(run('night-slot', ctx(null, { sequence: [lunch, late] })), 0);

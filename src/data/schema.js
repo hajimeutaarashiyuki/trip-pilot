@@ -13,7 +13,7 @@ export const DERIVE = { category: categoryTable, walk: walkTable, recovery: reco
 export const CATEGORIES = Object.freeze([
   'shrine', 'temple', 'mausoleum', 'museum', 'garden', 'arcade', 'market', 'event', 'experience', 'daytrip',
   'vintage', 'record', 'store', 'bookstore', 'drugstore', 'gift', 'department', 'electronics', 'outlet', 'street',
-  'food', 'cafe', 'bar', 'brewery', 'onsen', 'cruise', 'logistics', 'venue', 'other',   // venue＝固定時段的會場（研討會、演唱會），10-14 T23
+  'food', 'cafe', 'bar', 'brewery', 'onsen', 'cruise', 'logistics', 'venue', 'spot', 'other',   // venue＝固定時段的會場（研討會、演唱會），10-14 T23；spot＝沒有店名只有地點的「坐下來」（海邊、公園、展望台），10-16 原話 #172
 ]);
 
 /** 自由文字的 category → 規範店型。回傳 { key, matched } ；沒命中 key='other'、matched=null。 */
