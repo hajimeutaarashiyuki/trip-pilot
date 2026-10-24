@@ -15,7 +15,7 @@ import { nightWalkCapMin, taxRefundBufferMin } from '../data/country.js';   // �
  * 引擎插站的觸發：照他勾的排完後出現這些規則的警告才跑第二趟。
  * walk-run：DESIGN §1.3「走路連跑要破 150 才由引擎插恢復站」→ restCandidates（只拿恢復站，priority 'rest'）；
  * wait-at-door：等開門空檔填站，任何站都可以（原話 #161）→ fillCandidates（那段空檔內有開、離空檔最近的任何站型，priority 'filler'，綁在空檔內）。
- * 恢復站與填站一天合計最多插 settings.restInsertMaxPerDay 家（core.js maxOptional）。
+ * 恢復站、填站、順路站一天合計最多插 settings.restInsertMaxPerDay 家（core.js maxOptional 以 optional 數上限）。
  */
 export const REST_TRIGGER_RULES = new Set(['walk-run', 'wait-at-door', 'late-departure']);
 /** 觸發規則 → 它插的站的種類；拒絕過哪一種就不再插那一種、那條警告降成提示 */
@@ -230,7 +230,7 @@ export function extraCandidates({ restPool = [], candidates = [], day, exclude =
 
 /**
  * 把順路站貪婪插進排好的序列：候選依繞路分鐘排序，每家試每個位置（整條重定時刻、重算整天分數），
- * 分數變好、沒有站撞硬規則才收；一天的引擎插站（含恢復站、填站）合計不超過 settings.restInsertMaxPerDay。
+ * 分數變好、沒有站撞硬規則才收；一天的引擎插站（恢復站、填站、順路站三種）合計不超過 settings.restInsertMaxPerDay。
  */
 export function insertOnTheWay({ plan, onway = [], day, home, legFn, rules, settings, country, kb }) {
   if (!onway.length || !plan?.sequence) return plan;

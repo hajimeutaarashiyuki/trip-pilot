@@ -82,7 +82,7 @@ function orderCandidates(list) {
 export function planDay({ candidates, day, home, legFn, rules, settings, country, kb, options = {} }) {
   const maxNodes = options.maxNodes ?? 200000;
   const maxMs = options.maxMs ?? 800;
-  const maxOptional = settings.restInsertMaxPerDay ?? 2;   // 一天最多排幾個 optional（引擎插的恢復站與填站；rules.json settings.restInsertMaxPerDay）：價值 0 的站不受上界剪枝，不設上限會把節點吃光
+  const maxOptional = settings.restInsertMaxPerDay ?? 2;   // 一天最多排幾個 optional（引擎插的恢復站、填站、順路站三種合計；rules.json settings.restInsertMaxPerDay）：價值 0 的站不受上界剪枝，不設上限會把節點吃光
   const explain = Boolean(options.explain);
   const started = Date.now();
   const cands = orderCandidates(candidates.map((c, i) => ({ ...c, _i: i, value: candidateValue(c, settings), dwellMin: c.dwellMin ?? c.poi.dwellMin ?? settings.defaultDwellMin ?? 60 })));
