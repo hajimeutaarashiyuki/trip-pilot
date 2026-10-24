@@ -275,7 +275,7 @@ export function insertOnTheWay({ plan, onway = [], day, home, legFn, rules, sett
  * 原話 #170 舉的是「值得逛的古著店」、#20「順路的探店」、#82「經過古著店之類的服裝店或是店家的逛街行程」；「為了買而去」的店只走購物日（#36、#55）或順路購買（#29），
  * 10-13 七天實驗引擎把藥妝店、百貨當順路站塞了五次）、營業時間要有（不知道開不開的不插）；
  * 依繞路分鐘取最近 settings.onTheWayPoolMax（預設 4）家；價值 PRIORITY_VALUE.onway（預設 30，低於 maybe 的 45）、optional、insertedBy engine，
- * 同類上限、站數、逛店連跑等規則照管，他不要就按「不去了」（記 priority 'onway'，那天不再插順路站）。
+ * 站數、逛店連跑等規則照管；非主題日同類 ≤2 不管順路站（他 10-24 定：#170 順路站直接排先於 #123；rules/same-type-day.js、dim-cat-count.js），他不要就按「不去了」（記 priority 'onway'，那天不再插順路站）。
  */
 export function onTheWayCandidates({ restPool = [], day, exclude = new Set(), home = null, plan, legFn, settings = {} }) {
   if (!restPool.length || !plan?.sequence?.length) return [];

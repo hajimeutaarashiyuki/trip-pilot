@@ -80,6 +80,11 @@ test('same-type-day：非主題日第三家古著 no、主題日第三家與第�
   const c = stop('Elbe', { category: 'cafe', cafeLike: true, recovery: true, walkFactor: 0 });
   assert.equal(run('same-type-day', ctx(c, { acc: { 'dim-cat-count': { cafe: 3 } } })), 'no');
   assert.match(warnOf('same-type-day', ctx(c, { acc: { 'dim-cat-count': { cafe: 3 } } })), /咖啡廳已經 2 家/);
+  // 順路站先於同類上限（原話 #170 先於 #123，他 10-24 定）：引擎插的順路站不受擋、也不數進那 2 家
+  const onway = stop('SEGA-RU', { category: 'vintage', walkFactor: 0, priority: 'onway', insertedBy: 'engine' });
+  assert.equal(run('same-type-day', ctx(onway, { acc: { 'dim-cat-count': { vintage: 3 } } })), 'ok', '非主題日已 3 家，順路站照排');
+  assert.deepEqual(run('dim-cat-count', ctx(onway, { acc: { 'dim-cat-count': { vintage: 2 } } })), { vintage: 2 }, '順路站不數');
+  assert.deepEqual(run('dim-cat-count', ctx(v, { acc: { 'dim-cat-count': { vintage: 2 } } })), { vintage: 3 }, '他勾的照數');
   const pm = stop('神社', { startMin: 14 * 60 });
   assert.equal(run('early-day', ctx(pm, { day: { earlyDay: true }, acc: { 'dim-afternoon': 2 } })), 'no');
   assert.equal(run('early-day', ctx(pm, { day: { earlyDay: true }, acc: { 'dim-afternoon': 1 } })), 'ok');
