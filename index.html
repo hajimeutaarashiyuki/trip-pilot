@@ -47,7 +47,8 @@
   .btn.primary { background: var(--accent); color: var(--accent-fg); }
   .btn.quiet { border-color: var(--line); color: var(--muted); }
   .btn.quiet.on { border-color: var(--accent); color: var(--accent); }
-  .btn.alt { display: block; width: 100%; text-align: left; margin-top: 6px; border-color: var(--line); color: var(--fg); background: var(--bg-elevated); }
+  .btn.alt { display: block; width: 100%; text-align: left; margin-top: 6px; border-color: var(--line); color: var(--fg); background: var(--bg-elevated); white-space: normal; line-height: 1.5; }
+  .btn.alt .intro { display: block; font-size: 14px; color: var(--muted); margin-top: 2px; }   /* 換一家清單每家下面一行簡介，整段不截（原話 #177）；button 裡只能放 span，用 block 換行 */
   .btn.huge { width: 100%; font-size: 20px; padding: 16px; margin: 12px 0; }
   .btn.wide { display: block; width: 100%; }
   .btn.star { padding: 10px 8px; }
@@ -56,10 +57,11 @@
   /* 復原列貼在視窗頂端：「升級成站」「不去了」的鍵在長頁深處（8/17 捲到 13,000px），列在頁首會看不到（10-16 審查） */
   .undo-bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--rest); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; margin: 8px 0 12px; font-size: 14px; }
   .undo-bar .btn { white-space: nowrap; flex: none; }
-  .undo-bar.notice { background: var(--bg-elevated); }   /* 二選一／順延後的一句（T16）：同一種 sticky 列，底色淡一階跟復原列分開 */
+  .undo-bar.notice { background: var(--bg-elevated); }   /* 不是動作的一句狀態（「旅程更新過了」「正在重排…」）：同一種 sticky 列，底色淡一階跟復原列分開；二選一／排到別天那句 10-24 起放復原列（原話 #181） */
   /* 二選一（T16）：店名下一行「或 [B]」，B 是小鍵、旁邊一句來源；排不進清單每條尾巴一顆「排到別天」 */
   .btn.sm { padding: 6px 10px; font-size: 14px; }
   .choice { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0 0 4px; }
+  .choice .intro { flex: 1 1 100%; }   /* B 的簡介自己一行（原話 #177 推導） */
   .dropped li { margin: 4px 0; }
   .dropped li .btn { margin-left: 6px; vertical-align: middle; }
   .status { margin-top: 8px; }
@@ -69,8 +71,10 @@
   .row.top { margin-bottom: 8px; }
   .row.sim { justify-content: flex-start; margin: 8px 0; flex-wrap: wrap; }
 
-  .day { margin: 18px 0 8px; }
+  /* 打開規劃頁捲到當天（原話 #175；app.js scrollToPlanDay）：捲到的那塊上面留 12px，加上瀏海、加上頂端貼著的復原列高度（--bar-h 由 app.js 量了寫在那塊上），日期才不會被蓋住 */
+  .day { margin: 18px 0 8px; scroll-margin-top: calc(12px + var(--bar-h, 0px) + env(safe-area-inset-top, 0px)); }
   .day-head { padding-bottom: 6px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+  .day > .warn-list { margin: 0 0 4px; }   /* 整天的黃字貼在日期那行下方（原話 #174），不用站卡裡那 6px 的上距 */
   .card { background: var(--bg-elevated); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin: 10px 0; }
   .card.anchor { border-color: var(--accent); }
   .card.rest { background: var(--rest); }
@@ -1478,7 +1482,8 @@
         sameTypeMaxPerDay: "#123\u3001#143",
         dayTripWalkFactor: "#160\uFF08\u8DDF\u65E9\u8D77\u65E5\u540C\u503C 0.7\uFF0C\u53D6\u6700\u56B4\uFF09",
         staminaEasyFactor: "\u9810\u8A2D\uFF0C\u4E0D\u662F\u539F\u8A71\uFF1A\u540C\u884C\u8005\u9AD4\u529B\u300C\u8F15\u9B06\u4E00\u9EDE\u300D\u7684\u6B65\u884C\u9810\u7B97\u500D\u7387\uFF0C\u8DDF\u540C\u884C\u500D\u7387 partyWalkFactor \u540C\u503C\uFF08\u63A8\u5C0E\uFF0C10-16 T19\uFF09\uFF1B\u4EBA\u4E4B\u9593\u53D6\u6700\u9B06\u662F\u539F\u8A71 #144",
-        staminaHardFactor: "\u9810\u8A2D\uFF0C\u4E0D\u662F\u539F\u8A71\uFF1A\u300C\u53EF\u4EE5\u64CD\u300D\u5728\u65E5\u578B\u500D\u7387\u53D6\u6700\u56B4\u4E4B\u5F8C\u6700\u5F8C\u4E58 1.15\uFF08\u63A8\u5C0E\uFF0C10-16 T19\uFF09"
+        staminaHardFactor: "\u9810\u8A2D\uFF0C\u4E0D\u662F\u539F\u8A71\uFF1A\u300C\u53EF\u4EE5\u64CD\u300D\u5728\u65E5\u578B\u500D\u7387\u53D6\u6700\u56B4\u4E4B\u5F8C\u6700\u5F8C\u4E58 1.15\uFF08\u63A8\u5C0E\uFF0C10-16 T19\uFF09",
+        onTheWayDetourMin: "#184\u300C\u5141\u8A31\u7E5E\u8DEF 8 \u5206\u9418 \u6211\u89BA\u5F97\u662F\u53EF\u4EE5\u7684\u300D\uFF0810-24\uFF1B\u672C\u4F86\u662F\u9810\u8A2D 8\uFF0C\u4ED6\u770B\u4E86\u8981\u6539 3 \u7684\u63D0\u6848\u5F8C\u8AAA 8 \u53EF\u4EE5\uFF0C\u5347\u683C\u6210\u539F\u8A71\uFF09"
       },
       onTheWayDetourMin: 8,
       onTheWayPoolMax: 4,
@@ -3552,7 +3557,7 @@
     const name = (p) => String(p.name_zh ?? p.id);
     return [...byLeg.keys()].sort((a, b) => a - b).map((legIndex) => ({
       legIndex,
-      pois: byLeg.get(legIndex).sort((a, b) => a.distM - b.distM || name(a.poi).localeCompare(name(b.poi))).slice(0, maxPerLeg).map(({ poi, distM, open }) => ({ poi, distM: Math.round(distM), open }))
+      pois: byLeg.get(legIndex).sort((a, b) => a.distM - b.distM || name(a.poi).localeCompare(name(b.poi), "zh-Hant-TW")).slice(0, maxPerLeg).map(({ poi, distM, open }) => ({ poi, distM: Math.round(distM), open }))
     }));
   }
   function openWhilePassing(poi, date, leaveMin, arriveMin) {
@@ -3889,7 +3894,7 @@
     { name_zh: "\u6C50\u8C37", category: "bar", zoneId: "ichibancho", duration: "90 \u5206\u9418", hours: everyDay(H(["17:00", "23:00"]), ["sun"]), highlight: "\u6587\u5316\u6A2A\u4E01\u53E3\u7684\u65E5\u672C\u9152\u5C0F\u5E97\uFF0C\u592B\u5A66\u4E8C\u4EBA\u7D93\u71DF\u3002" },
     { name_zh: "\u30C7\u30A3\u30B9\u30AF\u30CE\u30FC\u30C8", category: "record", zoneId: "honcho", duration: "60 \u5206\u9418", hours: everyDay(H(["12:00", "20:00"]), ["wed"]), highlight: "\u672C\u753A\u4E8C\u4E01\u76EE 3F\uFF0C1981 \u5E74\u8D77\u7684\u7235\u58EB\u5C08\u9580\u5531\u7247\u884C\u3002" },
     { name_zh: "\u963F\u6B66\u9688\u66F8\u623F", category: "bookstore", zoneId: "honcho", duration: "30 \u5206\u9418", hours: everyDay(H(["12:00", "19:00"]), ["mon"]), highlight: "\u672C\u753A\u7684\u820A\u66F8\u5E97\uFF0C\u6536 LP \u8CB7\u53D6\u3002" },
-    { name_zh: "\u677E\u672C\u6E05", category: "drugstore", zoneId: "station", duration: "10 \u5206\u9418", hours: everyDay(H(["08:00", "22:00"])), highlight: "\u30AF\u30EA\u30B9\u30ED\u30FC\u30C9\u7684\u85E5\u599D\uFF0C\u4EE3\u8CFC\u7528\u3002" },
+    { name_zh: "\u677E\u672C\u6E05", category: "drugstore", zoneId: "station", duration: "10 \u5206\u9418", hours: everyDay(H(["08:00", "22:00"])), highlight: "\u30AF\u30EA\u30B9\u30ED\u30FC\u30C9\u7684\u85E5\u599D\u3002" },
     { name_zh: "\u304A\u3084\u307E", category: "food", zoneId: "ichibancho", duration: "60 \u5206\u9418", hours: everyDay(H(["11:30", "13:30"], ["17:30", "22:00"]), ["sun"]), highlight: "\u4E00\u756A\u753A\u4E09\u4E01\u76EE\u7684\u70AD\u706B\u725B\u820C\uFF0C\u592B\u5A66\u52A0\u5152\u5B50\u7684\u5C0F\u5E97\u3002" },
     { name_zh: "Utah", category: "vintage", zoneId: "honcho", duration: "60 \u5206\u9418", hours: everyDay(H(["12:00", "20:00"])), highlight: "\u672C\u753A\u7684\u7F8E\u5F0F\u53E4\u8457\uFF0C\u5E97\u4E3B\u5B9A\u671F\u8D74\u7F8E\u8CB7\u4ED8\u3002" },
     { name_zh: "me", category: "vintage", zoneId: "honcho", duration: "60 \u5206\u9418", hours: everyDay(H(["12:00", "19:30"]), ["tue"]), highlight: "Utah \u8D70\u5169\u5206\u9418\u7684\u53E4\u8457\u5E97\u3002" },
@@ -4132,7 +4137,7 @@
   // src/ui/planner.js
   function renderPlanner({ state: state2, actions }) {
     const nodes = [el("h1", { text: state2.trip.name ?? TEXT.appName })];
-    if (state2.undo) nodes.push(el("div", { class: "undo-bar" }, [el("span", { text: state2.undo.kind === "upgrade" ? TEXT.undoUpgraded(state2.undo.name, dateLabel(state2.undo.date)) : TEXT.undoRemoved(state2.undo.name, dateLabel(state2.undo.date)) }), el("button", { class: "btn", type: "button", onclick: () => actions.undoLast() }, TEXT.undo)]));
+    if (state2.undo) nodes.push(el("div", { class: "undo-bar" }, [el("span", { text: undoText(state2.undo) }), el("button", { class: "btn", type: "button", onclick: () => actions.undoLast() }, TEXT.undo)]));
     if (state2.notice) nodes.push(el("div", { class: "undo-bar notice" }, [el("span", { text: state2.notice.text }), el("button", { class: "btn quiet", type: "button", onclick: () => actions.dismissNotice() }, TEXT.noticeClose)]));
     for (const d of state2.trip.days) {
       const planned = state2.plans[d.date];
@@ -4141,12 +4146,18 @@
     }
     return nodes;
   }
+  function undoText(u) {
+    if (u.kind === "choose" || u.kind === "defer") return u.text;
+    return u.kind === "upgrade" ? TEXT.undoUpgraded(u.name, dateLabel(u.date)) : TEXT.undoRemoved(u.name, dateLabel(u.date));
+  }
   function dayBlock(d, planned, state2, actions) {
     const { plan, day } = planned;
     const anchorLine = day.themeCategory ? `${TEXT.themeOf(day.themeCategory)}\uFF0C${TEXT.anchorOf(day.anchorName)}` : TEXT.anchorOf(day.anchorName);
     const dayWarnings = plan.warnings.filter((w) => !w.poiId && w.code !== "skipped-missing" && w.ruleId !== "leg-suggest");
-    const block = el("section", { class: "day" }, [
+    const block = el("section", { class: "day", "data-date": d.date }, [
       el("header", { class: "day-head" }, [el("h2", { text: dateLabel(d.date) }), el("p", { class: "muted", text: anchorLine })]),
+      // 整天的黃字畫在日期與主行程那行下方、「這天有 N 分鐘的勉強」之前（原話 #174「提醒事項 像是當天沒有午餐 應該放在日期的下方」）；之前接在所有站卡後面，要滑到底才看得到。每站自己的黃字照舊在站卡上
+      dayWarnings.length ? warnList(dayWarnings) : null,
       // 現場套過改案的那天（plan.applied）：分數是整條序列重算的（走過的＋改案），前面標「現場改過」
       el("p", { class: "muted small", text: plan.applied ? `${TEXT.appliedLine}\uFF0C${TEXT.dayScore(plan.score, plan.penaltyMin)}` : TEXT.dayScore(plan.score, plan.penaltyMin) }),
       openSlotLine(plan, day),
@@ -4154,7 +4165,6 @@
     ]);
     const seenCumulative = /* @__PURE__ */ new Set();
     plan.sequence.forEach((s, i) => block.append(stopCard(s, i, plan, d, state2, actions, seenCumulative)));
-    if (dayWarnings.length) block.append(warnList(dayWarnings));
     if (plan.dropped.length) {
       block.append(el("details", { class: "dropped" }, [
         el("summary", { text: `${TEXT.dropped}\uFF1A${plan.dropped.length}` }),
@@ -4173,11 +4183,16 @@
     const c = choiceOf(plan, s.poi.id);
     if (!c?.altPoi) return null;
     const b = state2.pois[c.altPoi.id] ?? c.altPoi;
+    const intro = introOf(b);
     return el("p", { class: "choice small" }, [
       el("span", { class: "muted", text: TEXT.orChoice }),
       el("button", { class: "btn quiet sm", type: "button", onclick: () => actions.chooseOption(d.date, s.poi.id, b) }, b.name_zh),
-      el("span", { class: "muted", text: c.source === "dropped" ? TEXT.choiceDroppedNote : TEXT.swapNote(c.detourMin) })
+      el("span", { class: "muted", text: c.source === "dropped" ? TEXT.choiceDroppedNote : TEXT.swapNote(c.detourMin) }),
+      intro ? el("span", { class: "muted small intro", text: intro }) : null
     ]);
+  }
+  function introOf(poi) {
+    return poi?.guide?.intro ?? poi?.highlight ?? null;
   }
   function openSlotLine(plan, day) {
     const raw = day.windowRaw ?? day.window;
@@ -4244,10 +4259,11 @@
         poi.item ? el("span", { class: "cat item", text: poi.item }) : null
       ]),
       el("h3", { text: poi.name_zh }),
-      choiceLine(s, plan, d, state2, actions),
+      // 這站自己的簡介緊跟店名；「或 B」那行（帶 B 的簡介）放在它後面，兩段簡介才各自跟著各自的店名（10-27 截圖：B 的簡介夾在 A 名字與 A 簡介之間會讀錯）
+      el("p", { class: "muted small", text: [introOf(poi) ?? "", limitText].filter(Boolean).join("\u3000") }),
       // 二選一沒選的那家順延到這天（picks[].deferredFrom → stop.deferredFrom；DESIGN §4 Stop.deferredFrom）
       s.deferredFrom ? el("p", { class: "muted small", text: TEXT.deferredFrom(dateLabel(s.deferredFrom)) }) : null,
-      el("p", { class: "muted small", text: [poi.guide?.intro ?? poi.highlight ?? "", limitText].filter(Boolean).join("\u3000") }),
+      choiceLine(s, plan, d, state2, actions),
       warns.length ? warnList(warns) : null,
       // 哪一種引擎插的站看 stop.priority（'filler' 填空檔、'rest' 恢復站），不看店型：恢復型的店也可能是填站
       s.insertedBy === "engine" ? el("p", { class: "muted small", text: poi.category === "spot" ? TEXT.spotInserted(hm(s.endMin)) : s.priority === "filler" ? TEXT.fillerInserted : s.priority === "onway" ? TEXT.onTheWayInserted : TEXT.restInserted }) : null,
@@ -4276,10 +4292,13 @@
     const list = el("div", { class: "swap-list" });
     if (!cands.length) list.append(el("p", { class: "muted small", text: TEXT.noSwap }));
     for (const c of cands.slice(0, 6)) {
+      const intro = introOf(c.poi);
       list.append(el("button", { class: "btn alt", type: "button", onclick: () => actions.swapStop(d.date, s.poi.id, c.poi) }, [
         el("strong", { text: c.poi.name_zh }),
         ` \xB7 ${TEXT.swapNote(c.detourMin)}`,
-        c.open === null ? ` \xB7 ${TEXT.openUnknown}` : ""
+        c.open === null ? ` \xB7 ${TEXT.openUnknown}` : "",
+        // 每家下面一行簡介，整段、不截（原話 #177「換一家 跳出來的選項 也要有簡介 不然單看店名 我會不清楚選哪間好」）；<button> 裡只能放 phrasing content，用 span 配 CSS display:block 換行
+        intro ? el("span", { class: "intro", text: intro }) : null
       ]));
     }
     card.append(list);
@@ -4563,6 +4582,10 @@
     if (!field2 || field2.simulate) return field2?.date ?? null;
     if (dates.includes(today) && field2.date && field2.date < today) return today;
     return field2.date;
+  }
+  function planScrollDate(field2, dates, today) {
+    const date = field2?.simulate ? field2.date : today;
+    return date && (dates ?? []).includes(date) ? date : null;
   }
   function skipStopPatch(field2, date, poiId, at2) {
     return { date, index: progressOf(field2, date) + 1, ratings: { ...field2?.ratings ?? {}, [poiId]: { skipped: true, at: at2 } } };
@@ -5288,11 +5311,13 @@
     packMeta: null,
     packStatus: "",
     undo: null,
-    // 最後一次「不去了」或「升級成站」的復原資料（一次性；kind 'remove'／'upgrade'）
+    // 最後一次「不去了」「升級成站」「或 B」「排到別天」的復原資料（一次性；kind 'remove'／'upgrade'／'choose'／'defer'；原話 #171、#181）
     notice: null,
-    // 二選一／「排到別天」之後的一句狀態 { text }（T16；下一個動作前都在，不搶 undo）
+    // 不是動作的一句狀態 { text }：「旅程更新過了，上一版的改動已丟掉」「正在重排…」（下一個動作前都在，不搶 undo；二選一／排到別天那句改放 undo.text，原話 #181）
     busy: false,
     // 二選一／「排到別天」正在試排與重排（同步跑、桌機量到接近 1 秒）：先畫一句再算，算完前再按不理（T16 審查後）
+    planScroll: false,
+    // 打開規劃頁那一刻要捲到當天那一塊（原話 #175）：進頁、載入旅程、隔天切到今天時設 true，render 畫完規劃頁就消耗；按鍵重畫不設；只在記憶體
     replanPending: false,
     // 需求單頁改了會影響排程的東西（同行者的在場、體力、夜間站）還沒重排：離開需求單頁那一下補跑（T19 審查後）
     corridorOpen: {},
@@ -5352,6 +5377,7 @@
     state.pool = Object.values(POIS).map((poi) => ({ poi }));
     restoreTripEdits();
     syncFieldDate();
+    state.planScroll = true;
     replanAll();
   }
   function loadFromPack(packResult) {
@@ -5367,6 +5393,7 @@
     state.pool = pois.map((poi) => ({ poi }));
     restoreTripEdits();
     syncFieldDate();
+    state.planScroll = true;
     replanAll();
   }
   function syncFieldDate() {
@@ -5463,9 +5490,16 @@
   function undoLast() {
     const u = state.undo;
     if (!u) return;
-    const day = state.trip.days.find((d) => d.date === u.date);
     state.undo = null;
     state.notice = null;
+    if (u.kind === "choose" || u.kind === "defer") {
+      state.trip = overlayTripEdits(state.trip, JSON.parse(JSON.stringify(u.before)));
+      for (const date of u.dates) clearApplied(date);
+      saveTripEdits();
+      replanAll();
+      return;
+    }
+    const day = state.trip.days.find((d) => d.date === u.date);
     if (!day) return;
     if (u.kind === "upgrade") Object.assign(day, u.before);
     else {
@@ -5499,14 +5533,16 @@
     if (!state.pois[toPoi.id]) state.pois[toPoi.id] = toPoi;
     const name = state.pois[fromPoiId].name_zh ?? fromPoiId;
     afterPaint(() => {
-      const before = state.plans;
-      const r = chooseOptionTrip({ trip: state.trip, pois: state.pois, date, fromPoiId, toPoi, baseline: { days: Object.values(before) }, planArgs: planArgsOf() });
+      const plansBefore = state.plans;
+      const before = JSON.parse(JSON.stringify(snapshotTripEdits(state.trip, packAtNow())));
+      const r = chooseOptionTrip({ trip: state.trip, pois: state.pois, date, fromPoiId, toPoi, baseline: { days: Object.values(plansBefore) }, planArgs: planArgsOf() });
       state.trip = r.trip;
       clearApplied(date);
       if (r.toDate) clearApplied(r.toDate);
       saveTripEdits();
       replan();
-      state.notice = { text: deferNotice(r.entry, name, displacedPicks({ before, after: state.plans, dates: [date, r.toDate] })) };
+      state.undo = { kind: "choose", dates: [date, r.toDate].filter(Boolean), before, name, text: deferNotice(r.entry, name, displacedPicks({ before: plansBefore, after: state.plans, dates: [date, r.toDate] })) };
+      state.notice = null;
     });
   }
   function deferStop(date, poiId) {
@@ -5514,14 +5550,16 @@
     state.undo = null;
     const name = state.pois[poiId].name_zh ?? poiId;
     afterPaint(() => {
-      const before = state.plans;
-      const r = deferStopTrip({ trip: state.trip, pois: state.pois, date, poiId, baseline: { days: Object.values(before) }, planArgs: planArgsOf() });
+      const plansBefore = state.plans;
+      const before = JSON.parse(JSON.stringify(snapshotTripEdits(state.trip, packAtNow())));
+      const r = deferStopTrip({ trip: state.trip, pois: state.pois, date, poiId, baseline: { days: Object.values(plansBefore) }, planArgs: planArgsOf() });
       state.trip = r.trip;
       clearApplied(date);
       if (r.toDate) clearApplied(r.toDate);
       saveTripEdits();
       replan();
-      state.notice = { text: deferNotice(r.entry, name, displacedPicks({ before, after: state.plans, dates: [date, r.toDate] })) };
+      state.undo = { kind: "defer", dates: [date, r.toDate].filter(Boolean), before, name, text: deferNotice(r.entry, name, displacedPicks({ before: plansBefore, after: state.plans, dates: [date, r.toDate] })) };
+      state.notice = null;
     });
   }
   function afterPaint(work) {
@@ -5595,6 +5633,7 @@
     if (!state.trip) return;
     const date = catchUpFieldDate(state.field, state.trip.days.map((d) => d.date), todayStr());
     if (!date || date === state.field.date) return;
+    state.planScroll = true;
     setField({ date });
   }
   function setBrief(updater, { rerender = true } = {}) {
@@ -5707,6 +5746,17 @@
     const view = !state.trip && !WITHOUT_TRIP.has(state.route) ? renderEmpty : VIEWS[state.route] ?? renderPlanner;
     root.append(el("main", { class: "view" }, view({ state, actions })));
     root.append(tabBar());
+    if (view === renderPlanner && state.trip && state.planScroll && !state.busy) scrollToPlanDay(root);
+  }
+  function scrollToPlanDay(root) {
+    state.planScroll = false;
+    const date = planScrollDate(state.field, state.trip.days.map((d) => d.date), todayStr());
+    if (!date) return;
+    const target = [...root.querySelectorAll("section.day")].find((n) => n.dataset.date === date);
+    if (!target || typeof target.scrollIntoView !== "function") return;
+    const barH = Math.max(0, ...[...root.querySelectorAll(".undo-bar")].map((b) => b.offsetHeight));
+    target.style.setProperty("--bar-h", `${barH}px`);
+    target.scrollIntoView({ block: "start" });
   }
   function renderEmpty() {
     return [
@@ -5729,6 +5779,7 @@
     buildSettings();
     const apply = () => {
       state.route = location.hash && VIEWS[location.hash] ? location.hash : "#/plan";
+      if (state.route === "#/plan") state.planScroll = true;
       if (!flushPendingReplan()) render();
     };
     window.addEventListener("hashchange", apply);
@@ -5757,7 +5808,7 @@
   }
 
   // src/main.js
-  var VERSION = true ? "202610241211-0d2e2948" : "dev";
+  var VERSION = true ? "202610271236-46dfe416" : "dev";
   function showUpdateBanner(registration) {
     if (document.querySelector(".banner")) return;
     const banner = el("div", { class: "banner", role: "status" }, [
