@@ -268,14 +268,16 @@ export function insertOnTheWay({ plan, onway = [], day, home, legFn, rules, sett
 }
 
 /**
- * 順路站（原話 #170：「如果有順路的話 直接就排行程進去就可以…主行程決定活動區域和路線 而不是決定當天的主題性」）：
- * 第一趟排出來的每一段走路（住宿→第一站也算），知識庫裡繞路 ≤ settings.onTheWayDetourMin（預設 8）分鐘的站就是順路——
+ * 順路站＝路過就能逛的店，不專程、不多走路（原話 #173「不需要專程去 而是路過的時候就可以去逛了 而不是專程一趟來增加額外的腳程」；
+ * #170「如果有順路的話 直接就排行程進去就可以…主行程決定活動區域和路線 而不是決定當天的主題性」是同一件事的另一句）：
+ * 第一趟排出來的每一段走路（住宿→第一站也算），知識庫裡繞路 ≤ settings.onTheWayDetourMin（8，原話 #184「允許繞路 8 分鐘 我覺得是可以的」）分鐘的站就是順路——
  * 繞路＝走到它再走到下一站，比直接走多出的分鐘；搭車段不算順路。候選：先過 engineMayInsert（知識庫裡本來就不主動排的店不拿）、在當日區域、不在 exclude、
  * 不是交通／活動／錢湯／一日遊（NO_FILL_CATEGORIES）、不是購物類（SHOPPING_CATEGORIES：百貨、商店街、藥妝、電器、outlet——順路站只拿「為了逛而去」的店，
  * 原話 #170 舉的是「值得逛的古著店」、#20「順路的探店」、#82「經過古著店之類的服裝店或是店家的逛街行程」；「為了買而去」的店只走購物日（#36、#55）或順路購買（#29），
  * 10-13 七天實驗引擎把藥妝店、百貨當順路站塞了五次）、營業時間要有（不知道開不開的不插）；
  * 依繞路分鐘取最近 settings.onTheWayPoolMax（預設 4）家；價值 PRIORITY_VALUE.onway（預設 30，低於 maybe 的 45）、optional、insertedBy engine，
- * 站數、逛店連跑等規則照管；非主題日同類 ≤2 不管順路站（他 10-24 定：#170 順路站直接排先於 #123；rules/same-type-day.js、dim-cat-count.js），他不要就按「不去了」（記 priority 'onway'，那天不再插順路站）。
+ * 站數、逛店連跑等規則照管；順路站也算進同類的家數（非主題日 ≤2 連順路站一起數；他 10-24 更正，原話 #185；rules/same-type-day.js、dim-cat-count.js），他不要就按「不去了」（記 priority 'onway'，那天不再插順路站）。
+ * 順路是排順序的邏輯、不是另一種站：插進去的站受同一套規則（#185）；只插在它順路的那一段、不為了一家店回頭（#185 第三句「同一個區域就不用再逛第二遍了 除非會因為其他的行程而經過這個區域」，跟 zone-reentry 同一個意思；insertOnTheWay）。
  */
 export function onTheWayCandidates({ restPool = [], day, exclude = new Set(), home = null, plan, legFn, settings = {} }) {
   if (!restPool.length || !plan?.sequence?.length) return [];
@@ -348,7 +350,8 @@ export function corridorFor({ plan, home = null, pool = [], legFn, settings = {}
   return [...byLeg.keys()].sort((a, b) => a - b).map((legIndex) => ({
     legIndex,
     pois: byLeg.get(legIndex)
-      .sort((a, b) => a.distM - b.distM || name(a.poi).localeCompare(name(b.poi)))
+      // 同距離時用店名排，locale 寫死：不寫的話吃裝置／CI 的預設 locale（GitHub runner 是 en-US），順序會跟桌機 zh-TW 不同（10-27 Actions 審查在 Linux 容器實測 corridor 測試翻掉）
+      .sort((a, b) => a.distM - b.distM || name(a.poi).localeCompare(name(b.poi), 'zh-Hant-TW'))
       .slice(0, maxPerLeg)
       .map(({ poi, distM, open }) => ({ poi, distM: Math.round(distM), open })),
   }));

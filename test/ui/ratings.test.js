@@ -1,7 +1,7 @@
 // T13 評分隔天補：走過沒評的隔天出現；略過的、評過的、今天的不出現；進度按日期記，換日期不歸零。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pendingRatings, mergeField, progressOf, daysBetween, pickFieldDate, catchUpFieldDate, skipStopPatch } from '../../src/ui/ratings.js';
+import { pendingRatings, mergeField, progressOf, daysBetween, pickFieldDate, catchUpFieldDate, skipStopPatch, planScrollDate } from '../../src/ui/ratings.js';
 import { TEXT } from '../../src/ui/text.js';
 
 const poi = (id) => ({ id, name_zh: id });
@@ -91,6 +91,19 @@ test('catchUpFieldDate（隔天打開 App）：真實模式、今天是旅程日
   // 接上 mergeField：切到今天後 index 接那天的進度
   const f = mergeField({ date: '2026-08-13', index: 3, progress: { '2026-08-13': 3, '2026-08-15': 1 } }, { date: catchUpFieldDate({ date: '2026-08-13' }, dates, '2026-08-15') });
   assert.equal(f.date, '2026-08-15'); assert.equal(f.index, 1); assert.equal(f.progress['2026-08-13'], 3);
+});
+
+test('planScrollDate（打開規劃頁捲到哪天，原話 #175）：試走模式捲到試走那天、真實模式捲到今天（不看 field.date）；那天不在這趟就 null、不退回別天；沒 field、沒天數都不炸', () => {
+  const dates = ['2026-08-13', '2026-08-15', '2026-08-17'];
+  assert.equal(planScrollDate({ date: '2026-08-15', simulate: true }, dates, '2026-08-13'), '2026-08-15', '試走那天');
+  assert.equal(planScrollDate({ date: '2026-08-15', simulate: false }, dates, '2026-08-13'), '2026-08-13', '真實模式是今天，不是現場頁停的那天');
+  assert.equal(planScrollDate({ date: '2026-08-15' }, dates, '2026-08-17'), '2026-08-17');
+  assert.equal(planScrollDate({ date: '2026-08-15' }, dates, '2026-08-14'), null, '今天不是旅程日就不捲（還沒出發、回來了）');
+  assert.equal(planScrollDate({ date: '2026-10-12', simulate: true }, dates, '2026-08-13'), null, '試走那天不在這趟就不捲，不退回今天');
+  assert.equal(planScrollDate({ date: null, simulate: true }, dates, '2026-08-13'), null);
+  assert.equal(planScrollDate(null, dates, '2026-08-17'), '2026-08-17', '沒 field 當真實模式');
+  assert.equal(planScrollDate({ date: '2026-08-13' }, [], '2026-08-13'), null);
+  assert.equal(planScrollDate({ date: '2026-08-13' }, dates, undefined), null, '沒 today 不炸');
 });
 
 test('skipStopPatch（略過引擎插的站）：記成略過、進度前進一站、不彈評分；補評卡隔天不問它，但還是問走過沒評的一般站', () => {

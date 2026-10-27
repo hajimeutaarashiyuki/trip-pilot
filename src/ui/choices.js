@@ -45,7 +45,7 @@ export function deferStopTrip({ trip, pois, date, poiId, baseline, planArgs }) {
 }
 
 /**
- * 順延後狀態列那句：排到了「A 已排到 8/17（一）」、排不進「A 先留在候選池（別天排不進）」；重排擠掉了別的勾選站（displacedPicks）就接一句「擠掉了 8/13（四） 的 X、…」
+ * 順延後復原列那句（app.js 放在 state.undo.text，跟「復原」鍵同一列；原話 #181）：排到了「A 已排到 8/17（一）」、排不進「A 先留在候選池（別天排不進）」；重排擠掉了別的勾選站（displacedPicks）就接一句「擠掉了 8/13（四） 的 X、…」
  * （10-16 審查：8/13 選候選池的 FLAT WHITE 頂掉 Elbe，整天重排後他沒碰的珈巣多夢落到排不進清單，之前那句只寫 Elbe 排到哪）。
  */
 export function deferNotice(entry, name, displaced = []) {

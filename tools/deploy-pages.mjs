@@ -2,6 +2,8 @@
 // 用法：npm run deploy             （演練，不推）
 //       npm run deploy -- --apply  （真的推；Pages 一兩分鐘後更新）
 // 做法：在 %TEMP% 開一個暫時 worktree 指到 origin/gh-pages，清空、把 dist 整個複製進去、提交、推 HEAD:gh-pages、拆掉 worktree。
+// 2026-10-24 起推 main 就由 .github/workflows/pages.yml（GitHub Actions）自動做同一件事：npm ci、npm test、建置、推 gh-pages。
+// 這支留作手動備援（Actions 掛了、或要馬上推時），用法不變。
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, cpSync, readdirSync, statSync } from 'node:fs';
 import os from 'node:os';

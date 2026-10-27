@@ -1,9 +1,10 @@
-// 二選一與順延的畫面邏輯（T16；原話 #119、#121、#138）：純函式——這站的二選一、選了 B（換站＋順延）、排不進清單的「排到別天」、狀態列那句、候選頁的「順延中」。
+// 二選一與順延的畫面邏輯（T16；原話 #119、#121、#138）：純函式——這站的二選一、選了 B（換站＋順延）、排不進清單的「排到別天」、復原列那句（10-24 起放復原列，原話 #181）、候選頁的「順延中」。
 // 比照 applied.test 的做法，不碰 DOM：示範夾具（8/13 勾三家咖啡廳、只排得進兩家）驗 choice 的形狀，順延用自己造的小世界（示範旅程只有兩天、8/17 是購物日，沒有別天可排）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { planTrip } from '../../src/engine/trip.js';
 import { choiceOf, chooseOptionTrip, deferStopTrip, swapPick, deferNotice, deferredMark, displacedPicks } from '../../src/ui/choices.js';
+import { snapshotTripEdits, overlayTripEdits, diffTripEdits } from '../../src/ui/trip-edits.js';
 import { TEXT } from '../../src/ui/text.js';
 import { loadRules } from '../../src/rules/index.js';
 import { BUILTIN } from '../../src/rules/builtin.js';
@@ -86,7 +87,7 @@ const smallArgs = { rules, settings, country, kb, legFn: flat, restPool: Object.
 const day = (date, over = {}) => ({ date, type: 'normal', picks: [], ...over });
 const smallTrip = () => ({ id: 't', party: 1, homeBases: [{ poi: home }], shoppingDays: [], days: [day('2026-08-12'), day('2026-08-13', { picks: [{ poiId: '甲', priority: 'want' }] }), day('2026-08-14', { anchor: { theme: 'cafe' } }), day('2026-08-15'), day('2026-08-16', { type: 'departure', departAirportMin: 15 * 60 })] });
 
-test('chooseOptionTrip 排得進：A 換成候選池的 B、A 順延到主題日 8/14；狀態列那句「甲 已排到 8/14（五）」；重排後 8/14 的站卡帶「從 8/13 順延」、8/13 的 B 是他勾的站', () => {
+test('chooseOptionTrip 排得進：A 換成候選池的 B、A 順延到主題日 8/14；復原列那句「甲 已排到 8/14（五）」；重排後 8/14 的站卡帶「從 8/13 順延」、8/13 的 B 是他勾的站', () => {
   const trip = smallTrip();
   const r = planTrip({ trip, pois: smallPois, ...smallArgs });
   const c = r.days[1].plan.choices[0];
@@ -130,6 +131,42 @@ test('deferStopTrip（排不進清單的「排到別天」）：chosenPoiId null
   const om = chooseOptionTrip({ trip: mtrip, pois: smallPois, date: '2026-08-13', fromPoiId: '甲', toPoi: smallPois.乙, baseline: { days: rm.days }, planArgs: smallArgs });
   assert.deepEqual(om.trip.days[1].picks, [{ poiId: '乙', priority: 'maybe' }]);
   assert.deepEqual(om.trip.days[2].picks, [{ poiId: '甲', priority: 'maybe', deferredFrom: '2026-08-13' }]);
+});
+
+// 一次性復原（原話 #181；app.js chooseOption／deferStop 的 undo 與 undoLast）：動作前 snapshotTripEdits 的快照（過 JSON），動作後 overlayTripEdits 蓋回去＝原本
+const clone = (v) => JSON.parse(JSON.stringify(v));
+const three = (trip) => clone(trip.days.map((d) => [d.date, d.picks ?? [], d.removed ?? [], d.swapped ?? []]));
+const roundTrip = (trip, act) => {
+  const before = clone(snapshotTripEdits(trip, 'p1'));
+  const out = act(trip);
+  assert.notDeepEqual(three(out.trip), three(trip), '動作真的改了 picks');
+  const back = overlayTripEdits(out.trip, clone(before));
+  assert.deepEqual(three(back), three(trip), 'days 的 picks／removed／swapped 跟原本一樣');
+  assert.deepEqual(back.deferred, trip.deferred ?? [], 'deferred 跟原本一樣（原本沒有＝空）');
+  assert.deepEqual(clone(snapshotTripEdits(back, 'p1')), before, '快照逐鍵相同');
+  assert.equal(diffTripEdits(back, before).any, false);
+  assert.ok(out.trip.deferred.length === 1 && back.deferred.length === 0, '蓋回去順延紀錄也拿掉');
+  return back;
+};
+
+test('一次性復原往返（原話 #181）：chooseOptionTrip 之後蓋回動作前的快照，days 三個陣列與 deferred 都回到原本——示範 8/13 選火星の庭（A unplaced）、小世界選候選池的乙（A 排到 8/14）；deferStopTrip 同樣；引擎對蓋回的旅程排出原本的序列', () => {
+  const trip = demoTrip();
+  const r = planTrip({ trip, pois, ...demoArgs });
+  const c = r.days[0].plan.choices[0];
+  const back = roundTrip(trip, (t) => chooseOptionTrip({ trip: t, pois, date: '2026-08-13', fromPoiId: c.poiId, toPoi: c.altPoi, baseline: { days: r.days }, planArgs: demoArgs }));
+  const re = planTrip({ trip: back, pois, ...demoArgs });
+  assert.deepEqual(re.days.map((d) => ids(d.plan.sequence)), r.days.map((d) => ids(d.plan.sequence)), '蓋回去引擎排的跟原本一樣');
+  const small = smallTrip();
+  const rs = planTrip({ trip: small, pois: smallPois, ...smallArgs });
+  roundTrip(small, (t) => chooseOptionTrip({ trip: t, pois: smallPois, date: '2026-08-13', fromPoiId: '甲', toPoi: rs.days[1].plan.choices[0].altPoi, baseline: { days: rs.days }, planArgs: smallArgs }));
+  const td = smallTrip();
+  td.days[1].picks.push({ poiId: '乙', priority: 'maybe' }, { poiId: '丙', priority: 'maybe' });
+  const three3 = { ...smallPois, 丙: cafe('丙') };
+  const args3 = { ...smallArgs, restPool: Object.values(three3) };
+  const rd = planTrip({ trip: td, pois: three3, ...args3 });
+  const backD = roundTrip(td, (t) => deferStopTrip({ trip: t, pois: three3, date: '2026-08-13', poiId: rd.days[1].plan.dropped[0].poi.id, baseline: { days: rd.days }, planArgs: args3 }));
+  assert.deepEqual(backD.days[1].picks.map((p) => p.poiId), ['甲', '乙', '丙'], '搬走的放回原位');
+  assert.deepEqual(backD.days[2].picks, [], '8/14 沒有順延來的');
 });
 
 test('displacedPicks：重排前不在排不進清單、重排後在的勾選站（fromDate 與 toDate）；deferNotice 接「擠掉了 8/13（四） 的 X」；deferredMark：placed 但順延到的那天重排後排不進也標「順延中」', () => {

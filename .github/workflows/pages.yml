@@ -1,0 +1,67 @@
+# GitHub Pages 自動部署（#179，2026-10-24 起）：推 main 就測試、建置、把 dist 推到 gh-pages 分支。
+# Pages 的來源仍是 gh-pages 分支根目錄（桌機沒有 gh CLI、改不了 Pages 設定），所以這裡用純 git 推分支，不用 actions/deploy-pages。
+# 手動備援：桌機跑 npm run deploy -- --apply（tools/deploy-pages.mjs），做法跟這裡一樣。
+# 推 gh-pages 不會再觸發這個 workflow（branches 只有 main）。
+name: pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  TZ: Asia/Taipei   # 版本字串的時間戳用本地時間，跟桌機建置一致
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: 取程式碼
+        uses: actions/checkout@v4
+
+      - name: 裝 Node 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: 裝套件
+        run: npm ci
+
+      - name: 測試
+        run: npm test
+
+      - name: 建置
+        run: node tools/build.mjs
+
+      - name: 推 dist 到 gh-pages
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^const VERSION = "\([^"]*\)";.*/\1/p' dist/sw.js)"
+          if [ -z "$version" ]; then echo "dist/sw.js 裡抓不到 VERSION"; exit 1; fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch --no-tags origin +refs/heads/gh-pages:refs/remotes/origin/gh-pages
+          git worktree add --detach /tmp/gh origin/gh-pages
+          find /tmp/gh -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp -r dist/. /tmp/gh/
+          cd /tmp/gh
+          git add -A
+          if [ -z "$(git status --porcelain)" ]; then
+            echo "跟遠端一樣，不用推"
+            exit 0
+          fi
+          git commit -q -m "deploy $version"
+          git push origin HEAD:gh-pages
+          echo "推上去了：$(git log -1 --format=%h HEAD) deploy $version → https://hajimeutaarashiyuki.github.io/trip-pilot/ （Pages 建置要等一兩分鐘）"

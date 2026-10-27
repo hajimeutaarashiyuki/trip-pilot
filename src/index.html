@@ -47,7 +47,8 @@
   .btn.primary { background: var(--accent); color: var(--accent-fg); }
   .btn.quiet { border-color: var(--line); color: var(--muted); }
   .btn.quiet.on { border-color: var(--accent); color: var(--accent); }
-  .btn.alt { display: block; width: 100%; text-align: left; margin-top: 6px; border-color: var(--line); color: var(--fg); background: var(--bg-elevated); }
+  .btn.alt { display: block; width: 100%; text-align: left; margin-top: 6px; border-color: var(--line); color: var(--fg); background: var(--bg-elevated); white-space: normal; line-height: 1.5; }
+  .btn.alt .intro { display: block; font-size: 14px; color: var(--muted); margin-top: 2px; }   /* 換一家清單每家下面一行簡介，整段不截（原話 #177）；button 裡只能放 span，用 block 換行 */
   .btn.huge { width: 100%; font-size: 20px; padding: 16px; margin: 12px 0; }
   .btn.wide { display: block; width: 100%; }
   .btn.star { padding: 10px 8px; }
@@ -56,10 +57,11 @@
   /* 復原列貼在視窗頂端：「升級成站」「不去了」的鍵在長頁深處（8/17 捲到 13,000px），列在頁首會看不到（10-16 審查） */
   .undo-bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--rest); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; margin: 8px 0 12px; font-size: 14px; }
   .undo-bar .btn { white-space: nowrap; flex: none; }
-  .undo-bar.notice { background: var(--bg-elevated); }   /* 二選一／順延後的一句（T16）：同一種 sticky 列，底色淡一階跟復原列分開 */
+  .undo-bar.notice { background: var(--bg-elevated); }   /* 不是動作的一句狀態（「旅程更新過了」「正在重排…」）：同一種 sticky 列，底色淡一階跟復原列分開；二選一／排到別天那句 10-24 起放復原列（原話 #181） */
   /* 二選一（T16）：店名下一行「或 [B]」，B 是小鍵、旁邊一句來源；排不進清單每條尾巴一顆「排到別天」 */
   .btn.sm { padding: 6px 10px; font-size: 14px; }
   .choice { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; margin: 0 0 4px; }
+  .choice .intro { flex: 1 1 100%; }   /* B 的簡介自己一行（原話 #177 推導） */
   .dropped li { margin: 4px 0; }
   .dropped li .btn { margin-left: 6px; vertical-align: middle; }
   .status { margin-top: 8px; }
@@ -69,8 +71,10 @@
   .row.top { margin-bottom: 8px; }
   .row.sim { justify-content: flex-start; margin: 8px 0; flex-wrap: wrap; }
 
-  .day { margin: 18px 0 8px; }
+  /* 打開規劃頁捲到當天（原話 #175；app.js scrollToPlanDay）：捲到的那塊上面留 12px，加上瀏海、加上頂端貼著的復原列高度（--bar-h 由 app.js 量了寫在那塊上），日期才不會被蓋住 */
+  .day { margin: 18px 0 8px; scroll-margin-top: calc(12px + var(--bar-h, 0px) + env(safe-area-inset-top, 0px)); }
   .day-head { padding-bottom: 6px; border-bottom: 1px solid var(--line); margin-bottom: 8px; }
+  .day > .warn-list { margin: 0 0 4px; }   /* 整天的黃字貼在日期那行下方（原話 #174），不用站卡裡那 6px 的上距 */
   .card { background: var(--bg-elevated); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; margin: 10px 0; }
   .card.anchor { border-color: var(--accent); }
   .card.rest { background: var(--rest); }

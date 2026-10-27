@@ -57,6 +57,15 @@ export function catchUpFieldDate(field, dates, today) {
 }
 
 /**
+ * 打開規劃頁要捲到哪一天（原話 #175「頁面會自動跳到當前日期的位置 不要我每次都下滑到當天位置」）：試走模式開著就是試走那天（field.date），否則是今天；
+ * 那天不在這趟（還沒出發、回來了、試走那天不是旅程日）就 null＝不捲，不退回別天。只在打開規劃頁那一刻用（app.js state.planScroll），按鍵重畫不捲。
+ */
+export function planScrollDate(field, dates, today) {
+  const date = field?.simulate ? field.date : today;
+  return date && (dates ?? []).includes(date) ? date : null;
+}
+
+/**
  * 略過引擎插的站（現場頁「略過這站」）：回 setField 用的更新——跟略過評分同一形狀的紀錄（pendingRatings 本來就不問）、那天的進度前進一站；不彈評分。
  * 一般站沒有這顆（跳過一般站走「我現在在這站」）。
  */

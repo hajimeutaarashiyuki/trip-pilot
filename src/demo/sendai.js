@@ -15,7 +15,7 @@ export const RAW_POIS = [
   { name_zh: '汐谷', category: 'bar', zoneId: 'ichibancho', duration: '90 分鐘', hours: everyDay(H(['17:00', '23:00']), ['sun']), highlight: '文化横丁口的日本酒小店，夫婦二人經營。' },
   { name_zh: 'ディスクノート', category: 'record', zoneId: 'honcho', duration: '60 分鐘', hours: everyDay(H(['12:00', '20:00']), ['wed']), highlight: '本町二丁目 3F，1981 年起的爵士專門唱片行。' },
   { name_zh: '阿武隈書房', category: 'bookstore', zoneId: 'honcho', duration: '30 分鐘', hours: everyDay(H(['12:00', '19:00']), ['mon']), highlight: '本町的舊書店，收 LP 買取。' },
-  { name_zh: '松本清', category: 'drugstore', zoneId: 'station', duration: '10 分鐘', hours: everyDay(H(['08:00', '22:00'])), highlight: 'クリスロード的藥妝，代購用。' },
+  { name_zh: '松本清', category: 'drugstore', zoneId: 'station', duration: '10 分鐘', hours: everyDay(H(['08:00', '22:00'])), highlight: 'クリスロード的藥妝。' },
   { name_zh: 'おやま', category: 'food', zoneId: 'ichibancho', duration: '60 分鐘', hours: everyDay(H(['11:30', '13:30'], ['17:30', '22:00']), ['sun']), highlight: '一番町三丁目的炭火牛舌，夫婦加兒子的小店。' },
   { name_zh: 'Utah', category: 'vintage', zoneId: 'honcho', duration: '60 分鐘', hours: everyDay(H(['12:00', '20:00'])), highlight: '本町的美式古著，店主定期赴美買付。' },
   { name_zh: 'me', category: 'vintage', zoneId: 'honcho', duration: '60 分鐘', hours: everyDay(H(['12:00', '19:30']), ['tue']), highlight: 'Utah 走兩分鐘的古著店。' },

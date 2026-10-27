@@ -15,7 +15,7 @@ import { renderNow } from './now.js';
 import { renderSettings } from './settings.js';
 import { renderPool } from './pool.js';
 import { renderBrief } from './brief.js';
-import { mergeField, pickFieldDate, catchUpFieldDate } from './ratings.js';
+import { mergeField, pickFieldDate, catchUpFieldDate, planScrollDate } from './ratings.js';
 import { restoreApplied, withoutApplied } from './applied.js';
 import { snapshotTripEdits, applyTripEdits, overlayTripEdits, diffTripEdits } from './trip-edits.js';
 import { upgradePick, visitedPatch, visitedDates } from './corridor.js';
@@ -34,9 +34,10 @@ export const state = {
   trip: null, pois: {}, country: null, kb: null, legFn: null,
   rules: null, settings: null, plans: {}, pool: [],
   packRules: null, packMeta: null, packStatus: '',
-  undo: null,   // 最後一次「不去了」或「升級成站」的復原資料（一次性；kind 'remove'／'upgrade'）
-  notice: null,   // 二選一／「排到別天」之後的一句狀態 { text }（T16；下一個動作前都在，不搶 undo）
+  undo: null,   // 最後一次「不去了」「升級成站」「或 B」「排到別天」的復原資料（一次性；kind 'remove'／'upgrade'／'choose'／'defer'；原話 #171、#181）
+  notice: null,   // 不是動作的一句狀態 { text }：「旅程更新過了，上一版的改動已丟掉」「正在重排…」（下一個動作前都在，不搶 undo；二選一／排到別天那句改放 undo.text，原話 #181）
   busy: false,    // 二選一／「排到別天」正在試排與重排（同步跑、桌機量到接近 1 秒）：先畫一句再算，算完前再按不理（T16 審查後）
+  planScroll: false,   // 打開規劃頁那一刻要捲到當天那一塊（原話 #175）：進頁、載入旅程、隔天切到今天時設 true，render 畫完規劃頁就消耗；按鍵重畫不設；只在記憶體
   replanPending: false,   // 需求單頁改了會影響排程的東西（同行者的在場、體力、夜間站）還沒重排：離開需求單頁那一下補跑（T19 審查後）
   corridorOpen: {},   // 走廊清單哪幾段展開著（鍵 plan:日期:段／now:日期:段；只在記憶體、不存，重排就清；T15）
   tripBase: null,   // 打包那版的 days 三個陣列與 deferred（snapshotTripEdits 的形狀，載入時 clone 的）：設定頁「本機改動：N 天有改」的對照、「還原成打包版」放回去的那份（T16b）
@@ -78,6 +79,7 @@ export function loadDemo() {
   state.pool = Object.values(demo.POIS).map((poi) => ({ poi }));
   restoreTripEdits();
   syncFieldDate();
+  state.planScroll = true;   // 載入旅程後第一次畫規劃頁捲到當天（原話 #175）；設在 replanAll 之前，它裡面那次 render 就消耗
   replanAll();
 }
 
@@ -95,6 +97,7 @@ export function loadFromPack(packResult) {
   state.pool = pois.map((poi) => ({ poi }));
   restoreTripEdits();   // 規劃頁的改動（T16b）：打包時間與旅程相同才蓋回，重排之前
   syncFieldDate();
+  state.planScroll = true;   // 同 loadDemo：載入旅程後捲到當天（原話 #175）
   replanAll();
 }
 
@@ -143,7 +146,7 @@ const packAtNow = () => state.packMeta?.generatedAt ?? null;
 /**
  * 載入旅程（loadFromPack／loadDemo）之後、重排之前（T16b；原話 #154 手機是操作端、#121 改了要留著）：先留一份打包那版的對照（tripBase），
  * 再把手機上存的規劃頁改動蓋回 state.trip（trip-edits.js applyTripEdits）；打包時間或旅程不同（手機更新了新打包）就丟掉那份、規劃頁頂端一句
- * 「旅程更新過了，上一版的改動已丟掉」（state.notice，跟順延那句同一條列）。舊旅程的復原列與那句狀態都不再適用，一起清掉。
+ * 「旅程更新過了，上一版的改動已丟掉」（state.notice；順延那句 10-24 起改放復原列 undo.text，原話 #181）。舊旅程的復原列與那句狀態都不再適用，一起清掉。
  */
 function restoreTripEdits() {
   state.tripBase = JSON.parse(JSON.stringify(snapshotTripEdits(state.trip, packAtNow())));
@@ -216,13 +219,23 @@ export function removeStop(date, poiId, insertedBy = null, priority = null) {
   replanAll();
 }
 
-/** 復原剛才的「不去了」（勾選站放回原位、removed 那筆拿掉）或「升級成站」（那天的 picks 與 removed 放回升級前的那兩個陣列）；只對最後一次有效。 */
+/**
+ * 復原剛才的「不去了」（勾選站放回原位、removed 那筆拿掉）、「升級成站」（那天的 picks 與 removed 放回升級前的那兩個陣列）、
+ * 或「或 B」「排到別天」（原話 #181：整趟的 picks／removed／swapped 與 deferred 放回動作前的快照，跟設定頁「還原成打包版」同一套；動到的那兩天現場改案清掉）；只對最後一次有效。
+ */
 export function undoLast() {
   const u = state.undo;
   if (!u) return;
-  const day = state.trip.days.find((d) => d.date === u.date);
   state.undo = null;
   state.notice = null;
+  if (u.kind === 'choose' || u.kind === 'defer') {
+    state.trip = overlayTripEdits(state.trip, JSON.parse(JSON.stringify(u.before)));
+    for (const date of u.dates) clearApplied(date);
+    saveTripEdits();
+    replanAll();
+    return;
+  }
+  const day = state.trip.days.find((d) => d.date === u.date);
   if (!day) return;
   if (u.kind === 'upgrade') Object.assign(day, u.before);
   else {
@@ -262,8 +275,9 @@ function planArgsOf() {
 /**
  * 二選一選了 B（原話 #119「我選一間，到了 17 號就會自動排進另一間」；T16）：那天的 picks 把 A 換成 B（換這一站的邏輯，換掉的不算落選）、A 順延到別天
  * （engine/choices.js defer：主題日優先、再其餘 normal 日由早到晚，每天用引擎試排，排得進就定案；全排不進就先留在候選池），兩天現場套過的改案清掉、整趟重排；
- * 頂端一句「A 已排到 8/17」或「A 先留在候選池（別天排不進）」，重排擠掉了別的勾選站就接「擠掉了 8/13 的 X」（displacedPicks；state.notice，跟 undo 列同樣式、不搶 undo）。
- * 跟「不去了」不同，沒有一次性復原（待確認）。試排的 baseline 用重排前的 state.plans（當日區域、主題日、購物日那幾樣換站前後一樣，fromDate 自己不在候選日裡）。
+ * 頂端一句「A 已排到 8/17」或「A 先留在候選池（別天排不進）」，重排擠掉了別的勾選站就接「擠掉了 8/13 的 X」（displacedPicks）——這句放在復原列上（state.undo.text）。
+ * 跟「不去了」一樣有一次性復原（原話 #181）：試排前整趟的 picks／removed／swapped 與 deferred 先快照（snapshotTripEdits，JSON clone），按「復原」整份蓋回去重排（undoLast）。
+ * 試排的 baseline 用重排前的 state.plans（當日區域、主題日、購物日那幾樣換站前後一樣，fromDate 自己不在候選日裡）。
  * 試排好幾天再整趟重排是同步的（桌機量到接近 1 秒，10-16 審查）：先畫「正在重排…」再算（afterPaint）。
  */
 export function chooseOption(date, fromPoiId, toPoi) {
@@ -272,31 +286,35 @@ export function chooseOption(date, fromPoiId, toPoi) {
   if (!state.pois[toPoi.id]) state.pois[toPoi.id] = toPoi;
   const name = state.pois[fromPoiId].name_zh ?? fromPoiId;
   afterPaint(() => {
-    const before = state.plans;
-    const r = chooseOptionTrip({ trip: state.trip, pois: state.pois, date, fromPoiId, toPoi, baseline: { days: Object.values(before) }, planArgs: planArgsOf() });
+    const plansBefore = state.plans;
+    const before = JSON.parse(JSON.stringify(snapshotTripEdits(state.trip, packAtNow())));
+    const r = chooseOptionTrip({ trip: state.trip, pois: state.pois, date, fromPoiId, toPoi, baseline: { days: Object.values(plansBefore) }, planArgs: planArgsOf() });
     state.trip = r.trip;
     clearApplied(date);
     if (r.toDate) clearApplied(r.toDate);
     saveTripEdits();
     replan();
-    state.notice = { text: deferNotice(r.entry, name, displacedPicks({ before, after: state.plans, dates: [date, r.toDate] })) };
+    state.undo = { kind: 'choose', dates: [date, r.toDate].filter(Boolean), before, name, text: deferNotice(r.entry, name, displacedPicks({ before: plansBefore, after: state.plans, dates: [date, r.toDate] })) };
+    state.notice = null;   // 那句改由復原列顯示；afterPaint 看到不是「正在重排…」就不放回本來那句（跟之前被 deferNotice 取代一樣）
   });
 }
 
-/** 排不進清單的「排到別天」（T16）：那站直接順延（沒有選的那家）；排到了就從這天的 picks 搬過去，排不進就留在原處、候選頁標「順延中」。擠掉了誰同 chooseOption。 */
+/** 排不進清單的「排到別天」（T16）：那站直接順延（沒有選的那家）；排到了就從這天的 picks 搬過去，排不進就留在原處、候選頁標「順延中」。擠掉了誰、一次性復原（原話 #181）同 chooseOption。 */
 export function deferStop(date, poiId) {
   if (state.busy || !state.trip?.days.some((d) => d.date === date) || !state.pois[poiId]) return;
   state.undo = null;
   const name = state.pois[poiId].name_zh ?? poiId;
   afterPaint(() => {
-    const before = state.plans;
-    const r = deferStopTrip({ trip: state.trip, pois: state.pois, date, poiId, baseline: { days: Object.values(before) }, planArgs: planArgsOf() });
+    const plansBefore = state.plans;
+    const before = JSON.parse(JSON.stringify(snapshotTripEdits(state.trip, packAtNow())));
+    const r = deferStopTrip({ trip: state.trip, pois: state.pois, date, poiId, baseline: { days: Object.values(plansBefore) }, planArgs: planArgsOf() });
     state.trip = r.trip;
     clearApplied(date);
     if (r.toDate) clearApplied(r.toDate);
     saveTripEdits();
     replan();
-    state.notice = { text: deferNotice(r.entry, name, displacedPicks({ before, after: state.plans, dates: [date, r.toDate] })) };
+    state.undo = { kind: 'defer', dates: [date, r.toDate].filter(Boolean), before, name, text: deferNotice(r.entry, name, displacedPicks({ before: plansBefore, after: state.plans, dates: [date, r.toDate] })) };
+    state.notice = null;
   });
 }
 
@@ -377,6 +395,7 @@ export function catchUpToday() {
   if (!state.trip) return;
   const date = catchUpFieldDate(state.field, state.trip.days.map((d) => d.date), todayStr());
   if (!date || date === state.field.date) return;
+  state.planScroll = true;   // 真的換了日期：規劃頁捲到今天（原話 #175）；setField 會重畫
   setField({ date });
 }
 
@@ -515,6 +534,25 @@ export function render() {
   const view = !state.trip && !WITHOUT_TRIP.has(state.route) ? renderEmpty : (VIEWS[state.route] ?? renderPlanner);
   root.append(el('main', { class: 'view' }, view({ state, actions })));
   root.append(tabBar());
+  // 旗標只在畫了規劃頁（有旅程）時消耗：沒旅程那次畫的是空白頁，留到旅程載入後那次；「正在重排…」那次（busy）也先留著，排完那次版面才是最後的
+  if (view === renderPlanner && state.trip && state.planScroll && !state.busy) scrollToPlanDay(root);
+}
+
+/**
+ * 打開規劃頁那一刻捲到當天那一塊（原話 #175「頁面會自動跳到當前日期的位置 不要我每次都下滑到當天位置」）：目標日照 ratings.js planScrollDate（試走模式開著就是試走那天、否則今天），
+ * 旅程裡沒有那天就不捲。旗標（state.planScroll）在進頁（boot 的 apply、hashchange）、載入旅程、隔天切到今天時設，畫完就消耗；按鍵重畫（換一家、不去了、復原…）不捲。
+ * 頂端貼著的復原列會蓋住日期：量它的高度交給 CSS 的 scroll-margin-top（--bar-h）。scrollIntoView 測試環境沒有，先判。
+ */
+function scrollToPlanDay(root) {
+  state.planScroll = false;
+  const date = planScrollDate(state.field, state.trip.days.map((d) => d.date), todayStr());
+  if (!date) return;
+  const target = [...root.querySelectorAll('section.day')].find((n) => n.dataset.date === date);
+  if (!target || typeof target.scrollIntoView !== 'function') return;
+  // 復原列與狀態列都是 sticky 在同一個 top，兩條都在時疊在一起，蓋住的高度是較高的那條
+  const barH = Math.max(0, ...[...root.querySelectorAll('.undo-bar')].map((b) => b.offsetHeight));
+  target.style.setProperty('--bar-h', `${barH}px`);
+  target.scrollIntoView({ block: 'start' });
 }
 
 function renderEmpty() {
@@ -538,7 +576,8 @@ function tabBar() {
 
 export async function boot() {
   buildSettings();
-  const apply = () => { state.route = location.hash && VIEWS[location.hash] ? location.hash : '#/plan'; if (!flushPendingReplan()) render(); };
+  // 進規劃頁（開 App 落在它、或從別頁切過來）就捲到當天（原話 #175）；沒旅程時那次畫的是空白頁，旗標留到旅程載入後
+  const apply = () => { state.route = location.hash && VIEWS[location.hash] ? location.hash : '#/plan'; if (state.route === '#/plan') state.planScroll = true; if (!flushPendingReplan()) render(); };
   window.addEventListener('hashchange', apply);
   if (!state.field.date) state.field.date = todayStr();
   readPackParam();

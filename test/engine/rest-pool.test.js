@@ -391,3 +391,18 @@ test('坐下來的地方每天都進第一趟候選（原話 #172）：當日區
   const rejected = planTrip({ trip: mk([{ poiId: '海邊', insertedBy: 'engine', priority: 'rest' }]), pois: { 神社: shrine, 花火: fw }, rules, settings, country, kb, legFn, restPool: [sea] }).days[0].plan;
   assert.ok(!ids(rejected).includes('海邊'), '拒絕過恢復站那天不插坐下來的地方');
 });
+
+test('順路站也算進非主題日同類 ≤2（原話 #185，他 10-24 更正）：勾了兩家古著，A→B 路上順路的第三家古著不插；只勾一家時順路的第二家照插', () => {
+  // 審查代理 10-27 的探針搬進來（scratchpad r1024/review-engine/probe-onway-sametype.mjs）：A→B 直走 10 分，經 C 是 3＋3，繞路 −4 ≤ 8 算順路
+  const walk = { 'home|A': 10, 'A|B': 10, 'home|B': 20, 'A|C': 3, 'C|B': 3, 'home|C': 12 };
+  const walkFn = (a, b) => ({ walkMin: walk[`${a.id}|${b.id}`] ?? walk[`${b.id}|${a.id}`] ?? 10, rideMin: 0, climbMin: 0 });
+  const vintage = (id, over = {}) => poi(id, { category: 'vintage', walkFactor: 0, dwellMin: 40, ...over });
+  const C = vintage('C', { dwellMin: 30 });
+  const mk = () => ({ id: 't', party: 1, homeBases: [{ poi: home }], days: [{ date: '2026-08-13', type: 'normal', designated: ['A', 'B'], picks: [{ poiId: 'A', priority: 'must' }, { poiId: 'B', priority: 'must' }] }] });
+  const two = planTrip({ trip: mk(), pois: { A: vintage('A'), B: vintage('B') }, rules, settings, country, kb, legFn: walkFn, restPool: [C] }).days[0].plan;
+  assert.deepEqual(ids(two), ['A', 'B'], `已經兩家古著，順路的 C 不插：${ids(two).join('→')}`);
+  const one = planTrip({ trip: mk(), pois: { A: vintage('A'), B: poi('B') }, rules, settings, country, kb, legFn: walkFn, restPool: [C] }).days[0].plan;
+  assert.deepEqual(ids(one), ['A', 'C', 'B'], `只勾一家古著，順路的 C 當第二家插進去：${ids(one).join('→')}`);
+  assert.equal(one.sequence[1].priority, 'onway');
+  assert.equal(one.sequence[1].insertedBy, 'engine');
+});

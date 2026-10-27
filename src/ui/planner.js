@@ -1,4 +1,5 @@
-// 規劃頁：看整趟、改不順眼的（總則 6）。每天一塊：主行程、站卡（時間、名字、走幾分、幾點關、一句話、黃字）、換一家、不去了、排不進的。
+// 規劃頁：看整趟、改不順眼的（總則 6）。每天一塊：日期與主行程、整天的黃字（今天沒排午餐那種，在日期下方；原話 #174）、勉強幾分、留白、站卡（時間、名字、走幾分、幾點關、一句話、那站的黃字）、換一家（每家附簡介；原話 #177）、不去了、排不進的。
+// 打開規劃頁會捲到當天那一塊（原話 #175；app.js render 用 section.day 的 data-date 找）。
 import { el, hm, dateLabel } from './dom.js';
 import { TEXT, CATEGORY } from './text.js';
 import { swapCandidates } from '../engine/swap.js';
@@ -11,9 +12,10 @@ import { choiceOf } from './choices.js';
 
 export function renderPlanner({ state, actions }) {
   const nodes = [el('h1', { text: state.trip.name ?? TEXT.appName })];
-  // 剛按過「不去了」或「升級成站」：給一次反悔的機會（原話 #171），下一個動作前都在；列是 sticky 的，在長頁深處按了也看得到（10-16 審查：升級重排會翻動整天、之前沒有回頭路）
-  if (state.undo) nodes.push(el('div', { class: 'undo-bar' }, [el('span', { text: state.undo.kind === 'upgrade' ? TEXT.undoUpgraded(state.undo.name, dateLabel(state.undo.date)) : TEXT.undoRemoved(state.undo.name, dateLabel(state.undo.date)) }), el('button', { class: 'btn', type: 'button', onclick: () => actions.undoLast() }, TEXT.undo)]));
-  // 二選一選了 B 或「排到別天」之後的一句（T16）：「A 已排到 8/17」或「A 先留在候選池」，同一種 sticky 列、不搶復原列
+  // 剛按過「不去了」「升級成站」「或 B」「排到別天」：給一次反悔的機會（原話 #171；二選一與排到別天也做，原話 #181），下一個動作前都在；列是 sticky 的，在長頁深處按了也看得到（10-16 審查：升級重排會翻動整天、之前沒有回頭路）
+  // 二選一／排到別天那句（「A 已排到 8/17」或「A 先留在候選池（別天排不進）」，擠掉了誰也在裡面；app.js 算好放在 undo.text）就直接當這列的字，不再另畫一列狀態
+  if (state.undo) nodes.push(el('div', { class: 'undo-bar' }, [el('span', { text: undoText(state.undo) }), el('button', { class: 'btn', type: 'button', onclick: () => actions.undoLast() }, TEXT.undo)]));
+  // 不是動作的一句狀態（「旅程更新過了，上一版的改動已丟掉」「正在重排…」）：同一種 sticky 列、不搶復原列
   if (state.notice) nodes.push(el('div', { class: 'undo-bar notice' }, [el('span', { text: state.notice.text }), el('button', { class: 'btn quiet', type: 'button', onclick: () => actions.dismissNotice() }, TEXT.noticeClose)]));
   for (const d of state.trip.days) {
     const planned = state.plans[d.date];
@@ -23,13 +25,22 @@ export function renderPlanner({ state, actions }) {
   return nodes;
 }
 
+/** 復原列的字：二選一／排到別天用 app.js 算好的那句（undo.text）；不去了、升級成站照舊。 */
+function undoText(u) {
+  if (u.kind === 'choose' || u.kind === 'defer') return u.text;
+  return u.kind === 'upgrade' ? TEXT.undoUpgraded(u.name, dateLabel(u.date)) : TEXT.undoRemoved(u.name, dateLabel(u.date));
+}
+
 function dayBlock(d, planned, state, actions) {
   const { plan, day } = planned;
   const anchorLine = day.themeCategory ? `${TEXT.themeOf(day.themeCategory)}，${TEXT.anchorOf(day.anchorName)}` : TEXT.anchorOf(day.anchorName);
-  // 長段提示（leg-suggest）畫在那一段的移動行上（legBlock），不再進日尾的黃字清單
+  // 整天的黃字（今天沒排午餐、沒夜間站、必去缺席、步行超預算……）：沒有 poiId 的那些；長段提示（leg-suggest）畫在那一段的移動行上（legBlock），不進這份
   const dayWarnings = plan.warnings.filter((w) => !w.poiId && w.code !== 'skipped-missing' && w.ruleId !== 'leg-suggest');
-  const block = el('section', { class: 'day' }, [
+  // data-date：打開規劃頁要捲到當天那一塊（原話 #175；app.js render）
+  const block = el('section', { class: 'day', 'data-date': d.date }, [
     el('header', { class: 'day-head' }, [el('h2', { text: dateLabel(d.date) }), el('p', { class: 'muted', text: anchorLine })]),
+    // 整天的黃字畫在日期與主行程那行下方、「這天有 N 分鐘的勉強」之前（原話 #174「提醒事項 像是當天沒有午餐 應該放在日期的下方」）；之前接在所有站卡後面，要滑到底才看得到。每站自己的黃字照舊在站卡上
+    dayWarnings.length ? warnList(dayWarnings) : null,
     // 現場套過改案的那天（plan.applied）：分數是整條序列重算的（走過的＋改案），前面標「現場改過」
     el('p', { class: 'muted small', text: plan.applied ? `${TEXT.appliedLine}，${TEXT.dayScore(plan.score, plan.penaltyMin)}` : TEXT.dayScore(plan.score, plan.penaltyMin) }),
     openSlotLine(plan, day),
@@ -38,7 +49,6 @@ function dayBlock(d, planned, state, actions) {
   // 累積型警告（今天走路會到 N 分、連跑）每站都會再響一次，只在第一次超過的那站寫
   const seenCumulative = new Set();
   plan.sequence.forEach((s, i) => block.append(stopCard(s, i, plan, d, state, actions, seenCumulative)));
-  if (dayWarnings.length) block.append(warnList(dayWarnings));
   if (plan.dropped.length) {
     // 排不進的每一條（must 的除外）多一顆「排到別天」：直接順延到別的排得進的日子（T16；原話 #119）
     block.append(el('details', { class: 'dropped' }, [
@@ -57,16 +67,24 @@ function dayBlock(d, planned, state, actions) {
 /**
  * 二選一那行（T16；DESIGN §6.3.2「卡上顯示『或 B』」）：這站在 plan.choices 裡就在店名下面寫「或 [B]」——B 是一顆小鍵，按了把 A 換成 B、A 順延到別天（app.js chooseOption）；
  * B 來自今天排不進的同類勾選站就補一句「今天只塞得下一家」，來自候選池就寫順路／多繞幾分。沒按＝照引擎；選完 B 進 picks、這行就不再出現。
+ * 下面再一行 B 的簡介（有才畫；跟「換一家」同一個理由，原話 #177「單看店名 我會不清楚選哪間好」，推導）。
  */
 function choiceLine(s, plan, d, state, actions) {
   const c = choiceOf(plan, s.poi.id);
   if (!c?.altPoi) return null;
   const b = state.pois[c.altPoi.id] ?? c.altPoi;
+  const intro = introOf(b);
   return el('p', { class: 'choice small' }, [
     el('span', { class: 'muted', text: TEXT.orChoice }),
     el('button', { class: 'btn quiet sm', type: 'button', onclick: () => actions.chooseOption(d.date, s.poi.id, b) }, b.name_zh),
     el('span', { class: 'muted', text: c.source === 'dropped' ? TEXT.choiceDroppedNote : TEXT.swapNote(c.detourMin) }),
+    intro ? el('span', { class: 'muted small intro', text: intro }) : null,
   ]);
+}
+
+/** 一站的簡介：導讀的那句（guide.intro）有就用它，沒有退回 highlight；站卡那行、換一家清單、二選一的 B 都用這一個。 */
+function introOf(poi) {
+  return poi?.guide?.intro ?? poi?.highlight ?? null;
 }
 
 /**
@@ -155,10 +173,11 @@ function stopCard(s, i, plan, d, state, actions, seenCumulative = new Set()) {
       poi.item ? el('span', { class: 'cat item', text: poi.item }) : null,
     ]),
     el('h3', { text: poi.name_zh }),
-    choiceLine(s, plan, d, state, actions),
+    // 這站自己的簡介緊跟店名；「或 B」那行（帶 B 的簡介）放在它後面，兩段簡介才各自跟著各自的店名（10-27 截圖：B 的簡介夾在 A 名字與 A 簡介之間會讀錯）
+    el('p', { class: 'muted small', text: [introOf(poi) ?? '', limitText].filter(Boolean).join('　') }),
     // 二選一沒選的那家順延到這天（picks[].deferredFrom → stop.deferredFrom；DESIGN §4 Stop.deferredFrom）
     s.deferredFrom ? el('p', { class: 'muted small', text: TEXT.deferredFrom(dateLabel(s.deferredFrom)) }) : null,
-    el('p', { class: 'muted small', text: [poi.guide?.intro ?? poi.highlight ?? '', limitText].filter(Boolean).join('　') }),
+    choiceLine(s, plan, d, state, actions),
     warns.length ? warnList(warns) : null,
     // 哪一種引擎插的站看 stop.priority（'filler' 填空檔、'rest' 恢復站），不看店型：恢復型的店也可能是填站
     s.insertedBy === 'engine' ? el('p', { class: 'muted small', text: poi.category === 'spot' ? TEXT.spotInserted(hm(s.endMin)) : s.priority === 'filler' ? TEXT.fillerInserted : s.priority === 'onway' ? TEXT.onTheWayInserted : TEXT.restInserted }) : null,
@@ -187,8 +206,11 @@ function toggleSwap(card, s, plan, d, state, actions) {
   const list = el('div', { class: 'swap-list' });
   if (!cands.length) list.append(el('p', { class: 'muted small', text: TEXT.noSwap }));
   for (const c of cands.slice(0, 6)) {
+    const intro = introOf(c.poi);
     list.append(el('button', { class: 'btn alt', type: 'button', onclick: () => actions.swapStop(d.date, s.poi.id, c.poi) }, [
       el('strong', { text: c.poi.name_zh }), ` · ${TEXT.swapNote(c.detourMin)}`, c.open === null ? ` · ${TEXT.openUnknown}` : '',
+      // 每家下面一行簡介，整段、不截（原話 #177「換一家 跳出來的選項 也要有簡介 不然單看店名 我會不清楚選哪間好」）；<button> 裡只能放 phrasing content，用 span 配 CSS display:block 換行
+      intro ? el('span', { class: 'intro', text: intro }) : null,
     ]));
   }
   card.append(list);

@@ -71,7 +71,7 @@ test('fixed-window、window、max-stops', () => {
   assert.equal(run('max-stops', ctx(stop('第八站'), { sequence: eight.slice(0, 7) })), 'ok');
 });
 
-test('same-type-day：非主題日第三家古著 no、主題日第三家與第四家都 ok（原話 #20 無上限）；咖啡廳同樣；early-day 下午第二個非恢復站 no', () => {
+test('same-type-day：非主題日第三家古著 no、主題日第三家與第四家都 ok（原話 #20 無上限）；咖啡廳同樣；順路站也算進同類（#185）；early-day 下午第二個非恢復站 no', () => {
   const v = stop('me', { category: 'vintage', walkFactor: 0 });
   assert.equal(run('same-type-day', ctx(v, { acc: { 'dim-cat-count': { vintage: 3 } } })), 'no');
   assert.equal(run('same-type-day', ctx(v, { acc: { 'dim-cat-count': { vintage: 2 } } })), 'ok');
@@ -80,10 +80,12 @@ test('same-type-day：非主題日第三家古著 no、主題日第三家與第�
   const c = stop('Elbe', { category: 'cafe', cafeLike: true, recovery: true, walkFactor: 0 });
   assert.equal(run('same-type-day', ctx(c, { acc: { 'dim-cat-count': { cafe: 3 } } })), 'no');
   assert.match(warnOf('same-type-day', ctx(c, { acc: { 'dim-cat-count': { cafe: 3 } } })), /咖啡廳已經 2 家/);
-  // 順路站先於同類上限（原話 #170 先於 #123，他 10-24 定）：引擎插的順路站不受擋、也不數進那 2 家
+  // 順路站也算進同類的家數（他 10-24 更正，原話 #185「順路站也會被算進同類站裡面」；10-24 中午 2e36cbd 的放行作廢）：引擎插的順路站跟他勾的站一樣被擋、也數進去
   const onway = stop('SEGA-RU', { category: 'vintage', walkFactor: 0, priority: 'onway', insertedBy: 'engine' });
-  assert.equal(run('same-type-day', ctx(onway, { acc: { 'dim-cat-count': { vintage: 3 } } })), 'ok', '非主題日已 3 家，順路站照排');
-  assert.deepEqual(run('dim-cat-count', ctx(onway, { acc: { 'dim-cat-count': { vintage: 2 } } })), { vintage: 2 }, '順路站不數');
+  assert.equal(run('same-type-day', ctx(onway, { acc: { 'dim-cat-count': { vintage: 3 } } })), 'no', '非主題日已 2 家，路過的第三家不插');
+  assert.equal(run('same-type-day', ctx(onway, { acc: { 'dim-cat-count': { vintage: 2 } } })), 'ok', '第 2 家順路站照排');
+  assert.match(warnOf('same-type-day', ctx(onway, { acc: { 'dim-cat-count': { vintage: 3 } } })), /已經 2 家/);
+  assert.deepEqual(run('dim-cat-count', ctx(onway, { acc: { 'dim-cat-count': { vintage: 2 } } })), { vintage: 3 }, '順路站數進去');
   assert.deepEqual(run('dim-cat-count', ctx(v, { acc: { 'dim-cat-count': { vintage: 2 } } })), { vintage: 3 }, '他勾的照數');
   const pm = stop('神社', { startMin: 14 * 60 });
   assert.equal(run('early-day', ctx(pm, { day: { earlyDay: true }, acc: { 'dim-afternoon': 2 } })), 'no');
