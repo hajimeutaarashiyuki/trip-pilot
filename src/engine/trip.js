@@ -5,11 +5,12 @@ import { hmToMin, openIntervals, overlapMin } from './time.js';
 import { haversineM } from '../geo/matrix.js';
 import { distToSegmentM } from '../geo/corridor.js';
 import { evaluateSequence, retimeSequence } from './sequence.js';
-import { SHOPPING_CATEGORIES } from '../rules/_helpers.js';   // 只借購物類店型清單篩順路站，不是規則邏輯（規則在 rules/shopping-day.js）
+import { SHOPPING_CATEGORIES, researchSaysSkip, notAStop } from '../rules/_helpers.js';   // 只借購物類店型清單篩順路站，不是規則邏輯（規則在 rules/shopping-day.js）；後兩個是研究註記的讀法（engineMayInsert 用，分配器同一套）
 import { CATEGORIES, classifyCategory } from '../data/schema.js';   // 主題日的店型要對得上知識庫的店型（themeCategoryOf）
 import { proposeChoices, swappedAwayFrom } from './choices.js';   // 二選一（T16）：七天排完才對每天的序列算，不進分數與時刻；choices.js 的 defer 反過來用 planTrip 試排（模組互相引用只在呼叫時用到，沒問題）
 import { personsOf, presentOn, mergeAdjustments, personAvoids, personAvoidWarnings, cityNamesOf } from './persons.js';   // 同行者（T19）：每天在場的人、合併後的調整（取最鬆，原話 #144）、不想去的店型
 import { nightWalkCapMin, taxRefundBufferMin } from '../data/country.js';   // 國家層（T20）：離境日免稅緩衝、夜間步行風險對時窗尾端的上限（誰讀哪個鍵都記在 data/country.js）
+import { dayTripNightHints } from '../rules/_slots.js';   // 一日遊晚回城還排了市區夜間站的提示（原話 #190；11-06）：跟 person-avoid 同一種後處理，算法在規則那邊的共用尺
 
 /**
  * 引擎插站的觸發：照他勾的排完後出現這些規則的警告才跑第二趟。
@@ -73,6 +74,42 @@ export function regionZonesOf({ home, candidates, anchorPoi }) {
 }
 
 /**
+ * 這天「外地」的區（11-06；原話 #190）：當日區域裡、從那一區回住宿照 legFn 的判斷要搭車的區——拿區中心（kb.zones 的座標）當假站探路，
+ * 走路超過 settings.walkVsRideMaxWalkMin 又有搭車連結才算搭車（geo/matrix.js rideLink，跟站對站的判斷同一份）；走得回住宿的區（一番町、國分町）不算。
+ * 回 { [區 id]: { homeMin: 回據點的搭車＋走路分鐘, last?: { leaveByMin, departMin, fromZoneId }（回程那條路的末班；知識庫沒查到就沒有這個鍵） } }，一區都沒有回 null。
+ * 讀它的：rules/last-train.js（待到太晚回不了住宿）、rules/_slots.js returnToTownMin（一日遊幾點回到市區 → night-slot、day-trip-night、晚回城的提示）。
+ * 站的區不在表裡＝市區。legFn 沒有 rideLink（自訂的 legFn、示範資料）或據點沒有區就沒有這張表。
+ */
+export function awayOf({ zones = [], home = null, legFn = null, kb = null }) {
+  if (typeof legFn?.rideLink !== 'function' || !home?.zoneId) return null;
+  const out = {};
+  for (const z of zones) {
+    if (!z || z === home.zoneId) continue;
+    const center = kb?.zones?.[z];
+    const link = legFn.rideLink({ id: `__zone:${z}`, zoneId: z, lat: center?.lat, lng: center?.lng }, home);
+    if (!link) continue;
+    out[z] = { homeMin: (link.rideMin ?? 0) + (link.walkMin ?? 0), ...(link.last ? { last: link.last } : {}) };
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/**
+ * 當日區域裡區對區搭車的末班（11-06；原話 #190）：{ "<起區>|<訖區>": { leaveByMin, departMin, fromZoneId } }，只列知識庫有末班資料的方向（zones.json 連結的 last）；一筆都沒有回 null。
+ * rules/last-train.js 在一段移動真的搭車（leg.rideMin > 0）時查這張表：引擎核心把 leg 規範化成固定欄位，規則看不到 leg 上的末班，所以整理在 day 上。
+ * legFn 沒有 linkBetween（自訂的 legFn、示範資料）就沒有這張表。
+ */
+export function lastLegsOf({ zones = [], legFn = null }) {
+  if (typeof legFn?.linkBetween !== 'function') return null;
+  const out = {};
+  for (const a of zones) for (const b of zones) {
+    if (!a || !b || a === b) continue;
+    const last = legFn.linkBetween(a, b)?.last;
+    if (last) out[`${a}|${b}`] = last;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+/**
  * planTrip({ trip, pois, rules, settings, country, kb, legFn, restPool, options }) → { days: [{ date, day, plan }], warnings }
  * - trip.days[]: { date, type, earlyDay, departHM?, dayTrip?, openSlotMin?, anchor?: { poiId } | { theme, poiIds[] }, picks: [{ poiId, priority, dwellMin?, fixedWindow?, errand? }], designated?: [poiId], nightSlotOff?, removed?: [{ poiId, insertedBy?, priority? }] }
  *   anchor.theme：主題日那一類的店型鍵（vintage／record／cafe 這種；需求單上的中文會翻，翻不出記整趟警告 theme-unknown、那天當普通日；themeCategoryOf）
@@ -107,6 +144,12 @@ export function regionZonesOf({ home, candidates, anchorPoi }) {
  *   stamina 進 rules/_helpers.js budgetMultiplier（easy 進 min、hard 最後乘）；nightSlot none → day.nightSlotOff（跟早起日前一晚同一條路）、less → day.nightSlotLess（rules/night-slot.js 罰分減半）；
  *   avoidCategories：引擎自己插的站（恢復站、填站、順路站、坐下來的地方；現場改案的池 ui/now.js fieldPool 同）與走廊清單都不拿那些店型，他勾的照排（總則 3）＋那站一條提示 person-avoid（hint，不罰；personAvoidWarnings）；
  *   avoidCategories 翻不出店型的記整趟警告 person-avoid-unknown
+ * - 外地與末班車（11-06；原話 #190）：每天的 day 多兩張表，都選填（沒有就 null）——
+ *   away { [區 id]: { homeMin, last? } }：當日區域裡「從那一區回住宿要搭車」的區（awayOf）；規則 last-train（待到太晚回不了住宿）、night-slot 與 day-trip-night（一日遊幾點回到市區）讀；
+ *   lastLegs { "<起區>|<訖區>": { leaveByMin, departMin, fromZoneId } }：當日區域裡區對區搭車的末班（lastLegsOf）；規則 last-train（這一段搭車趕不趕得上）讀。
+ *   末班資料來自知識庫 zones.json 連結的 last（geo/matrix.js）；legFn 不是 makeLegFn 做的（示範資料、測試自訂的）就兩張都沒有，那幾條規則照平常算。
+ *   一日遊回到市區已晚於 settings.dayTripNightReturnByHM、後面還排了他勾的市區夜間站：照排，那站多一條提示 day-trip-night（hint、不罰；rules/_slots.js dayTripNightHints）；
+ *   引擎自己插的由規則 day-trip-night 擋。現場套過改案的那天（ui/applied.js）不會重掛這條提示。
  */
 export function planTrip({ trip, pois, rules, settings, country, kb, legFn, restPool = [], brief = null, options = {} }) {
   const out = []; const warnings = [];
@@ -137,13 +180,16 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
     // 那天在場的人與合併後的調整（T19）：party＝在場人數（有 dates 的只算那幾天；倍率那條照舊 ≥2 就 partyWalkFactor）；人之間取最鬆（原話 #144）
     const present = presentOn(persons, d.date);
     const adjust = mergeAdjustments(present);
+    const regionZones = regionZonesOf({ home, candidates, anchorPoi });
     const day = {
       date: d.date, type: d.type ?? 'normal', earlyDay: Boolean(d.earlyDay), dayTrip: Boolean(d.dayTrip), party: present.length,
       persons: present, adjust,
       dayTripNext: prevType === 'daytrip' || Boolean(trip.days[index - 1]?.dayTrip),
       themeCategory, prevThemeCategory: prevTheme,
       anchorPoiId: anchorPoi?.id ?? null, anchorName: anchorPoi?.name_zh ?? d.anchor?.theme ?? null,
-      designated: d.designated ?? [], regionZones: regionZonesOf({ home, candidates, anchorPoi }), homeZoneId: home?.zoneId ?? null,
+      designated: d.designated ?? [], regionZones, homeZoneId: home?.zoneId ?? null,
+      // 外地的區與末班車（原話 #190；11-06）：哪幾區回住宿要搭車、區對區搭車的末班；沒有就 null（規則 last-train、night-slot、day-trip-night 讀）
+      away: awayOf({ zones: regionZones, home, legFn, kb }), lastLegs: lastLegsOf({ zones: regionZones, legFn }),
       window: { startMin: win.startMin, endMin: win.endMin }, windowRaw: win.raw, openSlotMin: win.openSlotMin,
       openSlotSkipped: win.warnings.some((w) => w.code === 'open-slot-skipped'),
       taxRefundBufferMin: win.taxRefundBufferMin,   // 離境日真的扣掉的免稅緩衝（國家層 taxRefund，T20）；plan-report 與之後的離境日畫面讀，其餘日子 0
@@ -193,6 +239,9 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
     // 他勾的站是在場的人不想去的店型（T19）：照排，那站多一條提示 person-avoid（hint、不罰、不進規則檔——跟 leg-suggest 同一種後處理）
     const avoidHints = personAvoidWarnings(plan.sequence, adjust);
     if (avoidHints.length) plan = { ...plan, warnings: [...(plan.warnings ?? []), ...avoidHints] };
+    // 一日遊回到市區已經晚於 settings.dayTripNightReturnByHM、後面還排了他勾的市區夜間站（原話 #190；11-06）：照排，那站多一條提示（hint、不罰；同一種後處理）
+    const lateNightHints = dayTripNightHints({ sequence: plan.sequence, day, settings, country });
+    if (lateNightHints.length) plan = { ...plan, warnings: [...(plan.warnings ?? []), ...lateNightHints] };
     out.push({ date: d.date, day, plan });
     prevTheme = themeCategory; prevType = d.dayTrip ? 'daytrip' : (d.type ?? 'normal');
   });
@@ -535,9 +584,12 @@ const NO_FILL_CATEGORIES = new Set(['logistics', 'event', 'onsen', 'daytrip', 'v
  * - poolLosses ≥ 2：候選池落選兩次降權，排程不主動排（profile §7、原話 #89）
  * - unlockWhen 有值：「下次再說」層，未達條件不排（profile §7；善治郎那種）
  * - item 有值：代購研究的站是為了買某樣東西才查的，順路購買由代購清單管（原話 #87、#29；10-13 七天實驗引擎把「藤崎 香氛區（查證結果：未見 DKNY，可略過）」當站塞進 8/17）
+ * - 研究判可略過（知識庫欄位 researchSkip）、不是一個地點的條目（notAStop，研究拿兩家比較的摘要那種）：11-06 加，跟分配器的 poolEligible 同一套讀法
+ *   （rules/_helpers.js：有欄位照欄位，整個欄位沒有才退回店名字樣「可略過」「不可指望」「A vs B」）。10-13 驗收定的池本來就寫了要扣「研究判可略過」，
+ *   之前靠 item 那條間接擋（仙台包可略過的三筆都是代購研究站）；不是地點的條目跟一日遊複合條目（NO_FILL_CATEGORIES 的 daytrip）同理，推導。
  * 他自己勾的站不走這裡（picks 照排，總則 3「指定行程凌駕偏好」）。10-14 T22。
- * 10-14 現況（審查後註記）：仙台包 147 站的 my 都是 {}、沒有一筆 poolLosses 或 unlockWhen（§7 點名的善治郎也沒標），src/ui 也還沒把評分寫進 poi.my（field.ratings 留在手機裡）；
- * 今天真的擋到東西的只有 curated:false 與 item 兩條，其餘三條是門先立著、等資料接上。
+ * 現況（11-06）：仙台包的 my 都是 {}、沒有一筆 poolLosses，src/ui 也還沒把評分寫進 poi.my（field.ratings 留在手機裡）；unlockWhen 11-06 標了兩筆
+ * （たんや善治郎 仙台站前本店、「利久 vs 善治郎」；profile §5.1，原話 #6、#13）。真的擋到東西的是 curated:false、item、unlockWhen 三條，rating 與 poolLosses 兩條是門先立著、等資料接上。
  */
 export function engineMayInsert(p) {
   if (!p) return false;
@@ -546,6 +598,8 @@ export function engineMayInsert(p) {
   if ((p.poolLosses ?? 0) >= 2) return false;
   if (p.unlockWhen) return false;
   if (p.item) return false;
+  if (researchSaysSkip(p)) return false;
+  if (notAStop(p)) return false;
   return true;
 }
 

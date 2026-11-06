@@ -32,14 +32,16 @@ import itemGap from './item-gap.js';
 import mealSlots from './meal-slots.js';
 import nightSlot from './night-slot.js';
 import shoppingDay from './shopping-day.js';
+import lastTrain from './last-train.js';
+import dayTripNight from './day-trip-night.js';
 
 export const BUILTIN = Object.freeze([
   // 累積量
   dimWalk, dimWalkRun, dimShopRun, dimCatCount, dimRecRun, dimAfternoon,
   // 硬約束（站）
-  hours, fixedWindow, windowRule, maxStops, sameTypeDay, earlyDay, daylight, fillerGap,
+  hours, fixedWindow, windowRule, maxStops, sameTypeDay, earlyDay, daylight, fillerGap, lastTrain,
   // 軟約束（站）
   walkBudget, walkCost, rideCost, walkRun, shopRun, cafeAdjacent, recoveryRun, backtrack, zoneExit, zoneReentry, noonUrban, waitAtDoor, lateDeparture, shoppingDay,
   // 整天
-  anchor, designated, itemGap, mealSlots, nightSlot,
+  anchor, designated, itemGap, mealSlots, nightSlot, dayTripNight,
 ]);

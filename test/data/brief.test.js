@@ -2,7 +2,7 @@
 // 輸出的文字照 docs/brief-template.md 的五段與每列、記憶（消耗品與要買的）與建議、匯出再匯入不變。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { emptyBrief, normalizeBrief, briefToMarkdown, briefFileName, toList, looksLikeBrief, isBriefEmpty, themeOptions } from '../../src/data/brief.js';
+import { emptyBrief, normalizeBrief, briefToMarkdown, briefFileName, toList, looksLikeBrief, isBriefEmpty, themeOptions, briefMdName, briefSubmitMode, canSubmitBrief, briefEndpointFor } from '../../src/data/brief.js';
 import { emptyMemory, normalizeMemory, rememberFromBrief, suggestionsFor } from '../../src/data/brief-memory.js';
 
 /** 填好的一份（已是 normalize 後的形狀）：仙台七天、有公務、一位同行者、兩筆代購（一筆消耗品）、兩件要辦的事。 */
@@ -277,4 +277,48 @@ test('檔名 brief-<城市>-<起日>.json：多城市取第一個、多字的城
   assert.equal(briefFileName(emptyBrief()), 'brief-未填-未填.json');
   assert.equal(briefFileName({ city: 'a:b' }), 'brief-a-b-未填.json');
   assert.equal(briefFileName(null), 'brief-未填-未填.json');
+});
+
+test('提交的檔名 briefMdName（原話 #188；不含 .brief.md）：<起日的 YYYY-MM>-<城市>，多城市取第一個、空白與檔名不能用的字連成 -；只填一樣就用那一樣；都沒填才是 brief-<今天>；撞 Windows 裝置名加前綴；最長 80 個字', () => {
+  const today = '2026-11-06';
+  assert.equal(briefMdName(filled(), today), '2026-08-仙台');
+  assert.equal(briefMdName({ city: '東京、鎌倉', dates: { from: '2026-03-01' } }, today), '2026-03-東京');
+  assert.equal(briefMdName({ city: ' New  York , Boston', dates: { from: '2026-03-01' } }, today), '2026-03-New-York');
+  assert.equal(briefMdName({ city: 'a:b*c', dates: { from: '2026-12-31' } }, today), '2026-12-a-b-c');
+  assert.equal(briefMdName({ city: '..\\..\\x/y', dates: { from: '2026-12-31' } }, today), '2026-12-x', '路徑字元進不了檔名（/ 之後是第二個城市）');
+  assert.equal(briefMdName({ city: '仙台' }, today), '仙台', '日期還沒訂：只用城市（推導）');
+  assert.equal(briefMdName({ city: '仙台', dates: { from: '8/12' } }, today), '仙台', '起日格式不對當沒填');
+  assert.equal(briefMdName({ dates: { from: '2026-08-12' } }, today), '2026-08', '沒填城市：只用年月（推導）');
+  assert.equal(briefMdName(emptyBrief(), today), 'brief-2026-11-06');
+  assert.equal(briefMdName(null, today), 'brief-2026-11-06');
+  assert.equal(briefMdName({ city: '？？？' }, today), 'brief-2026-11-06', '城市全是標點＝沒填');
+  assert.equal(briefMdName({ city: 'con' }, today), 'brief-con');
+  assert.equal(briefMdName({ city: '2026-08-仙台 (2)' }, today), '2026-08-仙台-2');
+  const long = briefMdName({ city: '仙'.repeat(200), dates: { from: '2026-08-12' } }, today);
+  assert.equal([...long].length, 80);
+  assert.ok(long.startsWith('2026-08-仙'));
+  assert.match(briefMdName(emptyBrief()), /^brief-\d{4}-\d{2}-\d{2}$/, '沒給今天就讀時鐘');
+  for (const b of [filled(), emptyBrief(), null, { city: 7 }, { dates: 'x' }]) assert.match(briefMdName(b, today), /^[\p{L}\p{N}_-]{1,80}$/u, JSON.stringify(b));
+});
+
+test('怎麼交 briefSubmitMode：同源端點會收＞瀏覽器有另存對話框＞只能下載（只認 true，還沒探測的 null 不算）；入口 canSubmitBrief 只在交得出去的環境出現——iPhone Safari 兩樣都沒有', () => {
+  assert.equal(briefSubmitMode({ endpointOk: true, hasPicker: true }), 'server');
+  assert.equal(briefSubmitMode({ endpointOk: true, hasPicker: false }), 'server');
+  assert.equal(briefSubmitMode({ endpointOk: false, hasPicker: true }), 'picker');
+  assert.equal(briefSubmitMode({ endpointOk: false, hasPicker: false }), 'download');
+  assert.equal(briefSubmitMode({ endpointOk: null, hasPicker: true }), 'picker', '還沒探測');
+  assert.equal(briefSubmitMode({ endpointOk: 'yes', hasPicker: 1 }), 'download', '只認 true');
+  assert.equal(briefSubmitMode({}), 'download');
+  assert.equal(briefSubmitMode(), 'download');
+  assert.equal(canSubmitBrief({ endpointOk: true, hasPicker: false }), true, '桌機伺服器供應的頁面（Firefox 也行）');
+  assert.equal(canSubmitBrief({ endpointOk: false, hasPicker: true }), true, '桌機 Chrome 開 GitHub Pages 的頁面');
+  assert.equal(canSubmitBrief({ endpointOk: false, hasPicker: false }), false, 'iPhone Safari');
+  assert.equal(canSubmitBrief(), false);
+});
+
+test('同源提交端點 briefEndpointFor：頁面在 …/app/ 底下（桌機伺服器掛的地方）才有，是相對網址 ../brief——/app/ 解成 /brief、/trip-pilot/app/ 解成 /trip-pilot/brief；GitHub Pages 與別處沒有', () => {
+  for (const p of ['/app/', '/app/index.html', '/trip-pilot/app/', '/trip-pilot/app/index.html']) assert.equal(briefEndpointFor(p), '../brief', p);
+  for (const p of ['/trip-pilot/', '/', '/app', '/apple/', '/myapp/', '/app/x/', '/app/sw.js', '/dist/index.html', '', null, undefined]) assert.equal(briefEndpointFor(p), null, String(p));
+  assert.equal(new URL(briefEndpointFor('/app/'), 'http://127.0.0.1:18810/app/#/brief').pathname, '/brief');
+  assert.equal(new URL(briefEndpointFor('/trip-pilot/app/index.html'), 'https://x.ts.net/trip-pilot/app/index.html#/brief').pathname, '/trip-pilot/brief');
 });

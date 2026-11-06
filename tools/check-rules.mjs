@@ -37,6 +37,10 @@ export const CHECKS = [
   // 同行者體力的倍率同一句（profile §9「體力「輕鬆一點」→ 步行預算 ×0.85、「可以操」→ ×1.15」；10-16 T19，都是預設）
   { label: '體力輕鬆倍率', pattern: /體力「輕鬆一點」→ 步行預算 ×(0\.\d+)、「可以操」→ ×\d+\.\d+/, key: 'staminaEasyFactor' },
   { label: '體力可以操倍率', pattern: /體力「輕鬆一點」→ 步行預算 ×0\.\d+、「可以操」→ ×(\d+\.\d+)/, key: 'staminaHardFactor' },
+  // 餐段前後的放寬量（profile §2.4「餐段前後各放寬 60 分」；放寬這件事是原話 #189，60 是 11-06 實跑比過的預設）
+  { label: '餐段放寬', pattern: /餐段前後各放寬 (\d+) 分/, key: 'mealGraceMin' },
+  // 一日遊回到市區「不算晚」的時刻（profile §2「回到市區不晚於 21:00」，原話 #190 的 9:00）；rules.json 存 "21:00"
+  { label: '一日遊回城門檻', pattern: /回到市區不晚於 (\d{1,2}):00/, key: 'dayTripNightReturnByHM', transform: (n) => `${n}:00` },
 ];
 
 /**

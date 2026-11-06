@@ -1,8 +1,10 @@
 // 需求單頁（T26；原話 #172「記得要做需求單的頁面」、#87 網頁或視窗、勾選、記憶）：docs/brief-template.md v2 的五段做成可勾可填的一頁，出發前填、不是隨身用（不進底部分頁）。
-// 每改一個欄位就存手機（app.js setBrief）。打字、勾選、下拉的欄位存了不重畫——重畫會把焦點踢掉、手機鍵盤收起來——
+// 在電腦上填、填完按「提交」交給 Claude（原話 #186「需求單不是在手機跑 而是在電腦」、#188「需求單在網頁輸出成一份MD檔到 trip-pilot 資料夾」；app.js submitBrief）：
+// 頁面是桌機伺服器供應的就直接寫成 trips/<名字>.brief.md，不然另存對話框或下載。頂端與頁尾各一顆「提交」（這頁很長，填到最後手邊要有鍵）。
+// 每改一個欄位就存這台裝置（app.js setBrief）。打字、勾選、下拉的欄位存了不重畫——重畫會把焦點踢掉（手機上鍵盤還會收起來）——
 // 只有結構變了才重畫：加列、刪列、加／移除同行者、記憶按鈕加進表、純玩／有公務與移動方式的 radio（多一欄要出現或收掉）、載入、清空、復原。
 // 改資料一律從 updater 收到的現況算（x），不拿畫面當下的物件，不然沒重畫的期間會蓋掉剛打的字。
-// 存成檔案／複製文字／載入別份／清空時 app.js 順手把消耗品與他要買的記進記憶（data/brief-memory.js），下一份需求單在 §4 與「要買的」上方帶出來一排按鈕。
+// 提交／存成檔案／複製文字／載入別份／清空時 app.js 順手把消耗品與他要買的記進記憶（data/brief-memory.js），下一份需求單在 §4 與「要買的」上方帶出來一排按鈕。
 // 國家層（T20，state.country＝打包檔的 kb/country/<國>.json）：主題勾選框的選項讀 themes、「要辦的事」的例子讀 commonErrands、租車／重機的提示讀 drivingPermit.summary；
 // 沒旅程（state.country null）就用 data/brief.js 與 text.js 的預設。
 import { el } from './dom.js';
@@ -13,6 +15,14 @@ import { errandExamplesOf, drivingPermitSummaryOf } from '../data/country.js';
 
 const L = TEXT.brief;
 let clearTimer = null;   // 「清空」第一下只武裝幾秒，再按一下才清
+
+/**
+ * 這個環境怎麼交需求單（data/brief.js briefSubmitMode／canSubmitBrief 的輸入）：同源的提交端點探測到會收（state.briefEndpoint，app.js probeBriefEndpoint）、
+ * 瀏覽器有另存對話框（state.savePicker）。提交那顆鍵、設定頁與空白頁的入口都看這一份。
+ */
+export function briefEnv(state) {
+  return { endpointOk: state?.briefEndpoint === true, hasPicker: state?.savePicker === true };
+}
 
 export function renderBrief({ state, actions }) {
   const b = state.brief;
@@ -39,6 +49,9 @@ export function renderBrief({ state, actions }) {
     el('div', { class: 'actions' }, [el('button', { class: 'btn', type: 'button', onclick: () => putRender((x) => ({ ...x, persons: [...x.persons, emptyPerson()] })) }, L.addPerson)]),
     errandsSection(b, sugg.consumables, put, putRender),
     tasksSection(b, put, putRender, errandExamples),
+    // 頁尾再一顆「提交」（text.js intro「填完按提交」）：填到最後不用捲回頂端；狀態句在這裡也印一次，頂端那句在好幾屏之上看不到
+    el('div', { class: 'actions submit-end' }, [submitButton(actions)]),
+    state.briefStatus ? el('p', { class: 'small status', text: state.briefStatus }) : null,
   ])];
 }
 
@@ -64,7 +77,9 @@ function actionBar(actions) {
     clearTimer = setTimeout(() => { clearTimer = null; clearBtn.textContent = L.clear; }, 4000);
   });
   return el('div', { class: 'actions' }, [
-    el('button', { class: 'btn primary', type: 'button', onclick: () => actions.exportBrief() }, L.export),
+    // 最主要的鍵是「提交」（原話 #188）；「存成檔案」（JSON，換裝置或留底用）降成次要
+    submitButton(actions),
+    el('button', { class: 'btn', type: 'button', onclick: () => actions.exportBrief() }, L.export),
     el('button', { class: 'btn', type: 'button', onclick: () => actions.copyBrief() }, L.copy),
     el('label', { class: 'btn' }, [
       L.import,
@@ -74,6 +89,7 @@ function actionBar(actions) {
   ]);
 }
 function disarmClear() { if (clearTimer) clearTimeout(clearTimer); clearTimer = null; }
+const submitButton = (actions) => el('button', { class: 'btn primary', type: 'button', onclick: () => actions.submitBrief() }, L.submit);
 
 // ---- §1 骨架 ----
 function skeletonSection(b, put, putRender, driving) {

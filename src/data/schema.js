@@ -17,6 +17,29 @@ export const CATEGORIES = Object.freeze([
   'food', 'cafe', 'bar', 'brewery', 'onsen', 'cruise', 'logistics', 'venue', 'spot', 'other',   // venue＝固定時段的會場（研討會、演唱會），10-14 T23；spot＝沒有店名只有地點的「坐下來」（海邊、公園、展望台），10-16 原話 #172
 ]);
 
+/**
+ * 研究註記與解鎖條件的知識庫欄位（都選填；一般的店一個都不寫）。2026-11-06 從店名括號搬成欄位（原話 #191 其餘照預設）：
+ * 研究以前把「首選」「保底備案」「可略過」寫在 name_zh 的括號裡、分配器認店名字樣；現在 name_zh 只留店名與描述店本身的字，判斷寫在這幾欄。
+ * normalizePoi 原樣帶進打包檔（不丟未知欄位），只驗形狀：寫了卻不合 ok 的記警告 research-field-bad（null＝明講沒有，合法）。
+ * - researchRank：'first'（同品項的幾家落點、或同一餐的幾家店裡研究的首選）｜'backup'（備案、保底、備援）。
+ *   誰讀：分配器（engine/allocate.js，經 rules/_helpers.js researchRank）——餐段與夜間站挑店、同品項挑落點時 first 先、backup 後；吃的站標 backup 不主動排當一餐。
+ * - researchSkip：一句理由的字串（「查證結果：未見 DKNY，可略過」）或 true——研究查過、這趟不用去。
+ *   誰讀：分配器不進池（allocate.js poolEligible）、引擎不主動插（engine/trip.js engineMayInsert）；他自己勾了照排，走廊清單照列。
+ * - notAStop：true——這一筆是研究的比較或彙整摘要、不是一個可以排的地點（「利久 vs 善治郎」）。誰讀：同上兩處（不進池、不主動插）。
+ * - unlockWhen：解鎖條件的一句話（「同品類吃無可吃」；profile §5.1、§7「下次再說」層）。
+ *   誰讀：引擎不主動插（engineMayInsert）、分配器不進池（poolEligible）、走廊清單不列（trip.js corridorEligible）、二選一的 B 不出（engine/choices.js choiceEligible）；他自己勾了照排。
+ *   這一欄讀的那幾處只看有沒有值：形狀不對（不是字串）一樣會鎖，所以警告要處理、別放著。
+ * - researchNote：研究寫給規劃者的一句短註記，原本寫在店名括號裡的那句逐字搬來（「離飯店最近：出門1分鐘」）。誰讀：規劃者（在對話裡排行程的人或代理）；引擎與畫面不讀。
+ * 前三欄的讀法是「有欄位照欄位、整個欄位沒有才退回店名字樣」（rules/_helpers.js；別的城市的知識庫可能還沒欄位化）。
+ */
+export const RESEARCH_FIELDS = Object.freeze({
+  researchRank: { ok: (v) => v === 'first' || v === 'backup', expect: '要寫 first 或 backup' },
+  researchSkip: { ok: (v) => typeof v === 'boolean' || typeof v === 'string', expect: '要寫一句理由或 true' },
+  notAStop: { ok: (v) => typeof v === 'boolean', expect: '要寫 true' },
+  unlockWhen: { ok: (v) => typeof v === 'string' && v.trim() !== '', expect: '要寫解鎖條件的一句話' },
+  researchNote: { ok: (v) => typeof v === 'string', expect: '要寫一句話' },
+});
+
 /** 自由文字的 category → 規範店型。回傳 { key, matched } ；沒命中 key='other'、matched=null。 */
 export function classifyCategory(raw, table = DERIVE.category) {
   const text = String(raw ?? '').toLowerCase();
@@ -134,6 +157,12 @@ export function normalizePoi(raw, { derive = DERIVE, country = null } = {}) {
   if (!(Number.isFinite(raw.lat) && Number.isFinite(raw.lng))) {
     poi.lat = null; poi.lng = null;
     warnings.push({ code: 'coords-missing', poiId: poi.id, msg: '沒有座標' });
+  }
+
+  // 研究註記與解鎖條件（RESEARCH_FIELDS）：值原樣帶過（poi 是 raw 的淺拷貝），這裡只驗形狀——寫錯字的 researchRank 會靜靜變成「沒標」，要讓打包與 kb-check 看得到
+  for (const [field, spec] of Object.entries(RESEARCH_FIELDS)) {
+    const v = raw[field];
+    if (v !== undefined && v !== null && !spec.ok(v)) warnings.push({ code: 'research-field-bad', poiId: poi.id, field, msg: `${field} 的值看不懂：${JSON.stringify(v)}（${spec.expect}）` });
   }
 
   poi.my = raw.my && typeof raw.my === 'object' ? raw.my : {};

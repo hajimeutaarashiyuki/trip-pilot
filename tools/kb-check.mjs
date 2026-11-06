@@ -1,4 +1,4 @@
-// 驗一城的研究產出（data.json）能不能進管線：必填欄位、店型認不認得、營業時間解析得出幾成、歸區率、座標覆蓋、重複 id。
+// 驗一城的研究產出（data.json）能不能進管線：必填欄位、店型認不認得、營業時間解析得出幾成、歸區率、座標覆蓋、重複 id、研究註記欄位（值看不懂的、註記還寫在店名裡的）。
 // 用法：node tools/kb-check.mjs <知識庫資料夾>
 // 唯讀、報告型：永遠 exit 0；最後一行「可以打包」或「先補這些」。有 zones.json／coords.json 才算歸區率與座標覆蓋。
 // 統計以「站」為單位（同店多類別算一站，打包時會合併）；交通類（logistics）不算營業時間與座標覆蓋，跟 geocode 一樣不查。
@@ -6,7 +6,8 @@ import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { normalizePoi } from '../src/data/schema.js';
+import { normalizePoi, RESEARCH_FIELDS } from '../src/data/schema.js';
+import { researchNameHints } from '../src/rules/_helpers.js';
 import { zoneOfPoi } from '../src/geo/zones.js';
 import { SKIP_CATEGORIES } from './geocode.mjs';
 
@@ -38,12 +39,19 @@ export function checkKb({ data, zones = null, coords = null }) {
     zones: zones ? { total: Object.keys(zones).length, zoned: 0, unzoned: [] } : null,
     coords: coords ? { needed: 0, covered: 0, byConfidence: {}, lowConfidence: 0, nulls: [], absent: [] } : null,
     duplicates: [],                                  // { id, names, sameStore }
+    // 研究註記與解鎖條件的欄位（src/data/schema.js RESEARCH_FIELDS；11-06）：各欄幾筆有值、值看不懂的、註記還寫在店名裡卻沒有對應欄位的（引擎會退回認店名字樣）。逐筆數，不看是不是同店多類別
+    research: { byField: {}, bad: [], nameOnly: [] },
   };
   const seen = new Map();
   for (const raw of rows) {
     const { poi, warnings } = normalizePoi(raw);
     const label = raw.name_zh || raw.name_local || poi.id;
     for (const f of REQUIRED_FIELDS) if (!String(raw[f] ?? '').trim()) (s.missing[f] ??= []).push(label);
+    for (const f of Object.keys(RESEARCH_FIELDS)) if (raw[f] !== undefined && raw[f] !== null) s.research.byField[f] = (s.research.byField[f] ?? 0) + 1;
+    for (const w of warnings) if (w.code === 'research-field-bad') s.research.bad.push(`${label}［${w.field}：${JSON.stringify(raw[w.field])}］`);
+    const hints = researchNameHints(poi);
+    const nameOnly = [hints.rank && raw.researchRank === undefined ? 'researchRank' : null, hints.skip && raw.researchSkip === undefined && raw.skip !== true ? 'researchSkip' : null, hints.notAStop && raw.notAStop === undefined ? 'notAStop' : null].filter(Boolean);
+    if (nameOnly.length) s.research.nameOnly.push(`${label}［該寫 ${nameOnly.join('、')}］`);
     if (seen.has(poi.id)) { const d = seen.get(poi.id); d.names.push(label); d.keys.add(storeKey(raw)); continue; }
     seen.set(poi.id, { names: [label], keys: new Set([storeKey(raw)]) });
     s.stations++;
@@ -89,6 +97,9 @@ function verdictOf(s) {
     if (s.coords.lowConfidence) notes.push(`${s.coords.lowConfidence} 站座標是區心頂替或模糊命中，抽查`);
   }
   if (s.duplicates.some((d) => d.sameStore)) notes.push(`${s.duplicates.filter((d) => d.sameStore).length} 家店列在多個類別（打包會合併成一筆）`);
+  // 研究註記欄位：值看不懂直接擋（寫錯字的 researchRank 會靜靜變成沒標、形狀不對的 unlockWhen 照樣會鎖）；註記還寫在店名裡的只提醒（引擎會退回認店名字樣，排得出來）
+  if (s.research.bad.length) blocking.push(`研究註記欄位的值看不懂 ${s.research.bad.length} 處（照 src/data/schema.js RESEARCH_FIELDS 改）`);
+  if (s.research.nameOnly.length) notes.push(`${s.research.nameOnly.length} 筆的研究註記還寫在店名裡（首選／備案／保底／備援／可略過／不可指望／A vs B），引擎會退回認店名；搬成欄位、店名清掉那些字`);
   return { ok: blocking.length === 0, blocking, notes };
 }
 
@@ -112,6 +123,8 @@ export function formatReport(s, label = 'data.json') {
     lines.push(`座標（coords.json）：${s.coords.covered}/${s.coords.needed}（${pct(s.coords.covered, s.coords.needed)}%）：${conf || '—'}${s.coords.nulls.length ? `；沒查到 ${s.coords.nulls.length}${list(s.coords.nulls)}` : ''}${s.coords.absent.length ? `；還沒查 ${s.coords.absent.length}${list(s.coords.absent)}` : ''}`);
   } else lines.push('座標：沒有 coords.json，跳過（node tools/geocode.mjs 查）');
   lines.push(s.duplicates.length ? `重複 id：${s.duplicates.map((d) => `${d.id} ×${d.names.length}（${d.sameStore ? '同店多類別' : `撞名：${[...new Set(d.names)].join('／')}`}）`).join('、')}` : '重複 id：無');
+  const fields = Object.keys(RESEARCH_FIELDS).filter((f) => s.research.byField[f]).map((f) => `${f} ${s.research.byField[f]}`).join('、');
+  lines.push(`研究註記欄位：${fields || '沒有一筆用到'}${s.research.bad.length ? `；值看不懂 ${s.research.bad.length}${list(s.research.bad)}` : ''}${s.research.nameOnly.length ? `；註記還寫在店名裡 ${s.research.nameOnly.length}${list(s.research.nameOnly)}` : ''}`);
   if (s.verdict.notes.length) lines.push(`要注意：${s.verdict.notes.join('；')}`);
   lines.push(s.verdict.ok ? '結論：可以打包' : `結論：先補這些：${s.verdict.blocking.join('；')}`);
   return lines.join('\n');

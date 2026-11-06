@@ -1,9 +1,12 @@
 // 多日分配器 v1（T17；規則草案 docs/superpowers/plans/2026-10-16-trip-pilot-t17-allocator-draft.md）：
 // 骨架不動、②先分、非主題日同類 ≤2、購物類只在購物日、一日遊只拿那區、沒開的不分、站數上限、planDay 驗證後搬天／換店／回填、同一家整趟一次、同一品項一個落點、門、不改傳入的 trip；
 // 10-16 審查後加：品牌字不算店型請求、研究註記（首選／備案）、比較條目不進池、固定時段日只看空檔、抵達日有夜間站、留池理由最後重算。
+// 11-06 研究註記搬成知識庫欄位（researchRank／researchSkip／notAStop；原話 #191 其餘照預設）：有欄位照欄位、整個欄位沒有才退回店名字樣；
+// 小世界夾具（test/fixtures/alloc-world.js）留著店名字樣版＝還沒欄位化的知識庫，欄位版在這個檔裡另組（FIELD_POIS）、兩版分出來要一模一樣。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { allocateTrip, poolEligible, levelOf, briefTextMatches, isCategoryRequest, regionZonesFor, zoneGraph, walkCircle, openWithin, researchSaysSkip, researchRank, comparisonEntry, freeIntervals, ALLOC_DEFAULTS } from '../../src/engine/allocate.js';
+import { researchNameHints } from '../../src/rules/_helpers.js';
 import { loadRules } from '../../src/rules/index.js';
 import { BUILTIN } from '../../src/rules/builtin.js';
 import { makeLegFn } from '../../src/geo/matrix.js';
@@ -171,6 +174,87 @@ test('研究標備案／保底的吃的站不主動排當一餐（原話 #6、#1
   const sweet = r.report.days.flatMap((d) => d.picks).find((p) => p.poiId === 'foodsweet');
   if (sweet) assert.equal(sweet.slot, null, '甜點攤排進去也不是午餐／晚餐');
   else assert.doesNotMatch(r.unplaced.find((u) => u.poiId === 'foodsweet').reason, /餐/, '甜點攤留池的理由不是餐段');
+});
+
+// ── 11-06 研究註記搬成知識庫欄位：有欄位照欄位、整個欄位沒有才退回店名字樣 ──
+/** 小世界的欄位版：四家靠店名字樣的店改成乾淨店名＋欄位（仙台包 11-06 之後的樣子）；其餘三十來家原樣。 */
+const FIELD_POIS = {
+  ...POIS,
+  foodback: { ...POIS.foodback, name_zh: '巷口食堂', researchRank: 'backup', researchNote: '保底備案' },
+  foodvs: { ...POIS.foodvs, name_zh: '站內兩家食堂', notAStop: true },
+  itema2: { ...POIS.itema2, name_zh: '藥妝二', researchRank: 'first', researchNote: '首選' },
+  gateskip: { ...POIS.gateskip, name_zh: '百貨香氛區', researchSkip: '查證結果：無貨，可略過' },
+};
+
+test('欄位版的小世界（店名清掉註記字、改寫欄位）分出來跟店名字樣版一模一樣：每天的 picks、池子、留池的店與理由', () => {
+  for (const id of ['foodback', 'foodvs', 'itema2', 'gateskip']) assert.deepEqual(researchNameHints(FIELD_POIS[id]), { rank: null, skip: false, notAStop: false }, `${id} 的店名已經沒有註記字`);
+  const byName = run();
+  const byField = run({ pois: FIELD_POIS });
+  assert.deepEqual(byField.days, byName.days, '每天分到的店、priority、順路購買都相同');
+  assert.deepEqual(byField.report.pool, byName.report.pool);
+  assert.deepEqual(byField.unplaced.map((u) => [u.poiId, u.level]), byName.unplaced.map((u) => [u.poiId, u.level]));
+  assert.deepEqual(byField.unplaced.map((u) => u.reason), byName.unplaced.map((u) => u.reason.replace('藥妝二（首選）', '藥妝二')), '留池理由只差店名');
+  assert.deepEqual([byField.report.moved, byField.report.swapped, byField.report.refilled, byField.report.verify], [byName.report.moved, byName.report.swapped, byName.report.refilled, byName.report.verify]);
+  // 靠欄位擋的四件事都還在
+  assert.equal(byField.unplaced.find((u) => u.poiId === 'foodback').reason, '研究標備案／保底的吃的站不主動排當一餐');
+  assert.ok(!byField.days.some((d) => ids(d).includes('foodvs')) && !byField.unplaced.some((u) => u.poiId === 'foodvs'), '不是地點的條目連池都不進');
+  assert.deepEqual(byField.days.flatMap((d) => d.picks.filter((p) => p.poiId.startsWith('itema'))).map((p) => p.poiId), ['itema2'], '同品項兩家一樣近，標 first 的先');
+  assert.match(byField.unplaced.find((u) => u.poiId === 'itema1').reason, /品項「香水」落在 2026-08-\d\d 的 藥妝二$/);
+  assert.equal(byField.unplaced.some((u) => u.poiId === 'gateskip'), false, '研究判可略過的連池都不進');
+});
+
+test('有欄位時不看店名：欄位跟店名字樣相反時照欄位（researchRank、researchSkip、notAStop）；寫 null／false／空字串＝明講沒有；看不懂的值當沒標', () => {
+  assert.equal(researchRank({ name_zh: '店名還帶著（首選）', researchRank: 'backup' }), 2);
+  assert.equal(researchRank({ name_zh: '店名還帶著（保底備案）', researchRank: 'first' }), 0);
+  assert.equal(researchRank({ name_zh: '乾淨的店名', researchRank: 'first' }), 0);
+  assert.equal(researchRank({ name_zh: '乾淨的店名', researchRank: 'backup' }), 2);
+  assert.equal(researchRank({ name_zh: '店名還帶著（保底備案）', researchRank: null }), 1, 'null＝明講沒標，不退回店名');
+  assert.equal(researchRank({ name_zh: '店名還帶著（首選）', researchRank: 'frist' }), 1, '看不懂的值當沒標、也不退回店名（normalizePoi 會記警告 research-field-bad）');
+  assert.equal(researchSaysSkip({ name_zh: '乾淨的店名', researchSkip: '查證結果：未見 DKNY，可略過' }), true, '一句理由');
+  assert.equal(researchSaysSkip({ name_zh: '乾淨的店名', researchSkip: true }), true);
+  assert.equal(researchSaysSkip({ name_zh: '店名還帶著（可略過）', researchSkip: false }), false);
+  assert.equal(researchSaysSkip({ name_zh: '店名還帶著（不可指望）', researchSkip: '  ' }), false, '空字串＝不略過');
+  assert.equal(researchSaysSkip({ name_zh: '店名還帶著（可略過）', researchSkip: null }), false);
+  assert.equal(researchSaysSkip({ name_zh: '乾淨的店名', researchSkip: null, skip: true }), false, '有 researchSkip 欄位就不看舊寫法 skip');
+  assert.equal(researchSaysSkip({ name_zh: '乾淨的店名', researchSkip: 3 }), false, '看不懂的值不略過');
+  assert.equal(comparisonEntry({ name_zh: '站內兩家牛舌', notAStop: true }), true);
+  assert.equal(comparisonEntry({ name_zh: '甲 vs 乙', notAStop: false }), false);
+  assert.equal(comparisonEntry({ name_zh: '甲 vs 乙', notAStop: null }), false);
+  assert.equal(comparisonEntry({ name_zh: '站內兩家牛舌', notAStop: 'yes' }), false, 'true 才算');
+  // 池的門照欄位
+  assert.equal(poolEligible({ id: 'x', category: 'food', name_zh: '甲 vs 乙', notAStop: false }), true);
+  assert.equal(poolEligible({ id: 'x', category: 'food', name_zh: '站內兩家牛舌', notAStop: true }), false);
+  assert.equal(poolEligible({ id: 'x', category: 'store', name_zh: '乾淨的店名', researchSkip: '目標品不在' }), false);
+  assert.equal(poolEligible({ id: 'x', category: 'store', name_zh: '店名還帶著（可略過）', researchSkip: false }), true);
+  // 分配：同品項兩家一樣近，店名寫「首選」的那家（itema2）欄位標 backup、另一家標 first → 落標 first 的 itema1（店名字樣版落的是 itema2）
+  const flipped = { ...POIS, itema1: { ...POIS.itema1, researchRank: 'first' }, itema2: { ...POIS.itema2, researchRank: 'backup' } };
+  const r = run({ pois: flipped, options: { verify: false } });
+  assert.deepEqual(r.days.flatMap((d) => d.picks.filter((p) => p.poiId.startsWith('itema'))).map((p) => p.poiId), ['itema1']);
+  // 店名還寫「保底備案」但欄位明講沒有（null）：照一般的吃的站算，不再被「備案不排當一餐」擋
+  const cleared = run({ pois: { ...POIS, foodback: { ...POIS.foodback, researchRank: null } }, options: { verify: false } });
+  assert.notEqual(cleared.unplaced.find((u) => u.poiId === 'foodback')?.reason, '研究標備案／保底的吃的站不主動排當一餐');
+  // 店名寫「A vs B」但欄位明講是地點（false）：進池
+  const asStop = run({ pois: { ...POIS, foodvs: { ...POIS.foodvs, notAStop: false } }, options: { verify: false } });
+  assert.ok(asStop.days.some((d) => ids(d).includes('foodvs')) || asStop.unplaced.some((u) => u.poiId === 'foodvs'), '進了池（排進某天或帶理由留池）');
+});
+
+test('沒欄位退回店名字樣（還沒欄位化的知識庫）：認「首選」「備案／保底／備援」「可略過／不可指望」「A vs B」；舊寫法 skip: true 也算', () => {
+  assert.deepEqual(researchNameHints({ name_zh: '松本清 仙台Clis Road店（首選：大店＋順路＋開到22點）' }), { rank: 'first', skip: false, notAStop: false });
+  assert.deepEqual(researchNameHints({ name_zh: '仙台機場免稅店 VEGA（備案查證結果：不可指望）' }), { rank: 'backup', skip: true, notAStop: false });
+  assert.deepEqual(researchNameHints({ name_zh: '利久 vs 善治郎（站內牛舌通比較吃）' }), { rank: null, skip: false, notAStop: true });
+  assert.deepEqual(researchNameHints({ name_zh: '首選之外也寫了備案的店（首選；備案是隔壁）' }), { rank: 'first', skip: false, notAStop: false }, '兩種都寫時算首選（跟搬欄位前同一個先後）');
+  assert.deepEqual(researchNameHints({ name_zh: '松本清 仙台Clis Road店' }), { rank: null, skip: false, notAStop: false });
+  assert.deepEqual(researchNameHints(null), { rank: null, skip: false, notAStop: false });
+  // 整個欄位沒有（undefined）才看店名
+  assert.equal(researchRank({ name_zh: '大國藥妝 仙台Clis Road店（開最晚：週一到22:50的保底站）' }), 2);
+  assert.equal(researchRank({ name_zh: '唐吉訶德 仙台站西口本店（首選碰運氣點）', researchRank: undefined }), 0, 'undefined 視同沒有這個欄位');
+  assert.equal(researchSaysSkip({ name_zh: '仙台三越 本館1F（查證結果：無 DKNY 專櫃，可略過）' }), true);
+  assert.equal(researchSaysSkip({ name_zh: '普通店', skip: true }), true, '舊寫法');
+  assert.equal(comparisonEntry({ name_zh: '食堂甲 vs. 食堂乙' }), true);
+  // 小世界夾具本身就是沒欄位的知識庫：四家靠店名字樣的店照舊擋（這個檔其他用 run() 的測試跑的都是它）
+  for (const id of ['foodback', 'foodvs', 'itema2', 'gateskip']) for (const f of ['researchRank', 'researchSkip', 'notAStop', 'skip']) assert.equal(POIS[id][f], undefined, `${id}.${f}`);
+  assert.equal(researchRank(POIS.foodback), 2); assert.equal(researchRank(POIS.itema2), 0); assert.equal(researchRank(POIS.itema1), 1);
+  assert.equal(poolEligible(POIS.foodvs), false); assert.equal(poolEligible(POIS.gateskip), false);
 });
 
 test('需求單點名的店名也對到品項研究站時：有不是品項站的店對得上就只算那家②、品項站照④；只有品項站對得上的照②', () => {

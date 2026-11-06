@@ -337,6 +337,32 @@ test('引擎插站的池（10-14 T22）：curated:false、2 星、落選兩次�
   assert.deepEqual(ids(r), ['古著屋JAM']);
 });
 
+test('引擎插站的池再多兩條門（11-06）：研究判可略過（researchSkip）、不是一個地點的條目（notAStop）不插——有欄位照欄位，整個欄位沒有才退回店名字樣；他自己勾了照排', async () => {
+  const { engineMayInsert } = await import('../../src/engine/trip.js');
+  const day = { date: '2026-08-13', regionZones: ['town'], window: { startMin: 540, endMin: 1440 } };
+  // 欄位
+  assert.equal(engineMayInsert(cafe('香氛區', { researchSkip: '查證結果：未見 DKNY，可略過' })), false);
+  assert.equal(engineMayInsert(cafe('香氛區', { researchSkip: true })), false);
+  assert.equal(engineMayInsert(cafe('站內兩家牛舌', { notAStop: true })), false);
+  // 沒欄位退回店名字樣
+  assert.equal(engineMayInsert(cafe('甲', { name_zh: '百貨香氛區（查證結果：未見，可略過）' })), false);
+  assert.equal(engineMayInsert(cafe('乙', { name_zh: '機場免稅店（備案查證結果：不可指望）' })), false);
+  assert.equal(engineMayInsert(cafe('丙', { name_zh: '食堂甲 vs 食堂乙（站內比較吃）' })), false);
+  // 有欄位時不看店名：欄位明講不是，店名字樣就不算
+  assert.equal(engineMayInsert(cafe('丁', { name_zh: '百貨香氛區（可略過）', researchSkip: false })), true);
+  assert.equal(engineMayInsert(cafe('戊', { name_zh: '食堂甲 vs 食堂乙', notAStop: false })), true);
+  // 研究的先後註記（首選／備案）不是這裡的門：標 backup 的咖啡廳照樣可以當恢復站插（擋善治郎的是 unlockWhen）
+  assert.equal(engineMayInsert(cafe('備案咖啡廳', { researchRank: 'backup' })), true);
+  assert.equal(engineMayInsert(cafe('保底咖啡廳', { name_zh: '保底咖啡廳（保底備案）' })), true);
+  // 恢復站池照這兩條門擋
+  const pool = [cafe('香氛區', { researchSkip: '目標品不在' }), cafe('站內兩家', { notAStop: true }), cafe('咖啡廳')];
+  assert.deepEqual(restCandidates({ restPool: pool, candidates: [{ poi: poi('A') }], day, home, settings }).map((c) => c.poi.id), ['咖啡廳']);
+  // 他自己勾的照排（總則 3）：picks 不走 engineMayInsert
+  const skipped = poi('可略過的店', { category: 'store', walkFactor: 0, dwellMin: 30, researchSkip: '目標品不在' });
+  const t = { id: 't', party: 1, homeBases: [{ poi: home }], days: [{ date: '2026-08-13', type: 'normal', picks: [{ poiId: skipped.id, priority: 'want' }] }] };
+  assert.deepEqual(ids(planTrip({ trip: t, pois: { [skipped.id]: skipped }, rules, settings, country, kb, legFn, restPool: [skipped] }).days[0].plan), ['可略過的店']);
+});
+
 test('購物類的填站只在購物日填進去（規則 shopping-day）：同一段等開門空檔，非購物日百貨不填、購物日照填且不出警告', () => {
   // 一天的旅程：預設那天就是離境日＝購物日；shoppingDays: [] 蓋成沒有購物日
   const dept = poi('百貨', { category: 'department', walkFactor: 0, dwellMin: 60, lng: 140.8705 });

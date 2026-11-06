@@ -14,13 +14,13 @@ import { renderPlanner } from './planner.js';
 import { renderNow } from './now.js';
 import { renderSettings } from './settings.js';
 import { renderPool } from './pool.js';
-import { renderBrief } from './brief.js';
+import { renderBrief, briefEnv } from './brief.js';
 import { mergeField, pickFieldDate, catchUpFieldDate, planScrollDate } from './ratings.js';
 import { restoreApplied, withoutApplied } from './applied.js';
 import { snapshotTripEdits, applyTripEdits, overlayTripEdits, diffTripEdits } from './trip-edits.js';
 import { upgradePick, visitedPatch, visitedDates } from './corridor.js';
 import { chooseOptionTrip, deferStopTrip, deferNotice, displacedPicks } from './choices.js';
-import { emptyBrief, normalizeBrief, briefToMarkdown, briefFileName, looksLikeBrief, isBriefEmpty, themeOptions } from '../data/brief.js';
+import { emptyBrief, normalizeBrief, briefToMarkdown, briefFileName, looksLikeBrief, isBriefEmpty, themeOptions, briefMdName, briefSubmitMode, canSubmitBrief, briefEndpointFor } from '../data/brief.js';
 import { normalizeMemory, rememberFromBrief } from '../data/brief-memory.js';
 import { personsOf, cityNamesOf } from '../engine/persons.js';
 
@@ -29,6 +29,7 @@ const FIELD_KEY = 'trip-pilot:field';
 const BRIEF_KEY = 'trip-pilot:brief';
 const BRIEF_MEMORY_KEY = 'trip-pilot:brief-memory';
 const TRIP_EDITS_KEY = 'trip-pilot:trip-edits';   // 規劃頁的改動（T16b；ui/trip-edits.js）：整天的 picks／removed／swapped 與 deferred 快照
+const BRIEF_SUBMITTED_KEY = 'trip-pilot:brief-submitted';   // 這份需求單上次交到桌機的哪個檔（{ file }）：檔名跟著城市與起日月份變，變了再交時要提醒舊名那份還在
 
 export const state = {
   trip: null, pois: {}, country: null, kb: null, legFn: null,
@@ -44,13 +45,21 @@ export const state = {
   route: '#/plan',
   device: loadJSON(SETTINGS_KEY, {}),
   field: loadJSON(FIELD_KEY, { date: null, index: 0, simulate: false, simNowMin: null, ratings: {}, progress: {}, visited: {} }),
-  // 需求單（T26）：出發前在手機上填，存這支手機；記憶是上一份單子的消耗品與要買的（data/brief-memory.js）
+  // 需求單（T26）：出發前在電腦上填、按「提交」交給 Claude（原話 #186「需求單不是在手機跑 而是在電腦」、#188 輸出成一份 MD 檔到 trip-pilot 資料夾；
+  // 10-16 寫的「在手機上填」是推導、已作廢）。填的內容存這台裝置的瀏覽器；記憶是上一份單子的消耗品與要買的（data/brief-memory.js）
   brief: normalizeBrief(loadJSON(BRIEF_KEY, null)),
   briefMemory: normalizeMemory(loadJSON(BRIEF_MEMORY_KEY, null)),
   briefStatus: '',
   briefCopyText: null,   // 剪貼簿不給用時，整份文字放進頁上的框讓他自己複製
   briefUndo: null,       // 載入別份或清空前的那份（一次性「復原上一份」；空單不留）
+  // 提交（#188）走哪條路看這兩樣（ui/brief.js briefEnv → data/brief.js briefSubmitMode）；需求單的入口也看它們（兩樣都沒有＝iPhone Safari，入口不出現）
+  briefEndpoint: null,   // 同源的提交端點（桌機伺服器的 /brief）：null 還沒探測、true 會收、false 沒有或不收（probeBriefEndpoint）
+  savePicker: typeof globalThis.showSaveFilePicker === 'function',   // 瀏覽器有另存對話框（File System Access API）
+  briefBusy: false,      // 正在提交：再按不理
+  briefSubmitted: submittedOf(loadJSON(BRIEF_SUBMITTED_KEY, null)),   // 這份單子上次交到桌機的檔 { file }；載入別份、清空、復原就忘掉（那是另一份單子了）
 };
+
+function submittedOf(v) { return v && typeof v.file === 'string' && v.file ? { file: v.file } : null; }
 
 function loadJSON(key, fallback) { try { const v = JSON.parse(localStorage.getItem(key) ?? 'null'); return v ?? fallback; } catch { return fallback; } }
 function saveJSON(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* 隱私模式 */ } }
@@ -448,7 +457,14 @@ function replaceBrief(next) {
   state.briefUndo = isBriefEmpty(state.brief) ? null : state.brief;
   state.brief = next;
   saveJSON(BRIEF_KEY, state.brief);
+  forgetSubmitted();
   replanIfPersonsChanged(prev);
+}
+
+/** 換了一份單子（載入、清空、復原）：上次交到哪個檔就不再算數——那是另一份單子的事，不拿來提醒「檔名變了」。 */
+function forgetSubmitted() {
+  state.briefSubmitted = null;
+  removeJSON(BRIEF_SUBMITTED_KEY);
 }
 
 /** 復原上一份（只對最後一次載入／清空有效）。 */
@@ -458,6 +474,7 @@ export function undoBrief() {
   state.brief = state.briefUndo;
   state.briefUndo = null;
   saveJSON(BRIEF_KEY, state.brief);
+  forgetSubmitted();
   replanIfPersonsChanged(prev);
   state.briefStatus = TEXT.brief.undone;
   state.briefCopyText = null;
@@ -513,6 +530,162 @@ export function clearBrief() {
   render();
 }
 
+// ---- 需求單「提交」（原話 #186、#188） ----
+const BRIEF_PROBE_MS = 4000;   // 探測端點最多等多久（桌機本機幾毫秒就回；經 tailscale 而桌機沒開時會掛著）
+const BRIEF_POST_MS = 8000;    // 送出最多等多久；超過當作沒交到，改走存檔
+
+/** 有時限的 fetch（AbortSignal.timeout 在 Safari 15 還沒有，自己接計時器）。 */
+async function fetchWithin(ms, url, init) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), ms);
+  try { return await fetch(url, { ...init, signal: ctl.signal }); } finally { clearTimeout(timer); }
+}
+
+/** 需求單的入口（設定頁那顆、空白頁「先填需求單」）此刻出不出現：交得出去的環境才出現。 */
+const briefEntryShown = () => canSubmitBrief(briefEnv(state));
+let briefProbing = null;   // 還沒回來的那次探測：submitBrief 在結果未知（briefEndpoint null）時先等它，不然剛開頁面就按「提交」會白跳一次另存對話框
+
+/**
+ * 探測同源的提交端點（進 App 一次、每次進需求單頁一次），結果記在 state.briefEndpoint。頁面是桌機伺服器供應的（網址在 …/app/ 底下）才問，
+ * 問相對網址 ../brief（data/brief.js briefEndpointFor）；GitHub Pages 上的頁面不問、直接算沒有。
+ * 用 HEAD 不用 GET：service worker 對同源 GET 一律 cache-first、還把 200 存進快取（sw.js），GET 探測第一次成功之後伺服器關了它照樣回「收」；非 GET 的請求 SW 不攔。
+ * 認 X-Trip-Pilot-Brief 標頭，不是只看 200（有的主機對什麼路徑都回 200）。
+ * 入口因此從沒有變有（或反過來）、而且現在畫著入口的那頁（設定頁、沒旅程的空白頁）才重畫；需求單頁的畫面不看這個結果，重畫只會把打字中的焦點踢掉。
+ */
+export function probeBriefEndpoint() {
+  const run = (async () => {
+    const url = briefEndpointFor(globalThis.location?.pathname);
+    let ok = false;
+    if (url) {
+      try {
+        const res = await fetchWithin(BRIEF_PROBE_MS, url, { method: 'HEAD', cache: 'no-store' });
+        ok = res.ok && res.headers.get('x-trip-pilot-brief') === 'accepts';
+      } catch { ok = false; }
+    }
+    const shown = briefEntryShown();
+    state.briefEndpoint = ok;
+    if (briefEntryShown() !== shown && (state.route === '#/settings' || (!state.trip && state.route !== '#/brief'))) render();
+    return ok;
+  })();
+  briefProbing = run;
+  const done = () => { if (briefProbing === run) briefProbing = null; };
+  run.then(done, done);
+  return run;
+}
+
+/**
+ * 送到同源端點：POST ../brief?name=<名字>，本文是需求單文字。回 { ok: true, file, history }（file＝伺服器實際寫的「trips/<名字>.brief.md」；
+ * history＝這次換下來的舊檔搬去哪，沒換掉東西是 null）或 { ok: false, reason, gone }——
+ * reason 是 text.js 的中文（伺服器回的代碼在 submitErrors 找得到就用那句，不然講狀態碼）；gone＝這個端點不能用了（連不上、逾時、404／405、不收、不認這個來源），之後當它不在。
+ */
+async function postBrief(name, text) {
+  const E = TEXT.brief.submitErrors;
+  const url = briefEndpointFor(globalThis.location?.pathname);
+  if (!url) return { ok: false, gone: true, reason: E.offline };
+  let res;
+  try {
+    res = await fetchWithin(BRIEF_POST_MS, `${url}?name=${encodeURIComponent(name)}`, { method: 'POST', headers: { 'Content-Type': 'text/markdown; charset=utf-8' }, body: text, cache: 'no-store' });
+  } catch { return { ok: false, gone: true, reason: E.offline }; }
+  let data = null;
+  try { data = await res.json(); } catch { data = null; }
+  if (res.ok && data?.ok === true && typeof data.file === 'string' && data.file) return { ok: true, file: data.file, history: typeof data.history === 'string' && data.history ? data.history : null };
+  if (res.ok) return { ok: false, gone: true, reason: E.offline };   // 回 200 卻不是這支伺服器的答案（別的東西接了這個網址）：當它不在
+  const code = typeof data?.error === 'string' ? data.error : '';
+  const known = Object.prototype.hasOwnProperty.call(E, code) && typeof E[code] === 'string' ? E[code] : null;
+  return { ok: false, gone: res.status === 404 || res.status === 405 || code === 'disabled' || code === 'cross-origin', reason: known ?? E.http(res.status) };
+}
+
+/**
+ * 另存對話框（File System Access API）：建議檔名 <名字>.brief.md；id 讓瀏覽器記住上次存的資料夾——第一次選 trip-pilot 的 trips，之後都開在那。
+ * 回 { via: 'picker', file }（存好了）、{ via: 'cancelled' }（他按取消，不算錯）、{ via: 'failed', opened }（對話框開不起來 opened false——沒有使用者手勢、被政策擋；
+ * 或開了但寫不進去 opened true）——failed 由呼叫端改成下載。
+ */
+async function saveBriefWithPicker(fileName, text) {
+  let handle;
+  try {
+    handle = await globalThis.showSaveFilePicker({ suggestedName: fileName, id: 'trip-pilot-brief', types: [{ description: TEXT.brief.mdFileType, accept: { 'text/markdown': ['.md'] } }] });
+  } catch (err) {
+    return err?.name === 'AbortError' ? { via: 'cancelled' } : { via: 'failed', opened: false };
+  }
+  try {
+    const writable = await handle.createWritable();
+    await writable.write(text);
+    await writable.close();
+    return { via: 'picker', file: handle.name || fileName };
+  } catch {
+    return { via: 'failed', opened: true };
+  }
+}
+
+/**
+ * 提交完那一行狀態：交到桌機了講檔案在哪——這次有換掉同名舊檔的話接一句舊的搬去哪（他提交後手改過的那份就是這樣留下來的，要讓他知道去哪找）；
+ * 檔名跟上次交的不一樣（改了城市或起日月份）的話接一句舊名那份還在；
+ * 存成檔案（另存或下載）請他放進 trips；前一條路沒成功的原因放最前面；他按取消而且沒有別的事要講就不留字。
+ */
+function briefSubmitText(result, failed) {
+  const L = TEXT.brief;
+  if (result.via === 'server') return `${L.submitted(result.file)}${result.history ? L.submittedReplaced(result.history) : ''}${result.renamedFrom ? L.submittedRenamed(result.renamedFrom) : ''}`;
+  if (result.via === 'cancelled') return failed ? L.submitFailed(failed) : '';
+  const lead = failed ? L.submitFellBack(failed) : result.pickerFailed ? L.pickerFailed : '';
+  return `${lead}${L.savedForClaude(result.file)}`;
+}
+
+/**
+ * 提交（原話 #188「需求單在網頁輸出成一份MD檔到 trip-pilot 資料夾 你跟妳說一聲 你再依內容去規劃 也保留了我提交後修改的空間」）：
+ * 文字＝briefToMarkdown，跟「複製需求單文字」同一份；檔名 <名字>.brief.md（data/brief.js briefMdName：2026-08-仙台）。依序三條路（briefSubmitMode）：
+ * (a) 同源端點會收 → POST 過去，桌機伺服器（tools/serve-packs.mjs）寫成 trips/<名字>.brief.md；同名舊檔內容不同它會先搬到 trips/_brief-history/，
+ *     所以他提交後手改、改完再提交都不會丟東西；
+ * (b) 沒有端點、瀏覽器有另存對話框 → showSaveFilePicker；
+ * (c) 都沒有 → 下載。
+ * (a) 沒成功（伺服器沒回應、不收、寫檔失敗）就接著走 (b)／(c)，狀態句最前面講原因：按一次「提交」一定有一份東西出來，除非他自己在對話框按取消。
+ * 絕不從頁面去打 http://127.0.0.1 或 Tailscale 的絕對網址：11-06 主控實測 Chrome 156 會卡在「允許連線區域網路」的權限提示、請求送不出去。
+ * (b) 的對話框要在按鍵那一下的手勢裡開（瀏覽器只在手勢後幾秒內放行）：沒有端點的頁面走到它之前沒有 await；
+ * (a) 失敗後才走到、或等探測等太久的話手勢可能已過期，開不起來就退到下載。
+ */
+export async function submitBrief() {
+  if (state.briefBusy) return null;
+  state.briefBusy = true;
+  const L = TEXT.brief;
+  let result = null;
+  let failed = '';   // (a) 沒成功的原因
+  try {
+    rememberBrief();
+    const text = briefToMarkdown(state.brief, { themes: themeOptions(state.country) });
+    const name = briefMdName(state.brief, todayStr());
+    const fileName = `${name}.brief.md`;
+    state.briefCopyText = null;
+    // 探測還沒回來（剛開頁面就按）：等它，最多 BRIEF_PROBE_MS。只有桌機伺服器供應的頁面會等——別處的探測不發請求、當下就有答案，(b) 的對話框前面仍然沒有 await
+    if (state.briefEndpoint === null && briefProbing) await briefProbing;
+    if (briefSubmitMode(briefEnv(state)) === 'server') {
+      state.briefStatus = L.submitting;
+      render();
+      const r = await postBrief(name, text);
+      if (r.ok) {
+        // 檔名跟著城市與起日月份變：同一份單子改了那兩樣再交會寫成另一個檔，舊名那份伺服器不會動（它不知道是同一趟）——記下上次交到哪，變了就在狀態句提醒
+        const before = state.briefSubmitted?.file ?? null;
+        result = { via: 'server', file: r.file, history: r.history, renamedFrom: before && before !== r.file ? before : null };
+        state.briefSubmitted = { file: r.file };
+        saveJSON(BRIEF_SUBMITTED_KEY, state.briefSubmitted);
+      } else { failed = r.reason; if (r.gone) state.briefEndpoint = false; }
+    }
+    let pickerFailed = false;
+    if (!result && state.savePicker) {
+      const r = await saveBriefWithPicker(fileName, text);
+      if (r.via === 'failed') pickerFailed = r.opened; else result = r;
+    }
+    if (!result) { downloadText(fileName, text, 'text/markdown'); result = { via: 'download', file: fileName, pickerFailed }; }
+    state.briefStatus = briefSubmitText(result, failed);
+  } catch (err) {
+    console.warn('需求單提交失敗', err);
+    state.briefStatus = L.submitFailed(failed || L.submitErrors.unknown);
+    result = null;
+  } finally {
+    state.briefBusy = false;
+  }
+  render();
+  return result;
+}
+
 function downloadText(name, text, type) {
   const url = URL.createObjectURL(new Blob([text], { type }));
   const a = el('a', { href: url, download: name });
@@ -530,7 +703,7 @@ export function render() {
   const root = document.getElementById('app');
   if (!root) return;
   clear(root);
-  const actions = { swapStop, removeStop, undoLast, upgradeCorridor, markVisited, chooseOption, deferStop, dismissNotice, resetTripEdits, saveDevice, setField, replanAll, updateFromUrl, importFile, setBrief, exportBrief, copyBrief, importBrief, clearBrief, undoBrief };
+  const actions = { swapStop, removeStop, undoLast, upgradeCorridor, markVisited, chooseOption, deferStop, dismissNotice, resetTripEdits, saveDevice, setField, replanAll, updateFromUrl, importFile, setBrief, submitBrief, exportBrief, copyBrief, importBrief, clearBrief, undoBrief };
   const view = !state.trip && !WITHOUT_TRIP.has(state.route) ? renderEmpty : (VIEWS[state.route] ?? renderPlanner);
   root.append(el('main', { class: 'view' }, view({ state, actions })));
   root.append(tabBar());
@@ -561,7 +734,8 @@ function renderEmpty() {
     el('p', { class: 'muted', text: TEXT.shellHint }),
     el('div', { class: 'actions' }, [
       el('a', { class: 'btn primary', href: '#/settings' }, TEXT.goUpdate),
-      el('a', { class: 'btn', href: '#/brief' }, TEXT.brief.fillFirst),
+      // 「先填需求單」只在交得出去的環境出現（桌機；原話 #186 需求單不在手機跑——iPhone Safari 沒有另存對話框、頁面也不是桌機伺服器供應的）
+      briefEntryShown() ? el('a', { class: 'btn', href: '#/brief' }, TEXT.brief.fillFirst) : null,
       el('button', { class: 'btn', type: 'button', onclick: loadDemo }, TEXT.loadDemo),
     ]),
   ];
@@ -577,11 +751,13 @@ function tabBar() {
 export async function boot() {
   buildSettings();
   // 進規劃頁（開 App 落在它、或從別頁切過來）就捲到當天（原話 #175）；沒旅程時那次畫的是空白頁，旗標留到旅程載入後
-  const apply = () => { state.route = location.hash && VIEWS[location.hash] ? location.hash : '#/plan'; if (state.route === '#/plan') state.planScroll = true; if (!flushPendingReplan()) render(); };
+  // 進需求單頁就問一次同源的提交端點還在不在（probeBriefEndpoint；不等它，結果只影響按「提交」走哪條路與入口出不出現）
+  const apply = () => { state.route = location.hash && VIEWS[location.hash] ? location.hash : '#/plan'; if (state.route === '#/plan') state.planScroll = true; if (state.route === '#/brief') void probeBriefEndpoint(); if (!flushPendingReplan()) render(); };
   window.addEventListener('hashchange', apply);
   if (!state.field.date) state.field.date = todayStr();
   readPackParam();
   apply();
+  if (state.route !== '#/brief') void probeBriefEndpoint();   // 進 App 也問一次：設定頁與空白頁的需求單入口要不要出現看它（開在需求單頁的話 apply 剛問過）
   try {
     const stored = await loadLatestPack();
     if (stored) { loadFromPack(stored); catchUpToday(); }   // loadFromPack 自己會重排；隔天打開就切到今天

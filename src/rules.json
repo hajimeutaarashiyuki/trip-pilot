@@ -53,7 +53,9 @@
       "dayTripWalkFactor": "#160（跟早起日同值 0.7，取最嚴）",
       "staminaEasyFactor": "預設，不是原話：同行者體力「輕鬆一點」的步行預算倍率，跟同行倍率 partyWalkFactor 同值（推導，10-16 T19）；人之間取最鬆是原話 #144",
       "staminaHardFactor": "預設，不是原話：「可以操」在日型倍率取最嚴之後最後乘 1.15（推導，10-16 T19）",
-      "onTheWayDetourMin": "#184「允許繞路 8 分鐘 我覺得是可以的」（10-24；本來是預設 8，他看了要改 3 的提案後說 8 可以，升格成原話）"
+      "onTheWayDetourMin": "#184「允許繞路 8 分鐘 我覺得是可以的」（10-24；本來是預設 8，他看了要改 3 的提案後說 8 可以，升格成原話）",
+      "dayTripNightReturnByHM": "#190「一日遊的夜間站 可以是在當地進行 只要趕的上末班車都可以 或是回程不算晚(9:00)也可以排進來」（11-06；(9:00) 是晚上九點：一日遊回到市區不晚於 21:00 才主動排市區的夜間站，他勾的照排只提示）",
+      "mealGraceMin": "預設，不是原話：餐段前後各放寬 60 分（午 10:30–14:30、晚 17:00–21:30）。放寬這件事出自原話 #189「這點不強制 像是有主行程要跑 但時間落在晚餐時段 那晚餐提早或延後 都可以」；60 這個數字是 11-06 實跑比過現況、一律放寬 60／90／120、只在主行程蓋到餐段時放寬等幾種做法後取的（三個打包檔上 60 與 90 結果相同，120 會把 09:02 的早餐算成午餐；知識庫的餐廳多半 17:00 開晚餐，60 分讓一開門就吃的晚餐算數、又不會讓一小時的晚餐早於 16:00 開始）"
     },
     "onTheWayDetourMin": 8,
     "onTheWayPoolMax": 4,
@@ -73,7 +75,9 @@
     "allocWalkCircleMin": 20,
     "allocLinkMaxMin": 15,
     "allocCorridorSlackMin": 10,
-    "allocItemMaxPerDay": 2
+    "allocItemMaxPerDay": 2,
+    "mealGraceMin": 60,
+    "dayTripNightReturnByHM": "21:00"
   },
   "rules": {
     "dim-walk": {
@@ -202,6 +206,12 @@
     "shopping-day": {
       "weight": 1,
       "penaltyMin": 80
+    },
+    "last-train": {
+      "weight": 1
+    },
+    "day-trip-night": {
+      "weight": 1
     }
   },
   "_規則說明": "每條規則：weight 0 = 停用；其餘鍵是那條規則的門檻或罰分（分鐘）。預設值是 10-10 從 DESIGN §5.2 換算的，都是預設等級。"

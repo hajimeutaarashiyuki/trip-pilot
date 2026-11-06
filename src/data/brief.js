@@ -34,7 +34,7 @@ export function themeOptions(country) {
 }
 const THEME_ID_RE = /^[a-z0-9][a-z0-9_-]{0,31}$/i;
 /**
- * 主題一項 → id：這個國家清單上的 id 或中文、預設五個的中文都翻回 id；其他英數的 id 照收、壓小寫（主題清單是國家層的，單子在手機上跨旅程留著，
+ * 主題一項 → id：這個國家清單上的 id 或中文、預設五個的中文都翻回 id；其他英數的 id 照收、壓小寫（主題清單是國家層的，單子在這台裝置上跨旅程留著，
  * 讀入那一刻不一定知道是哪國——丟了會把上一趟勾的清掉）；不像 id 的（翻不出的中文、空白）丟掉。
  */
 function themeKey(t, options) {
@@ -209,6 +209,48 @@ export function briefFileName(brief) {
   const city = str(brief?.city).split(/[、,，/]+/)[0].trim().replace(/\s+/g, '-') || TEXT.brief.unset;
   const from = str(brief?.dates?.from) || TEXT.brief.unset;
   return `brief-${city}-${from}.json`.replace(/[\\/:*?"<>|]/g, '-');
+}
+
+// ---- 提交（原話 #186 需求單在電腦上填、提交給 Claude；#188「需求單在網頁輸出成一份MD檔到 trip-pilot 資料夾」）----
+const MD_NAME_MAX = 80;
+const DEVICE_NAME = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/i;   // Windows 的裝置名
+const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+// 檔名能用的一段：各國文字與數字、-、_ 留著，其餘（空白、標點、路徑字元）連成一個 -，頭尾的 - _ 去掉，最長 80 個字。
+// 跟桌機伺服器收檔時的淨化同一套（tools/serve-packs.mjs sanitizeBriefName；test/tools/serve-packs.test.js 對過這裡算出來的名字過它不變）——畫面上講的檔名就是實際寫出來的檔名。
+const cleanStem = (s) => [...String(s ?? '').normalize('NFC').replace(/[^\p{L}\p{N}_-]+/gu, '-').replace(/-{2,}/g, '-')].slice(0, MD_NAME_MAX).join('').replace(/^[-_]+|[-_]+$/g, '');
+
+/**
+ * 提交的檔名（不含 .brief.md）：<起日的 YYYY-MM>-<城市>，例 2026-08-仙台（跟 trips/ 裡旅程檔的命名同一個樣子）；城市取第一個（主據點）。
+ * 兩樣都沒填才是 brief-<今天>；只填了一樣就用那一樣（推導：日期還沒訂就先交的單子叫「仙台」比叫今天的日期好認，隔天再交也還是同一個檔）。
+ * today＝'YYYY-MM-DD'，呼叫端給（app.js 用 dom.js 的 todayStr）；沒給就讀時鐘。
+ */
+export function briefMdName(brief, today = localToday()) {
+  const ym = matchRe(brief?.dates?.from, DATE_RE).slice(0, 7);
+  const city = cleanStem(str(brief?.city).split(/[、,，/]+/)[0]);
+  const name = cleanStem([ym, city].filter(Boolean).join('-')) || cleanStem(`brief-${today}`) || 'brief';
+  return DEVICE_NAME.test(name) ? `brief-${name}` : name;
+}
+
+/**
+ * 這個環境怎麼交需求單：'server'＝頁面是桌機伺服器供應的、同源的 /brief 會收（直接寫進 trips/）；'picker'＝瀏覽器有另存對話框（showSaveFilePicker，桌機 Chrome／Edge）；
+ * 'download'＝兩樣都沒有，只能下載（iPhone Safari）。
+ */
+export function briefSubmitMode({ endpointOk = false, hasPicker = false } = {}) {
+  if (endpointOk === true) return 'server';
+  return hasPicker === true ? 'picker' : 'download';
+}
+
+/** 需求單的入口（設定頁那顆、空白頁的「先填需求單」）出不出現：交得出去的環境才出現（原話 #186：需求單不在手機跑）。#/brief 這個網址本身照舊開得了。 */
+export function canSubmitBrief(env) {
+  return briefSubmitMode(env) !== 'download';
+}
+
+/**
+ * 頁面的路徑 → 同源提交端點的相對網址。桌機伺服器把頁面掛在 …/app/ 底下、端點在它旁邊，所以是 '../brief'（/app/ → /brief、/trip-pilot/app/ → /trip-pilot/brief）；
+ * 頁面不在 …/app/ 底下（GitHub Pages 的 /trip-pilot/、直接開檔）回 null＝沒有端點、不用去問——手機每次開 App 不必白打一個 404。
+ */
+export function briefEndpointFor(pathname) {
+  return /\/app\/(?:index\.html)?$/.test(String(pathname ?? '')) ? '../brief' : null;
 }
 
 // 表格的格子：直欄線換成全形、換行換成空白，不然 md 表會散掉

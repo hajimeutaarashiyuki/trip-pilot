@@ -3,6 +3,8 @@ import { el } from './dom.js';
 import { TEXT, CATEGORY } from './text.js';
 import { personsOf, briefApplies, cityNamesOf } from '../engine/persons.js';
 import { diffTripEdits } from './trip-edits.js';
+import { canSubmitBrief } from '../data/brief.js';
+import { briefEnv } from './brief.js';
 
 /** '2026-08-13' → '8/13'（同行哪幾天那串；dateLabel 帶星期太長）。 */
 function md(date) {
@@ -103,7 +105,9 @@ export function renderSettings({ state, actions }) {
           TEXT.importFile,
           el('input', { type: 'file', accept: '.json,application/json', class: 'hidden-input', onchange: (e) => { const f = e.target.files?.[0]; if (f) actions.importFile(f); e.target.value = ''; } }),
         ]),
-        el('a', { class: 'btn', href: '#/brief' }, TEXT.brief.entry),   // 需求單頁（T26）：出發前填的，不進底部分頁
+        // 需求單頁（T26）：出發前填的，不進底部分頁。入口只在交得出去的環境出現（原話 #186：需求單在電腦上填、不在手機跑）——
+        // 頁面是桌機伺服器供應的、或瀏覽器有另存對話框；iPhone Safari 兩樣都沒有就不出現（#/brief 這個網址本身照舊開得了）
+        canSubmitBrief(briefEnv(state)) ? el('a', { class: 'btn', href: '#/brief' }, TEXT.brief.entry) : null,
       ]),
       state.packStatus ? el('p', { class: 'small status', text: state.packStatus }) : null,
     ]),
