@@ -151,6 +151,7 @@
   .brief .person-head h2 { flex: 1; margin-top: 0; }
   .brief .copy-box { width: 100%; min-height: 220px; margin-top: 8px; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg-elevated); color: var(--fg); font: 14px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
   .brief .status .btn { margin-left: 8px; }
+  .brief .submit-end { margin-top: 28px; padding-top: 16px; border-top: 1px solid var(--line); }   /* 頁尾的「提交」（原話 #188）：一條線跟最後一節的「＋一列」分開，不然兩排鍵黏在一起 */
   /* 寬螢幕：日期／時間／日期時間欄照瀏覽器的自然寬（auto），不寫死 px——Chrome zh-TW 的 time 自然寬 138、date 154、datetime-local 242（10-16 審查量的），寫 110／210 會切到裡面的字 */
   @media (min-width: 700px) {
     .brief .brief-row.fixed { grid-template-columns: auto auto auto 1fr auto; }
@@ -376,7 +377,28 @@
       title: "\u9700\u6C42\u55AE",
       entry: "\u9700\u6C42\u55AE",
       fillFirst: "\u5148\u586B\u9700\u6C42\u55AE",
-      intro: "\u9019\u8D9F\u7684\u9700\u6C42\uFF1A\u5BEB\u4E86\u5C31\u51CC\u99D5\u504F\u597D\u6A94\uFF0C\u7559\u7A7A\uFF1D\u7167\u9810\u8A2D\u8D70\u3002\u9AA8\u67B6\u548C\u8981\u8FA6\u7684\u4E8B\u662F\u6574\u8D9F\u7684\uFF0C\u8DDF\u540C\u884C\u8005\u6709\u5171\u8B58\u5F8C\u518D\u586B\uFF1B\u8981\u53BB\u7684\u3001\u8981\u8CB7\u7684\u6BCF\u4EBA\u5404\u586B\u5404\u7684\u3002\u6539\u4E86\u5C31\u81EA\u52D5\u5B58\u5728\u9019\u652F\u624B\u6A5F\u3002",
+      intro: "\u9019\u8D9F\u7684\u9700\u6C42\uFF1A\u5BEB\u4E86\u5C31\u51CC\u99D5\u504F\u597D\u6A94\uFF0C\u7559\u7A7A\uFF1D\u7167\u9810\u8A2D\u8D70\u3002\u9AA8\u67B6\u548C\u8981\u8FA6\u7684\u4E8B\u662F\u6574\u8D9F\u7684\uFF0C\u8DDF\u540C\u884C\u8005\u6709\u5171\u8B58\u5F8C\u518D\u586B\uFF1B\u8981\u53BB\u7684\u3001\u8981\u8CB7\u7684\u6BCF\u4EBA\u5404\u586B\u5404\u7684\u3002\u6539\u4E86\u5C31\u81EA\u52D5\u5B58\u5728\u9019\u53F0\u88DD\u7F6E\uFF0C\u586B\u5B8C\u6309\u300C\u63D0\u4EA4\u300D\u3002",
+      // 提交（原話 #186 需求單在電腦上填、提交給 Claude；#188 輸出成一份 MD 檔到 trip-pilot 資料夾）：頁面是桌機伺服器供應的就直接寫進 trips/；
+      // 不然跳另存對話框（沒有就下載），請他自己放進 trips。失敗的原因一律用這裡的字，不印伺服器回的英文或代碼
+      submit: "\u63D0\u4EA4",
+      submitting: "\u63D0\u4EA4\u4E2D\u2026",
+      submitted: (file) => `\u5DF2\u4EA4\u5230 ${file}\uFF0C\u8DDF Claude \u8AAA\u4E00\u8072\u5C31\u958B\u59CB\u6392\uFF1B\u4E4B\u5F8C\u8981\u6539\uFF0C\u6539\u5B8C\u518D\u6309\u4E00\u6B21\u63D0\u4EA4\uFF0C\u820A\u7684\u6703\u7559\u4E00\u4EFD`,
+      submittedReplaced: (history) => `\uFF08\u9019\u6B21\u63DB\u4E0B\u4F86\u7684\u90A3\u4EFD\u5728 ${history}\uFF09`,
+      submittedRenamed: (old) => `\uFF08\u6A94\u540D\u8DDF\u4E0A\u6B21\u4E0D\u4E00\u6A23\uFF1A\u4E0A\u6B21\u4EA4\u7684 ${old} \u9084\u5728\u7684\u8A71\uFF0C\u4E0D\u7528\u4E86\u8A18\u5F97\u522A\u6389\uFF09`,
+      savedForClaude: (name) => `\u5DF2\u5B58\u6210 ${name}\uFF1B\u8ACB\u653E\u5728 trip-pilot \u7684 trips \u8CC7\u6599\u593E\uFF0C\u518D\u8DDF Claude \u8AAA\u4E00\u8072`,
+      submitFellBack: (reason) => `\u6C92\u4EA4\u5230\u684C\u6A5F\uFF08${reason}\uFF09\uFF0C\u6539\u6210\u5B58\u6A94\u3002`,
+      submitFailed: (reason) => `\u6C92\u4EA4\u51FA\u53BB\uFF1A${reason}`,
+      pickerFailed: "\u53E6\u5B58\u6C92\u5BEB\u6210\u529F\uFF0C\u6539\u6210\u4E0B\u8F09\u3002",
+      mdFileType: "Markdown \u6587\u4EF6",
+      submitErrors: {
+        offline: "\u684C\u6A5F\u7684\u4F3A\u670D\u5668\u6C92\u56DE\u61C9",
+        disabled: "\u684C\u6A5F\u7684\u4F3A\u670D\u5668\u73FE\u5728\u4E0D\u6536\u9700\u6C42\u55AE",
+        "cross-origin": "\u9019\u4E00\u9801\u4E0D\u662F\u5F9E\u684C\u6A5F\u7684\u4F3A\u670D\u5668\u958B\u7684",
+        "too-large": "\u5167\u5BB9\u8D85\u904E\u5927\u5C0F\u4E0A\u9650",
+        "write-failed": "\u684C\u6A5F\u5BEB\u6A94\u5931\u6557\uFF0C\u6A94\u6848\u53EF\u80FD\u88AB\u5225\u7684\u7A0B\u5F0F\u958B\u8457",
+        unknown: "\u51FA\u4E86\u6C92\u9810\u671F\u7684\u932F",
+        http: (status) => `\u684C\u6A5F\u7684\u4F3A\u670D\u5668\u56DE\u4E86\u932F\u8AA4 ${status}`
+      },
       export: "\u5B58\u6210\u6A94\u6848",
       copy: "\u8907\u88FD\u9700\u6C42\u55AE\u6587\u5B57",
       import: "\u5F9E\u6A94\u6848\u8F09\u5165",
@@ -669,6 +691,23 @@
     return stamina === "hard" ? strictest * (settings.staminaHardFactor ?? 1.15) : strictest;
   }
   var toMin = (v) => v == null ? null : hmToMin(v);
+  function researchNameHints(p) {
+    const name = String(p?.name_zh ?? "");
+    return {
+      rank: /首選/.test(name) ? "first" : /備案|保底|備援/.test(name) ? "backup" : null,
+      skip: /可略過|不可指望/.test(name),
+      notAStop: /\svs\.?\s/i.test(name)
+    };
+  }
+  function researchSaysSkip(p) {
+    if (p?.researchSkip !== void 0) return p.researchSkip === true || typeof p.researchSkip === "string" && p.researchSkip.trim() !== "";
+    if (p?.skip === true) return true;
+    return researchNameHints(p).skip;
+  }
+  function notAStop(p) {
+    if (p?.notAStop !== void 0) return p.notAStop === true;
+    return researchNameHints(p).notAStop;
+  }
 
   // src/rules/dim-walk.js
   var dim_walk_default = {
@@ -1254,37 +1293,6 @@
     }
   };
 
-  // src/rules/meal-slots.js
-  var EATING = /* @__PURE__ */ new Set(["food", "bar", "cafe"]);
-  var meal_slots_default = {
-    id: "meal-slots",
-    kind: "soft",
-    scope: "day",
-    reads: ["sequence", "country.mealSlots"],
-    defaults: { missMin: 20 },
-    apply(ctx) {
-      return missing(ctx).length * ctx.params.missMin;
-    },
-    warn(ctx) {
-      const names = { lunch: "\u5348\u9910", dinner: "\u665A\u9910" };
-      return `\u4ECA\u5929\u6C92\u6392${missing(ctx).map((k) => names[k] ?? k).join("\u3001")}`;
-    }
-  };
-  function missing(ctx) {
-    const out = [];
-    const win = ctx.day?.windowRaw ?? ctx.day?.window ?? null;
-    const pinned = ctx.sequence.filter((s) => s.fixedWindow && !s.fixedWindow.pinned);
-    for (const [slot, [from, to]] of Object.entries(ctx.country.mealSlots)) {
-      const a = hmToMin(from);
-      const b = hmToMin(to);
-      if (win && overlapMin(win.startMin, win.endMin, a, b) <= 0) continue;
-      if (pinned.some((s) => s.startMin <= a && s.endMin >= (a + b) / 2)) continue;
-      const hit = ctx.sequence.some((s) => !s.insertedBy && (s.poi.recovery && EATING.has(s.poi.category) || s.poi.meal === true) && overlapMin(s.startMin, s.endMin, a, b) > 0);
-      if (!hit) out.push(slot);
-    }
-    return out;
-  }
-
   // src/data/country.js
   var NIGHT_WALK_CAP_MIN = Object.freeze({ mid: 23 * 60, high: 22 * 60 });
   function nightWalkCapMin(country) {
@@ -1333,8 +1341,148 @@
     return prep.length ? prep : null;
   }
 
+  // src/rules/_slots.js
+  var safeHm = (hm3) => {
+    try {
+      return hmToMin(hm3);
+    } catch {
+      return null;
+    }
+  };
+  var MEAL_GRACE_DEFAULT_MIN = 60;
+  function mealGraceOf(settings) {
+    const g = settings?.mealGraceMin;
+    return Number.isFinite(g) && g >= 0 ? g : MEAL_GRACE_DEFAULT_MIN;
+  }
+  var mealCache = /* @__PURE__ */ new WeakMap();
+  function mealSlotsOf(country, settings) {
+    const g = mealGraceOf(settings);
+    const src = country?.mealSlots;
+    const hit = country && typeof country === "object" ? mealCache.get(country) : null;
+    if (hit && hit.src === src && hit.g === g) return hit.slots;
+    const slots = [];
+    for (const [slot, range] of Object.entries(src ?? {})) {
+      if (!Array.isArray(range) || range.length !== 2) continue;
+      const a = safeHm(range[0]);
+      const b = safeHm(range[1]);
+      if (a == null || b == null || b <= a) continue;
+      slots.push(Object.freeze({ slot, core: Object.freeze([a, b]), window: Object.freeze([a - g, b + g]) }));
+    }
+    slots.sort((x, y) => x.core[0] - y.core[0]);
+    Object.freeze(slots);
+    if (country && typeof country === "object") mealCache.set(country, { src, g, slots });
+    return slots;
+  }
+  function inWindow(startMin, endMin, window2) {
+    return Array.isArray(window2) && overlapMin(startMin, endMin, window2[0], window2[1]) > 0;
+  }
+  function coversMealSlot(startMin, endMin, core) {
+    return Array.isArray(core) && startMin <= core[0] && endMin >= (core[0] + core[1]) / 2;
+  }
+  function unmetMeals(needs) {
+    if (needs.length <= 2) {
+      const out = needs.filter((n) => n.cands.length === 0).map((n) => n.slot);
+      if (needs.length === 2 && needs[0].cands.length === 1 && needs[1].cands.length === 1 && needs[0].cands[0] === needs[1].cands[0]) out.push(needs[1].slot);
+      return out;
+    }
+    const owner = /* @__PURE__ */ new Map();
+    const take = (i, seen) => {
+      for (const c of needs[i].cands) {
+        if (seen.has(c)) continue;
+        seen.add(c);
+        if (!owner.has(c) || take(owner.get(c), seen)) {
+          owner.set(c, i);
+          return true;
+        }
+      }
+      return false;
+    };
+    needs.forEach((_, i) => take(i, /* @__PURE__ */ new Set()));
+    const matched = new Set(owner.values());
+    return needs.filter((_, i) => !matched.has(i)).map((n) => n.slot);
+  }
+  var NIGHT_CATEGORIES = Object.freeze(["bar", "food"]);
+  var nightCache = /* @__PURE__ */ new WeakMap();
+  function nightWindowOf(country) {
+    const src = country?.nightSlot;
+    const cap = nightWalkCapMin(country);
+    const hit = country && typeof country === "object" ? nightCache.get(country) : null;
+    if (hit && hit.src === src && hit.cap === cap) return hit.window;
+    let window2 = null;
+    if (Array.isArray(src) && src.length === 2) {
+      const from = safeHm(src[0]);
+      let to = safeHm(src[1]);
+      if (from != null && to != null) {
+        if (cap != null) to = Math.min(to, cap);
+        if (to > from) window2 = Object.freeze([from, to]);
+      }
+    }
+    if (country && typeof country === "object") nightCache.set(country, { src, cap, window: window2 });
+    return window2;
+  }
+  function isNightStop(stop, nightWindow) {
+    return NIGHT_CATEGORIES.includes(stop?.poi?.category) && inWindow(stop.startMin, stop.endMin, nightWindow);
+  }
+  var DAY_TRIP_RETURN_BY_DEFAULT_HM = "21:00";
+  function dayTripReturnByMin(settings) {
+    return safeHm(settings?.dayTripNightReturnByHM ?? DAY_TRIP_RETURN_BY_DEFAULT_HM) ?? hmToMin(DAY_TRIP_RETURN_BY_DEFAULT_HM);
+  }
+  function returnToTownMin(sequence, away, upTo = null) {
+    if (!away || !Array.isArray(sequence)) return null;
+    for (let i = (upTo == null ? sequence.length : Math.min(upTo, sequence.length)) - 1; i >= 0; i--) {
+      const w = away[sequence[i]?.poi?.zoneId];
+      if (w) return sequence[i].endMin + (Number.isFinite(w.homeMin) ? w.homeMin : 0);
+    }
+    return null;
+  }
+  function lateTownNightStops({ sequence, day, settings, country }) {
+    if (!day?.dayTrip || !day.away || !Array.isArray(sequence) || !sequence.length) return [];
+    const night = nightWindowOf(country);
+    if (!night) return [];
+    const byMin = dayTripReturnByMin(settings);
+    const out = [];
+    for (let i = 1; i < sequence.length; i++) {
+      const s = sequence[i];
+      if (!s?.poi || day.away[s.poi.zoneId] || !isNightStop(s, night)) continue;
+      const backMin = returnToTownMin(sequence, day.away, i);
+      if (backMin != null && backMin > byMin) out.push({ index: i, stop: s, backMin, byMin });
+    }
+    return out;
+  }
+  function dayTripNightHints({ sequence, day, settings, country }) {
+    return lateTownNightStops({ sequence, day, settings, country }).filter((x) => !x.stop.insertedBy).map((x) => ({ ruleId: "day-trip-night", code: "hint", hint: true, poiId: x.stop.poi.id, backMin: x.backMin, msg: `\u4E00\u65E5\u904A\u56DE\u5230\u5E02\u5340\u5DF2\u7D93 ${minToHm(x.backMin)}\uFF08\u665A\u65BC ${minToHm(x.byMin)}\uFF09\uFF0C${x.stop.poi.name_zh ?? "\u9019\u4E00\u7AD9"} \u7167\u4F60\u52FE\u7684\u6392\uFF1B\u592A\u665A\u5C31\u5225\u53BB\u4E86` }));
+  }
+
+  // src/rules/meal-slots.js
+  var EATING = /* @__PURE__ */ new Set(["food", "bar", "cafe"]);
+  var meal_slots_default = {
+    id: "meal-slots",
+    kind: "soft",
+    scope: "day",
+    reads: ["sequence", "country.mealSlots"],
+    defaults: { missMin: 20 },
+    apply(ctx) {
+      return missing(ctx).length * ctx.params.missMin;
+    },
+    warn(ctx) {
+      const names = { lunch: "\u5348\u9910", dinner: "\u665A\u9910" };
+      return `\u4ECA\u5929\u6C92\u6392${missing(ctx).map((k) => names[k] ?? k).join("\u3001")}`;
+    }
+  };
+  var eats = (s) => !s.insertedBy && (s.poi.recovery && EATING.has(s.poi.category) || s.poi.meal === true);
+  function missing(ctx) {
+    const win = ctx.day?.windowRaw ?? ctx.day?.window ?? null;
+    const pinned = ctx.sequence.filter((s) => s.fixedWindow && !s.fixedWindow.pinned);
+    const needs = [];
+    for (const { slot, core, window: window2 } of mealSlotsOf(ctx.country, ctx.settings)) {
+      if (win && overlapMin(win.startMin, win.endMin, core[0], core[1]) <= 0) continue;
+      if (pinned.some((s) => coversMealSlot(s.startMin, s.endMin, core))) continue;
+      needs.push({ slot, cands: ctx.sequence.filter((s) => eats(s) && inWindow(s.startMin, s.endMin, window2)) });
+    }
+    return unmetMeals(needs);
+  }
+
   // src/rules/night-slot.js
-  var NIGHT2 = /* @__PURE__ */ new Set(["bar", "food"]);
   var NO_NIGHT_TYPES = /* @__PURE__ */ new Set(["arrival", "departure", "transfer"]);
   var night_slot_default = {
     id: "night-slot",
@@ -1344,11 +1492,14 @@
     defaults: { missMin: 10 },
     apply(ctx) {
       if (NO_NIGHT_TYPES.has(ctx.day.type) || ctx.day.nightSlotOff) return 0;
-      const [from, rawTo] = ctx.country.nightSlot.map(hmToMin);
-      const cap = nightWalkCapMin(ctx.country);
-      const to = cap == null ? rawTo : Math.min(rawTo, cap);
-      const hit = ctx.sequence.some((s) => !s.insertedBy && (NIGHT2.has(s.poi.category) && overlapMin(s.startMin, s.endMin, from, to) > 0 || eventIntoNight(s, from, to)));
+      const night = nightWindowOf(ctx.country);
+      if (!night) return 0;
+      const hit = ctx.sequence.some((s) => !s.insertedBy && (isNightStop(s, night) || eventIntoNight(s, night[0], night[1])));
       if (hit) return 0;
+      if (ctx.day.dayTrip) {
+        const back = returnToTownMin(ctx.sequence, ctx.day.away);
+        if (back != null && back > dayTripReturnByMin(ctx.settings)) return 0;
+      }
       return ctx.day.nightSlotLess ? ctx.params.missMin / 2 : ctx.params.missMin;
     },
     warn() {
@@ -1386,6 +1537,63 @@
     return day.shoppingFromMin != null && stop.startMin < day.shoppingFromMin;
   }
 
+  // src/rules/last-train.js
+  var last_train_default = {
+    id: "last-train",
+    kind: "hard",
+    reads: [],
+    defaults: {},
+    apply(ctx) {
+      if (!ctx.day || !ctx.day.lastLegs && !ctx.day.away) return "ok";
+      return missed(ctx) ? "never" : "ok";
+    },
+    warn(ctx) {
+      const name = ctx.stop.poi.name_zh;
+      const m = missed(ctx);
+      if (!m) return `${name} \u8D95\u4E0D\u4E0A\u672B\u73ED\u8ECA`;
+      const from = ctx.kb?.zones?.[m.last.fromZoneId]?.name_zh;
+      const tail = `\u8D95\u4E0D\u4E0A ${minToHm(m.last.departMin)} \u7684\u672B\u73ED\u8ECA${from ? `\uFF0C${from}\u767C\u8ECA` : ""}`;
+      return m.kind === "leg" ? `\u53BB ${name} ${tail}` : `${name} \u5F85\u5230 ${minToHm(ctx.stop.endMin)}\uFF0C\u56DE\u4F4F\u5BBF${tail}`;
+    }
+  };
+  function missed(ctx) {
+    const { day, stop, leg, prev } = ctx;
+    const zone = stop.poi?.zoneId;
+    if (!zone) return null;
+    if (day.lastLegs && (leg?.rideMin ?? 0) > 0) {
+      const from = prev ? prev.poi?.zoneId : day.resumed ? null : day.homeZoneId;
+      const last = from ? day.lastLegs[`${from}|${zone}`] : null;
+      if (last) {
+        const leaveMin = (stop.arriveMin ?? stop.startMin) - ((leg.walkMin ?? 0) + (leg.rideMin ?? 0) + (leg.waitMin ?? 0));
+        if (leaveMin > last.leaveByMin) return { kind: "leg", last };
+      }
+    }
+    const home = day.away?.[zone]?.last;
+    if (home && stop.endMin > home.leaveByMin) return { kind: "home", last: home };
+    return null;
+  }
+
+  // src/rules/day-trip-night.js
+  var day_trip_night_default = {
+    id: "day-trip-night",
+    kind: "hard",
+    scope: "day",
+    reads: ["sequence"],
+    defaults: {},
+    apply(ctx) {
+      if (!ctx.day?.dayTrip || ctx.day.resumed || !ctx.day.away) return "ok";
+      return inserted(ctx).length ? "no" : "ok";
+    },
+    warn(ctx) {
+      const hit = inserted(ctx);
+      if (!hit.length) return "\u4E00\u65E5\u904A\u56DE\u5230\u5E02\u5340\u5DF2\u7D93\u665A\u4E86\uFF0C\u4E0D\u518D\u591A\u6392\u591C\u9593\u7AD9";
+      return `\u4E00\u65E5\u904A\u56DE\u5230\u5E02\u5340\u5DF2\u7D93 ${minToHm(hit[0].backMin)}\uFF08\u665A\u65BC ${minToHm(hit[0].byMin)}\uFF09\uFF0C\u4E0D\u518D\u591A\u6392\u591C\u9593\u7AD9\uFF08${hit.map((x) => x.stop.poi.name_zh).join("\u3001")}\uFF09`;
+    }
+  };
+  function inserted(ctx) {
+    return lateTownNightStops(ctx).filter((x) => x.stop.insertedBy && !x.stop.fixedWindow?.pinned);
+  }
+
   // src/rules/builtin.js
   var BUILTIN = Object.freeze([
     // 累積量
@@ -1404,6 +1612,7 @@
     early_day_default,
     daylight_default,
     filler_gap_default,
+    last_train_default,
     // 軟約束（站）
     walk_budget_default,
     walk_cost_default,
@@ -1424,7 +1633,8 @@
     designated_default,
     item_gap_default,
     meal_slots_default,
-    night_slot_default
+    night_slot_default,
+    day_trip_night_default
   ]);
 
   // src/rules.json
@@ -1483,7 +1693,9 @@
         dayTripWalkFactor: "#160\uFF08\u8DDF\u65E9\u8D77\u65E5\u540C\u503C 0.7\uFF0C\u53D6\u6700\u56B4\uFF09",
         staminaEasyFactor: "\u9810\u8A2D\uFF0C\u4E0D\u662F\u539F\u8A71\uFF1A\u540C\u884C\u8005\u9AD4\u529B\u300C\u8F15\u9B06\u4E00\u9EDE\u300D\u7684\u6B65\u884C\u9810\u7B97\u500D\u7387\uFF0C\u8DDF\u540C\u884C\u500D\u7387 partyWalkFactor \u540C\u503C\uFF08\u63A8\u5C0E\uFF0C10-16 T19\uFF09\uFF1B\u4EBA\u4E4B\u9593\u53D6\u6700\u9B06\u662F\u539F\u8A71 #144",
         staminaHardFactor: "\u9810\u8A2D\uFF0C\u4E0D\u662F\u539F\u8A71\uFF1A\u300C\u53EF\u4EE5\u64CD\u300D\u5728\u65E5\u578B\u500D\u7387\u53D6\u6700\u56B4\u4E4B\u5F8C\u6700\u5F8C\u4E58 1.15\uFF08\u63A8\u5C0E\uFF0C10-16 T19\uFF09",
-        onTheWayDetourMin: "#184\u300C\u5141\u8A31\u7E5E\u8DEF 8 \u5206\u9418 \u6211\u89BA\u5F97\u662F\u53EF\u4EE5\u7684\u300D\uFF0810-24\uFF1B\u672C\u4F86\u662F\u9810\u8A2D 8\uFF0C\u4ED6\u770B\u4E86\u8981\u6539 3 \u7684\u63D0\u6848\u5F8C\u8AAA 8 \u53EF\u4EE5\uFF0C\u5347\u683C\u6210\u539F\u8A71\uFF09"
+        onTheWayDetourMin: "#184\u300C\u5141\u8A31\u7E5E\u8DEF 8 \u5206\u9418 \u6211\u89BA\u5F97\u662F\u53EF\u4EE5\u7684\u300D\uFF0810-24\uFF1B\u672C\u4F86\u662F\u9810\u8A2D 8\uFF0C\u4ED6\u770B\u4E86\u8981\u6539 3 \u7684\u63D0\u6848\u5F8C\u8AAA 8 \u53EF\u4EE5\uFF0C\u5347\u683C\u6210\u539F\u8A71\uFF09",
+        dayTripNightReturnByHM: "#190\u300C\u4E00\u65E5\u904A\u7684\u591C\u9593\u7AD9 \u53EF\u4EE5\u662F\u5728\u7576\u5730\u9032\u884C \u53EA\u8981\u8D95\u7684\u4E0A\u672B\u73ED\u8ECA\u90FD\u53EF\u4EE5 \u6216\u662F\u56DE\u7A0B\u4E0D\u7B97\u665A(9:00)\u4E5F\u53EF\u4EE5\u6392\u9032\u4F86\u300D\uFF0811-06\uFF1B(9:00) \u662F\u665A\u4E0A\u4E5D\u9EDE\uFF1A\u4E00\u65E5\u904A\u56DE\u5230\u5E02\u5340\u4E0D\u665A\u65BC 21:00 \u624D\u4E3B\u52D5\u6392\u5E02\u5340\u7684\u591C\u9593\u7AD9\uFF0C\u4ED6\u52FE\u7684\u7167\u6392\u53EA\u63D0\u793A\uFF09",
+        mealGraceMin: "\u9810\u8A2D\uFF0C\u4E0D\u662F\u539F\u8A71\uFF1A\u9910\u6BB5\u524D\u5F8C\u5404\u653E\u5BEC 60 \u5206\uFF08\u5348 10:30\u201314:30\u3001\u665A 17:00\u201321:30\uFF09\u3002\u653E\u5BEC\u9019\u4EF6\u4E8B\u51FA\u81EA\u539F\u8A71 #189\u300C\u9019\u9EDE\u4E0D\u5F37\u5236 \u50CF\u662F\u6709\u4E3B\u884C\u7A0B\u8981\u8DD1 \u4F46\u6642\u9593\u843D\u5728\u665A\u9910\u6642\u6BB5 \u90A3\u665A\u9910\u63D0\u65E9\u6216\u5EF6\u5F8C \u90FD\u53EF\u4EE5\u300D\uFF1B60 \u9019\u500B\u6578\u5B57\u662F 11-06 \u5BE6\u8DD1\u6BD4\u904E\u73FE\u6CC1\u3001\u4E00\u5F8B\u653E\u5BEC 60\uFF0F90\uFF0F120\u3001\u53EA\u5728\u4E3B\u884C\u7A0B\u84CB\u5230\u9910\u6BB5\u6642\u653E\u5BEC\u7B49\u5E7E\u7A2E\u505A\u6CD5\u5F8C\u53D6\u7684\uFF08\u4E09\u500B\u6253\u5305\u6A94\u4E0A 60 \u8207 90 \u7D50\u679C\u76F8\u540C\uFF0C120 \u6703\u628A 09:02 \u7684\u65E9\u9910\u7B97\u6210\u5348\u9910\uFF1B\u77E5\u8B58\u5EAB\u7684\u9910\u5EF3\u591A\u534A 17:00 \u958B\u665A\u9910\uFF0C60 \u5206\u8B93\u4E00\u958B\u9580\u5C31\u5403\u7684\u665A\u9910\u7B97\u6578\u3001\u53C8\u4E0D\u6703\u8B93\u4E00\u5C0F\u6642\u7684\u665A\u9910\u65E9\u65BC 16:00 \u958B\u59CB\uFF09"
       },
       onTheWayDetourMin: 8,
       onTheWayPoolMax: 4,
@@ -1503,7 +1715,9 @@
       allocWalkCircleMin: 20,
       allocLinkMaxMin: 15,
       allocCorridorSlackMin: 10,
-      allocItemMaxPerDay: 2
+      allocItemMaxPerDay: 2,
+      mealGraceMin: 60,
+      dayTripNightReturnByHM: "21:00"
     },
     rules: {
       "dim-walk": {
@@ -1632,6 +1846,12 @@
       "shopping-day": {
         weight: 1,
         penaltyMin: 80
+      },
+      "last-train": {
+        weight: 1
+      },
+      "day-trip-night": {
+        weight: 1
       }
     },
     _\u898F\u5247\u8AAA\u660E: "\u6BCF\u689D\u898F\u5247\uFF1Aweight 0 = \u505C\u7528\uFF1B\u5176\u9918\u9375\u662F\u90A3\u689D\u898F\u5247\u7684\u9580\u6ABB\u6216\u7F70\u5206\uFF08\u5206\u9418\uFF09\u3002\u9810\u8A2D\u503C\u662F 10-10 \u5F9E DESIGN \xA75.2 \u63DB\u7B97\u7684\uFF0C\u90FD\u662F\u9810\u8A2D\u7B49\u7D1A\u3002"
@@ -1950,6 +2170,14 @@
     const s = Math.sin(dLat / 2) ** 2 + Math.cos(toRad2(a.lat)) * Math.cos(toRad2(b.lat)) * Math.sin(dLng / 2) ** 2;
     return 2 * R * Math.asin(Math.sqrt(s));
   }
+  var LAST_ROLLOVER_MIN = 4 * 60;
+  function lastDepartMin(link, zoneId) {
+    const hm3 = link?.last?.[zoneId];
+    const m = typeof hm3 === "string" ? hm3.match(/^(\d{1,2}):(\d{2})$/) : null;
+    if (!m) return null;
+    const min = Number(m[1]) * 60 + Number(m[2]);
+    return min < LAST_ROLLOVER_MIN ? min + 1440 : min;
+  }
   function makeLegFn({ walk = {}, settings = {}, zoneLinks = {}, fallbackMin = {} } = {}) {
     const mPerMin = settings.walkingMPerMin ?? 80;
     const detour = settings.detourFactor ?? 1.3;
@@ -1959,13 +2187,17 @@
     const warnings = [];
     const maxWalk = settings.walkVsRideMaxWalkMin ?? 30;
     const linkCache = /* @__PURE__ */ new Map();
+    const lastOf = (departMin2, beforeMin, fromZoneId) => departMin2 == null ? null : Object.freeze({ leaveByMin: departMin2 - beforeMin, departMin: departMin2, fromZoneId });
     const linkBetween = (za, zb) => {
       if (!za || !zb || za === zb) return null;
       const cacheKey = `${za}|${zb}`;
       if (linkCache.has(cacheKey)) return linkCache.get(cacheKey);
       const direct = zoneLinks[`${za}|${zb}`] ?? zoneLinks[`${zb}|${za}`];
       let best = direct ? { rideMin: direct.rideMin ?? 0, walkMin: direct.walkMin ?? 5, mode: direct.mode ?? "ride", hops: 1, total: (direct.rideMin ?? 0) + (direct.walkMin ?? 5) } : null;
-      if (!best) {
+      if (best) {
+        const last = lastOf(lastDepartMin(direct, za), best.walkMin, za);
+        if (last) best.last = last;
+      } else {
         for (const [key2, l1] of Object.entries(zoneLinks)) {
           const [p, q] = key2.split("|");
           const hub = p === za ? q : q === za ? p : null;
@@ -1973,15 +2205,20 @@
           const l2 = zoneLinks[`${hub}|${zb}`] ?? zoneLinks[`${zb}|${hub}`];
           if (!l2) continue;
           const total = (l1.rideMin ?? 0) + (l1.walkMin ?? 5) + (l2.rideMin ?? 0) + (l2.walkMin ?? 5);
-          if (!best || total < best.total) best = { rideMin: (l1.rideMin ?? 0) + (l2.rideMin ?? 0), walkMin: (l1.walkMin ?? 5) + (l2.walkMin ?? 5), mode: `${l1.mode ?? "ride"}+${l2.mode ?? "ride"}`, via: hub, hops: 2, total };
+          if (best && total >= best.total) continue;
+          best = { rideMin: (l1.rideMin ?? 0) + (l2.rideMin ?? 0), walkMin: (l1.walkMin ?? 5) + (l2.walkMin ?? 5), mode: `${l1.mode ?? "ride"}+${l2.mode ?? "ride"}`, via: hub, hops: 2, total };
+          const c1 = lastOf(lastDepartMin(l1, za), l1.walkMin ?? 5, za);
+          const c2 = lastOf(lastDepartMin(l2, hub), (l1.walkMin ?? 5) + (l1.rideMin ?? 0) + (l2.walkMin ?? 5), hub);
+          const last = c1 && c2 ? c1.leaveByMin <= c2.leaveByMin ? c1 : c2 : c1 ?? c2;
+          if (last) best.last = last;
         }
       }
       linkCache.set(cacheKey, best);
       return best;
     };
-    const ride = (link) => ({ walkMin: link.walkMin, rideMin: link.rideMin, climbMin: 0, mode: "ride", source: "link", ...link.via ? { via: link.via } : {} });
+    const ride = (link) => ({ walkMin: link.walkMin, rideMin: link.rideMin, climbMin: 0, mode: "ride", source: "link", ...link.via ? { via: link.via } : {}, ...link.last ? { last: link.last } : {} });
     const rideBeats = (link, walkMin) => Boolean(link) && walkMin > maxWalk && (link.hops === 1 || link.total < walkMin);
-    const legFn2 = (from, to) => {
+    const route = (from, to, quiet) => {
       const key2 = `${from?.id}|${to?.id}`;
       const link = linkBetween(from?.zoneId, to?.zoneId);
       if (walk[key2]) {
@@ -1992,19 +2229,28 @@
       if (hasCoords(from) && hasCoords(to)) {
         const min = Math.ceil(haversineM(from, to) * detour / mPerMin);
         if (rideBeats(link, min)) return ride(link);
-        note(`${from.name_zh ?? from.id}\u2192${to.name_zh ?? to.id} \u6C92\u6709\u5BE6\u7B97\u6B65\u884C\u5206\u9418\uFF0C\u7528\u76F4\u7DDA\u8DDD\u96E2\u4F30`);
+        if (!quiet) note(`${from.name_zh ?? from.id}\u2192${to.name_zh ?? to.id} \u6C92\u6709\u5BE6\u7B97\u6B65\u884C\u5206\u9418\uFF0C\u7528\u76F4\u7DDA\u8DDD\u96E2\u4F30`);
         return { walkMin: min, rideMin: 0, climbMin: 0, mode: "walk", source: "haversine" };
       }
       if (link) return ride(link);
-      note(`${from?.name_zh ?? from?.id}\u2192${to?.name_zh ?? to?.id} \u6C92\u6709\u5EA7\u6A19\uFF0C\u7528\u5340\u57DF\u9810\u8A2D\u5206\u9418`);
+      if (!quiet) note(`${from?.name_zh ?? from?.id}\u2192${to?.name_zh ?? to?.id} \u6C92\u6709\u5EA7\u6A19\uFF0C\u7528\u5340\u57DF\u9810\u8A2D\u5206\u9418`);
       return { walkMin: from?.zoneId === to?.zoneId ? same : cross, rideMin: 0, climbMin: 0, mode: "walk", source: "zone-default" };
     };
+    const legFn2 = (from, to) => route(from, to, false);
     function note(msg) {
       if (warned.has(msg)) return;
       warned.add(msg);
       warnings.push({ code: "leg-estimated", msg });
     }
     legFn2.warnings = warnings;
+    legFn2.linkBetween = (za, zb) => {
+      const link = linkBetween(za, zb);
+      return link ? { ...link } : null;
+    };
+    legFn2.rideLink = (from, to) => {
+      const leg = route(from, to, true);
+      return leg.source === "link" && leg.rideMin > 0 ? legFn2.linkBetween(from?.zoneId, to?.zoneId) : null;
+    };
     return legFn2;
   }
   var hasCoords = (p) => Number.isFinite(p?.lat) && Number.isFinite(p?.lng);
@@ -2602,6 +2848,13 @@
     "other"
     // venue＝固定時段的會場（研討會、演唱會），10-14 T23；spot＝沒有店名只有地點的「坐下來」（海邊、公園、展望台），10-16 原話 #172
   ]);
+  var RESEARCH_FIELDS = Object.freeze({
+    researchRank: { ok: (v) => v === "first" || v === "backup", expect: "\u8981\u5BEB first \u6216 backup" },
+    researchSkip: { ok: (v) => typeof v === "boolean" || typeof v === "string", expect: "\u8981\u5BEB\u4E00\u53E5\u7406\u7531\u6216 true" },
+    notAStop: { ok: (v) => typeof v === "boolean", expect: "\u8981\u5BEB true" },
+    unlockWhen: { ok: (v) => typeof v === "string" && v.trim() !== "", expect: "\u8981\u5BEB\u89E3\u9396\u689D\u4EF6\u7684\u4E00\u53E5\u8A71" },
+    researchNote: { ok: (v) => typeof v === "string", expect: "\u8981\u5BEB\u4E00\u53E5\u8A71" }
+  });
   function classifyCategory(raw, table = DERIVE.category) {
     const text = String(raw ?? "").toLowerCase();
     if (!text) return { key: "other", matched: null };
@@ -2694,6 +2947,10 @@
       poi.lat = null;
       poi.lng = null;
       warnings.push({ code: "coords-missing", poiId: poi.id, msg: "\u6C92\u6709\u5EA7\u6A19" });
+    }
+    for (const [field2, spec] of Object.entries(RESEARCH_FIELDS)) {
+      const v = raw[field2];
+      if (v !== void 0 && v !== null && !spec.ok(v)) warnings.push({ code: "research-field-bad", poiId: poi.id, field: field2, msg: `${field2} \u7684\u503C\u770B\u4E0D\u61C2\uFF1A${JSON.stringify(v)}\uFF08${spec.expect}\uFF09` });
     }
     poi.my = raw.my && typeof raw.my === "object" ? raw.my : {};
     poi.source = raw.source ?? null;
@@ -2915,6 +3172,29 @@
     const city = str(brief?.city).split(/[、,，/]+/)[0].trim().replace(/\s+/g, "-") || TEXT.brief.unset;
     const from = str(brief?.dates?.from) || TEXT.brief.unset;
     return `brief-${city}-${from}.json`.replace(/[\\/:*?"<>|]/g, "-");
+  }
+  var MD_NAME_MAX = 80;
+  var DEVICE_NAME = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/i;
+  var localToday = () => {
+    const d = /* @__PURE__ */ new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  };
+  var cleanStem = (s) => [...String(s ?? "").normalize("NFC").replace(/[^\p{L}\p{N}_-]+/gu, "-").replace(/-{2,}/g, "-")].slice(0, MD_NAME_MAX).join("").replace(/^[-_]+|[-_]+$/g, "");
+  function briefMdName(brief, today = localToday()) {
+    const ym = matchRe(brief?.dates?.from, DATE_RE2).slice(0, 7);
+    const city = cleanStem(str(brief?.city).split(/[、,，/]+/)[0]);
+    const name = cleanStem([ym, city].filter(Boolean).join("-")) || cleanStem(`brief-${today}`) || "brief";
+    return DEVICE_NAME.test(name) ? `brief-${name}` : name;
+  }
+  function briefSubmitMode({ endpointOk = false, hasPicker = false } = {}) {
+    if (endpointOk === true) return "server";
+    return hasPicker === true ? "picker" : "download";
+  }
+  function canSubmitBrief(env) {
+    return briefSubmitMode(env) !== "download";
+  }
+  function briefEndpointFor(pathname) {
+    return /\/app\/(?:index\.html)?$/.test(String(pathname ?? "")) ? "../brief" : null;
   }
   var cell = (s) => String(s ?? "").replace(/\|/g, "\uFF5C").replace(/\r?\n/g, " ");
   var bullets = (list) => list.length ? list.map((x) => `  - ${x}`) : ["  -"];
@@ -3360,6 +3640,28 @@
     const z = new Set([home?.zoneId, anchorPoi?.zoneId, ...candidates.map((c) => c.poi.zoneId)].filter(Boolean));
     return [...z];
   }
+  function awayOf({ zones = [], home = null, legFn: legFn2 = null, kb = null }) {
+    if (typeof legFn2?.rideLink !== "function" || !home?.zoneId) return null;
+    const out = {};
+    for (const z of zones) {
+      if (!z || z === home.zoneId) continue;
+      const center = kb?.zones?.[z];
+      const link = legFn2.rideLink({ id: `__zone:${z}`, zoneId: z, lat: center?.lat, lng: center?.lng }, home);
+      if (!link) continue;
+      out[z] = { homeMin: (link.rideMin ?? 0) + (link.walkMin ?? 0), ...link.last ? { last: link.last } : {} };
+    }
+    return Object.keys(out).length ? out : null;
+  }
+  function lastLegsOf({ zones = [], legFn: legFn2 = null }) {
+    if (typeof legFn2?.linkBetween !== "function") return null;
+    const out = {};
+    for (const a of zones) for (const b of zones) {
+      if (!a || !b || a === b) continue;
+      const last = legFn2.linkBetween(a, b)?.last;
+      if (last) out[`${a}|${b}`] = last;
+    }
+    return Object.keys(out).length ? out : null;
+  }
   function planTrip({ trip, pois, rules, settings, country, kb, legFn: legFn2, restPool = [], brief = null, options = {} }) {
     const out = [];
     const warnings = [];
@@ -3388,6 +3690,7 @@
       for (const w of win.warnings) warnings.push({ ...w, date: d.date, msg: `${d.date} ${w.msg}` });
       const present = presentOn(persons, d.date);
       const adjust = mergeAdjustments(present);
+      const regionZones = regionZonesOf({ home, candidates, anchorPoi });
       const day = {
         date: d.date,
         type: d.type ?? "normal",
@@ -3402,8 +3705,11 @@
         anchorPoiId: anchorPoi?.id ?? null,
         anchorName: anchorPoi?.name_zh ?? d.anchor?.theme ?? null,
         designated: d.designated ?? [],
-        regionZones: regionZonesOf({ home, candidates, anchorPoi }),
+        regionZones,
         homeZoneId: home?.zoneId ?? null,
+        // 外地的區與末班車（原話 #190；11-06）：哪幾區回住宿要搭車、區對區搭車的末班；沒有就 null（規則 last-train、night-slot、day-trip-night 讀）
+        away: awayOf({ zones: regionZones, home, legFn: legFn2, kb }),
+        lastLegs: lastLegsOf({ zones: regionZones, legFn: legFn2 }),
         window: { startMin: win.startMin, endMin: win.endMin },
         windowRaw: win.raw,
         openSlotMin: win.openSlotMin,
@@ -3443,6 +3749,8 @@
       }
       const avoidHints = personAvoidWarnings(plan.sequence, adjust);
       if (avoidHints.length) plan = { ...plan, warnings: [...plan.warnings ?? [], ...avoidHints] };
+      const lateNightHints = dayTripNightHints({ sequence: plan.sequence, day, settings, country });
+      if (lateNightHints.length) plan = { ...plan, warnings: [...plan.warnings ?? [], ...lateNightHints] };
       out.push({ date: d.date, day, plan });
       prevTheme = themeCategory;
       prevType = d.dayTrip ? "daytrip" : d.type ?? "normal";
@@ -3672,6 +3980,8 @@
     if ((p.poolLosses ?? 0) >= 2) return false;
     if (p.unlockWhen) return false;
     if (p.item) return false;
+    if (researchSaysSkip(p)) return false;
+    if (notAStop(p)) return false;
     return true;
   }
   function corridorEligible(p) {
@@ -4460,21 +4770,21 @@
       });
       const cut = changes.length > 0;
       const hasRest = restSoon(candidates, day, nowMin, settings.restSoonMin ?? 30);
-      let inserted = null;
+      let inserted2 = null;
       let pinned = null;
       if (hasRest) {
         ({ candidates, pinned } = pinNearestRest(candidates, input));
         if (pinned) changes.push({ poiId: pinned.poi.id, action: "pin-rest" });
       } else {
-        inserted = pickRestNow(input);
-        if (inserted) {
-          candidates = [inserted, ...candidates];
-          changes.push({ poiId: inserted.poi.id, action: "insert-rest" });
+        inserted2 = pickRestNow(input);
+        if (inserted2) {
+          candidates = [inserted2, ...candidates];
+          changes.push({ poiId: inserted2.poi.id, action: "insert-rest" });
         }
       }
       const walkBudgetMin = Math.floor((settings.walkBudgetMin ?? 150) * (settings.slowDownWalkFactor ?? 0.7));
-      const sat = Boolean(inserted || pinned);
-      const sit = inserted ? "\u5148\u627E\u6700\u8FD1\u7684\u5730\u65B9\u5750\u4E00\u4E0B" : pinned ? "\u5148\u53BB\u5750\u4E0B\u4F86\u7684\u90A3\u7AD9" : hasRest ? "\u5750\u4E0B\u4F86\u7684\u90A3\u7AD9\u7559\u8457" : "\u9644\u8FD1\u6C92\u6709\u9032\u5F97\u53BB\u7684\u6062\u5FA9\u7AD9";
+      const sat = Boolean(inserted2 || pinned);
+      const sit = inserted2 ? "\u5148\u627E\u6700\u8FD1\u7684\u5730\u65B9\u5750\u4E00\u4E0B" : pinned ? "\u5148\u53BB\u5750\u4E0B\u4F86\u7684\u90A3\u7AD9" : hasRest ? "\u5750\u4E0B\u4F86\u7684\u90A3\u7AD9\u7559\u8457" : "\u9644\u8FD1\u6C92\u6709\u9032\u5F97\u53BB\u7684\u6062\u5FA9\u7AD9";
       const rest = cut ? `${sat ? "\uFF0C\u518D" : "\uFF1B"}\u780D\u6389\u8981\u8D70\u8DEF\u7684\u7AD9\uFF0C\u901B\u5E97\u4E5F\u5C11\u4E00\u534A` : "\uFF1B\u5269\u4E0B\u7684\u6C92\u6709\u8981\u8D70\u8DEF\u7684\u7AD9\uFF0C\u901B\u5E97\u5C11\u4E00\u534A";
       return {
         candidates,
@@ -4890,149 +5200,6 @@
     return { dates, deferredChanged, any: dates.length > 0 || deferredChanged };
   }
 
-  // src/ui/settings.js
-  function md(date) {
-    const m = String(date ?? "").match(/^\d{4}-(\d{2})-(\d{2})$/);
-    return m ? `${Number(m[1])}/${Number(m[2])}` : String(date ?? "");
-  }
-  function dateRanges(dates) {
-    const list = [...new Set(dates ?? [])].sort();
-    const out = [];
-    const dayOf2 = (d) => Date.UTC(...String(d).split("-").map((x, i) => i === 1 ? Number(x) - 1 : Number(x)));
-    for (const d of list) {
-      const last = out[out.length - 1];
-      if (last && dayOf2(d) - dayOf2(last.to) === 864e5) last.to = d;
-      else out.push({ from: d, to: d });
-    }
-    return out.map((r) => r.from === r.to ? md(r.from) : `${md(r.from)}\u2013${md(r.to)}`).join("\u3001");
-  }
-  function personsLine(trip, brief = null, cityNames = []) {
-    const L2 = TEXT.companions;
-    const persons = personsOf(trip, brief, null, cityNames);
-    const fromBrief = persons.some((p) => p.source === "brief");
-    const mismatch = persons[0]?.source === "party" && Array.isArray(brief?.persons) && brief.persons.filter((p) => p && typeof p === "object").length >= 2 && !briefApplies(trip, brief, cityNames);
-    const details = (p) => {
-      const a = p.adjustments ?? {};
-      return [
-        !p.isMe && p.datesUnread ? L2.partialUnread(p.partialDays) : !p.isMe && p.dates?.length ? dateRanges(p.dates) : "",
-        L2.stamina[a.stamina] ?? "",
-        L2.nightSlot[a.nightSlot] ?? "",
-        a.avoidCategories?.length ? L2.avoid(a.avoidCategories.map((c) => CATEGORY[c] ?? c).join("\u3001")) : ""
-      ].filter(Boolean).join("\uFF0C");
-    };
-    const one = (p, label) => {
-      const d = details(p);
-      return d ? `${label}\uFF08${d}\uFF09` : label;
-    };
-    const body = persons.length <= 1 ? one(persons[0] ?? {}, L2.alone) : persons.map((p) => one(p, p.isMe ? L2.me : p.name || L2.unnamed)).join("\u3001");
-    return `${L2.label}\uFF1A${body}${fromBrief ? L2.fromBrief : ""}${mismatch ? L2.briefMismatch : ""}`;
-  }
-  var resetArm = null;
-  function tripEditsText(diff) {
-    const L2 = TEXT.tripEdits;
-    const body = diff?.dates?.length ? L2.days(diff.dates.length) : diff?.deferredChanged ? L2.deferredOnly : L2.none;
-    return `${L2.label}\uFF1A${body}`;
-  }
-  function tripEditsRow(state2, actions) {
-    const diff = diffTripEdits(state2.trip, state2.tripBase);
-    const L2 = TEXT.tripEdits;
-    const btn = diff.any ? el("button", { class: "btn quiet sm", type: "button" }, L2.reset) : null;
-    btn?.addEventListener("click", () => {
-      if (resetArm?.btn === btn) {
-        disarmReset();
-        actions.resetTripEdits();
-        return;
-      }
-      disarmReset();
-      btn.textContent = L2.resetConfirm;
-      resetArm = { btn, timer: setTimeout(() => {
-        if (resetArm?.btn === btn) resetArm = null;
-        btn.textContent = L2.reset;
-      }, 4e3) };
-    });
-    return el("p", { class: "muted small edits" }, [tripEditsText(diff), btn]);
-  }
-  function disarmReset() {
-    if (resetArm) clearTimeout(resetArm.timer);
-    resetArm = null;
-  }
-  function renderSettings({ state: state2, actions }) {
-    const d = state2.device;
-    const s = state2.settings;
-    const num3 = (label, key2, value, step = 15) => el("label", { class: "field" }, [
-      el("span", { text: label }),
-      el("input", { type: "number", inputmode: "numeric", min: 0, step, value, onchange: (e) => actions.saveDevice({ [key2]: Number(e.target.value) }) })
-    ]);
-    const meta = state2.packMeta;
-    const packLine = meta ? TEXT.lastPack(meta.tripName ?? meta.tripId ?? "", meta.generatedAt) : TEXT.noPack;
-    return [
-      el("h1", { text: TEXT.tabs.settings }),
-      el("section", { class: "group" }, [
-        el("h2", { text: TEXT.packSection }),
-        el("p", { class: "muted small", text: packLine }),
-        // 誰同行（T19）：旅程檔的 persons、沒有就對得上的需求單、再沒有就 party；沒旅程就不寫
-        state2.trip ? el("p", { class: "muted small", text: personsLine(state2.trip, state2.brief, cityNamesOf(state2.kb)) }) : null,
-        // 規劃頁的改動存在手機（T16b）：跟打包那版比有幾天改過、「還原成打包版」按兩次
-        state2.trip ? tripEditsRow(state2, actions) : null,
-        el("label", { class: "field" }, [
-          el("span", { text: TEXT.packUrl }),
-          el("input", { type: "url", inputmode: "url", autocapitalize: "off", autocorrect: "off", spellcheck: "false", value: d.packUrl ?? "", placeholder: "https://\u2026/trip-pilot/pack.json", onchange: (e) => actions.saveDevice({ packUrl: e.target.value.trim() }) })
-        ]),
-        el("div", { class: "actions" }, [
-          el("button", { class: "btn primary", type: "button", onclick: () => actions.updateFromUrl() }, TEXT.update),
-          el("label", { class: "btn" }, [
-            TEXT.importFile,
-            el("input", { type: "file", accept: ".json,application/json", class: "hidden-input", onchange: (e) => {
-              const f = e.target.files?.[0];
-              if (f) actions.importFile(f);
-              e.target.value = "";
-            } })
-          ]),
-          el("a", { class: "btn", href: "#/brief" }, TEXT.brief.entry)
-          // 需求單頁（T26）：出發前填的，不進底部分頁
-        ]),
-        state2.packStatus ? el("p", { class: "small status", text: state2.packStatus }) : null
-      ]),
-      el("section", { class: "group" }, [
-        el("h2", { text: TEXT.settingsTitle }),
-        num3(TEXT.walkBudget, "walkBudgetMin", d.walkBudgetMin ?? s.walkBudgetMin),
-        num3(TEXT.openSlot, "openSlotMinPerDay", d.openSlotMinPerDay ?? s.openSlotMinPerDay),
-        el("label", { class: "field" }, [
-          el("span", { text: TEXT.departHM }),
-          el("input", { type: "time", value: d.departHM ?? s.dayWindow[0], onchange: (e) => actions.saveDevice({ departHM: e.target.value }) })
-        ]),
-        el("label", { class: "field row" }, [
-          el("span", { text: TEXT.nightSlot }),
-          el("input", { type: "checkbox", checked: d.nightSlotOn !== false, onchange: (e) => actions.saveDevice({ nightSlotOn: e.target.checked }) })
-        ])
-      ])
-    ];
-  }
-
-  // src/ui/pool.js
-  function renderPool({ state: state2 }) {
-    const plannedOn = /* @__PURE__ */ new Map();
-    for (const [date, d] of Object.entries(state2.plans)) for (const s of d.plan.sequence) if (!s.insertedBy) plannedOn.set(s.poi.id, date);
-    const groups = /* @__PURE__ */ new Map();
-    for (const c of state2.pool) {
-      const cat = c.poi.category;
-      if (!groups.has(cat)) groups.set(cat, []);
-      groups.get(cat).push(c.poi);
-    }
-    const nodes = [el("h1", { text: TEXT.poolTitle })];
-    for (const [cat, list] of groups) {
-      nodes.push(el("section", { class: "group" }, [
-        el("h2", { text: `${CATEGORY[cat] ?? cat}\uFF08${list.length}\uFF09` }),
-        el("ul", { class: "plain" }, list.map((p) => {
-          const on = plannedOn.get(p.id);
-          const pending = on ? null : deferredMark(state2.trip, p.id, state2.plans);
-          return el("li", {}, [p.item ? el("span", { class: "cat item", text: p.item }) : null, el("strong", { text: p.name_zh }), el("span", { class: "muted small", text: `\u3000${on ? TEXT.plannedOn(dateLabel(on)) : pending ?? TEXT.notPlanned}` })]);
-        }))
-      ]));
-    }
-    return nodes;
-  }
-
   // src/data/brief-memory.js
   var MEMORY_VERSION = 1;
   var isObj3 = (v) => v != null && typeof v === "object" && !Array.isArray(v);
@@ -5084,6 +5251,9 @@
   // src/ui/brief.js
   var L = TEXT.brief;
   var clearTimer = null;
+  function briefEnv(state2) {
+    return { endpointOk: state2?.briefEndpoint === true, hasPicker: state2?.savePicker === true };
+  }
   function renderBrief({ state: state2, actions }) {
     const b = state2.brief;
     const me = b.persons.find((p) => p.isMe) ?? b.persons[0];
@@ -5108,7 +5278,10 @@
       ...companions.length ? companions.map((c) => personSection2(c, put, putRender, [], themes)) : [el("section", { class: "group" }, [el("h2", { text: L.s3 }), el("p", { class: "muted small", text: L.companionsHint })])],
       el("div", { class: "actions" }, [el("button", { class: "btn", type: "button", onclick: () => putRender((x) => ({ ...x, persons: [...x.persons, emptyPerson()] })) }, L.addPerson)]),
       errandsSection(b, sugg.consumables, put, putRender),
-      tasksSection(b, put, putRender, errandExamples)
+      tasksSection(b, put, putRender, errandExamples),
+      // 頁尾再一顆「提交」（text.js intro「填完按提交」）：填到最後不用捲回頂端；狀態句在這裡也印一次，頂端那句在好幾屏之上看不到
+      el("div", { class: "actions submit-end" }, [submitButton(actions)]),
+      state2.briefStatus ? el("p", { class: "small status", text: state2.briefStatus }) : null
     ])];
   }
   var splitLines = (s) => s.split(/\r?\n/).map((x) => x.trim()).filter(Boolean);
@@ -5138,7 +5311,9 @@
       }, 4e3);
     });
     return el("div", { class: "actions" }, [
-      el("button", { class: "btn primary", type: "button", onclick: () => actions.exportBrief() }, L.export),
+      // 最主要的鍵是「提交」（原話 #188）；「存成檔案」（JSON，換裝置或留底用）降成次要
+      submitButton(actions),
+      el("button", { class: "btn", type: "button", onclick: () => actions.exportBrief() }, L.export),
       el("button", { class: "btn", type: "button", onclick: () => actions.copyBrief() }, L.copy),
       el("label", { class: "btn" }, [
         L.import,
@@ -5155,6 +5330,7 @@
     if (clearTimer) clearTimeout(clearTimer);
     clearTimer = null;
   }
+  var submitButton = (actions) => el("button", { class: "btn primary", type: "button", onclick: () => actions.submitBrief() }, L.submit);
   function skeletonSection(b, put, putRender, driving) {
     const setTop = (k) => (v) => put((x) => ({ ...x, [k]: v }));
     const setIn = (k, sub) => (v) => put((x) => ({ ...x, [k]: { ...x[k], [sub]: v } }));
@@ -5291,12 +5467,157 @@
     ]);
   }
 
+  // src/ui/settings.js
+  function md(date) {
+    const m = String(date ?? "").match(/^\d{4}-(\d{2})-(\d{2})$/);
+    return m ? `${Number(m[1])}/${Number(m[2])}` : String(date ?? "");
+  }
+  function dateRanges(dates) {
+    const list = [...new Set(dates ?? [])].sort();
+    const out = [];
+    const dayOf2 = (d) => Date.UTC(...String(d).split("-").map((x, i) => i === 1 ? Number(x) - 1 : Number(x)));
+    for (const d of list) {
+      const last = out[out.length - 1];
+      if (last && dayOf2(d) - dayOf2(last.to) === 864e5) last.to = d;
+      else out.push({ from: d, to: d });
+    }
+    return out.map((r) => r.from === r.to ? md(r.from) : `${md(r.from)}\u2013${md(r.to)}`).join("\u3001");
+  }
+  function personsLine(trip, brief = null, cityNames = []) {
+    const L2 = TEXT.companions;
+    const persons = personsOf(trip, brief, null, cityNames);
+    const fromBrief = persons.some((p) => p.source === "brief");
+    const mismatch = persons[0]?.source === "party" && Array.isArray(brief?.persons) && brief.persons.filter((p) => p && typeof p === "object").length >= 2 && !briefApplies(trip, brief, cityNames);
+    const details = (p) => {
+      const a = p.adjustments ?? {};
+      return [
+        !p.isMe && p.datesUnread ? L2.partialUnread(p.partialDays) : !p.isMe && p.dates?.length ? dateRanges(p.dates) : "",
+        L2.stamina[a.stamina] ?? "",
+        L2.nightSlot[a.nightSlot] ?? "",
+        a.avoidCategories?.length ? L2.avoid(a.avoidCategories.map((c) => CATEGORY[c] ?? c).join("\u3001")) : ""
+      ].filter(Boolean).join("\uFF0C");
+    };
+    const one = (p, label) => {
+      const d = details(p);
+      return d ? `${label}\uFF08${d}\uFF09` : label;
+    };
+    const body = persons.length <= 1 ? one(persons[0] ?? {}, L2.alone) : persons.map((p) => one(p, p.isMe ? L2.me : p.name || L2.unnamed)).join("\u3001");
+    return `${L2.label}\uFF1A${body}${fromBrief ? L2.fromBrief : ""}${mismatch ? L2.briefMismatch : ""}`;
+  }
+  var resetArm = null;
+  function tripEditsText(diff) {
+    const L2 = TEXT.tripEdits;
+    const body = diff?.dates?.length ? L2.days(diff.dates.length) : diff?.deferredChanged ? L2.deferredOnly : L2.none;
+    return `${L2.label}\uFF1A${body}`;
+  }
+  function tripEditsRow(state2, actions) {
+    const diff = diffTripEdits(state2.trip, state2.tripBase);
+    const L2 = TEXT.tripEdits;
+    const btn = diff.any ? el("button", { class: "btn quiet sm", type: "button" }, L2.reset) : null;
+    btn?.addEventListener("click", () => {
+      if (resetArm?.btn === btn) {
+        disarmReset();
+        actions.resetTripEdits();
+        return;
+      }
+      disarmReset();
+      btn.textContent = L2.resetConfirm;
+      resetArm = { btn, timer: setTimeout(() => {
+        if (resetArm?.btn === btn) resetArm = null;
+        btn.textContent = L2.reset;
+      }, 4e3) };
+    });
+    return el("p", { class: "muted small edits" }, [tripEditsText(diff), btn]);
+  }
+  function disarmReset() {
+    if (resetArm) clearTimeout(resetArm.timer);
+    resetArm = null;
+  }
+  function renderSettings({ state: state2, actions }) {
+    const d = state2.device;
+    const s = state2.settings;
+    const num3 = (label, key2, value, step = 15) => el("label", { class: "field" }, [
+      el("span", { text: label }),
+      el("input", { type: "number", inputmode: "numeric", min: 0, step, value, onchange: (e) => actions.saveDevice({ [key2]: Number(e.target.value) }) })
+    ]);
+    const meta = state2.packMeta;
+    const packLine = meta ? TEXT.lastPack(meta.tripName ?? meta.tripId ?? "", meta.generatedAt) : TEXT.noPack;
+    return [
+      el("h1", { text: TEXT.tabs.settings }),
+      el("section", { class: "group" }, [
+        el("h2", { text: TEXT.packSection }),
+        el("p", { class: "muted small", text: packLine }),
+        // 誰同行（T19）：旅程檔的 persons、沒有就對得上的需求單、再沒有就 party；沒旅程就不寫
+        state2.trip ? el("p", { class: "muted small", text: personsLine(state2.trip, state2.brief, cityNamesOf(state2.kb)) }) : null,
+        // 規劃頁的改動存在手機（T16b）：跟打包那版比有幾天改過、「還原成打包版」按兩次
+        state2.trip ? tripEditsRow(state2, actions) : null,
+        el("label", { class: "field" }, [
+          el("span", { text: TEXT.packUrl }),
+          el("input", { type: "url", inputmode: "url", autocapitalize: "off", autocorrect: "off", spellcheck: "false", value: d.packUrl ?? "", placeholder: "https://\u2026/trip-pilot/pack.json", onchange: (e) => actions.saveDevice({ packUrl: e.target.value.trim() }) })
+        ]),
+        el("div", { class: "actions" }, [
+          el("button", { class: "btn primary", type: "button", onclick: () => actions.updateFromUrl() }, TEXT.update),
+          el("label", { class: "btn" }, [
+            TEXT.importFile,
+            el("input", { type: "file", accept: ".json,application/json", class: "hidden-input", onchange: (e) => {
+              const f = e.target.files?.[0];
+              if (f) actions.importFile(f);
+              e.target.value = "";
+            } })
+          ]),
+          // 需求單頁（T26）：出發前填的，不進底部分頁。入口只在交得出去的環境出現（原話 #186：需求單在電腦上填、不在手機跑）——
+          // 頁面是桌機伺服器供應的、或瀏覽器有另存對話框；iPhone Safari 兩樣都沒有就不出現（#/brief 這個網址本身照舊開得了）
+          canSubmitBrief(briefEnv(state2)) ? el("a", { class: "btn", href: "#/brief" }, TEXT.brief.entry) : null
+        ]),
+        state2.packStatus ? el("p", { class: "small status", text: state2.packStatus }) : null
+      ]),
+      el("section", { class: "group" }, [
+        el("h2", { text: TEXT.settingsTitle }),
+        num3(TEXT.walkBudget, "walkBudgetMin", d.walkBudgetMin ?? s.walkBudgetMin),
+        num3(TEXT.openSlot, "openSlotMinPerDay", d.openSlotMinPerDay ?? s.openSlotMinPerDay),
+        el("label", { class: "field" }, [
+          el("span", { text: TEXT.departHM }),
+          el("input", { type: "time", value: d.departHM ?? s.dayWindow[0], onchange: (e) => actions.saveDevice({ departHM: e.target.value }) })
+        ]),
+        el("label", { class: "field row" }, [
+          el("span", { text: TEXT.nightSlot }),
+          el("input", { type: "checkbox", checked: d.nightSlotOn !== false, onchange: (e) => actions.saveDevice({ nightSlotOn: e.target.checked }) })
+        ])
+      ])
+    ];
+  }
+
+  // src/ui/pool.js
+  function renderPool({ state: state2 }) {
+    const plannedOn = /* @__PURE__ */ new Map();
+    for (const [date, d] of Object.entries(state2.plans)) for (const s of d.plan.sequence) if (!s.insertedBy) plannedOn.set(s.poi.id, date);
+    const groups = /* @__PURE__ */ new Map();
+    for (const c of state2.pool) {
+      const cat = c.poi.category;
+      if (!groups.has(cat)) groups.set(cat, []);
+      groups.get(cat).push(c.poi);
+    }
+    const nodes = [el("h1", { text: TEXT.poolTitle })];
+    for (const [cat, list] of groups) {
+      nodes.push(el("section", { class: "group" }, [
+        el("h2", { text: `${CATEGORY[cat] ?? cat}\uFF08${list.length}\uFF09` }),
+        el("ul", { class: "plain" }, list.map((p) => {
+          const on = plannedOn.get(p.id);
+          const pending = on ? null : deferredMark(state2.trip, p.id, state2.plans);
+          return el("li", {}, [p.item ? el("span", { class: "cat item", text: p.item }) : null, el("strong", { text: p.name_zh }), el("span", { class: "muted small", text: `\u3000${on ? TEXT.plannedOn(dateLabel(on)) : pending ?? TEXT.notPlanned}` })]);
+        }))
+      ]));
+    }
+    return nodes;
+  }
+
   // src/ui/app.js
   var SETTINGS_KEY = "trip-pilot:settings";
   var FIELD_KEY = "trip-pilot:field";
   var BRIEF_KEY = "trip-pilot:brief";
   var BRIEF_MEMORY_KEY = "trip-pilot:brief-memory";
   var TRIP_EDITS_KEY = "trip-pilot:trip-edits";
+  var BRIEF_SUBMITTED_KEY = "trip-pilot:brief-submitted";
   var state = {
     trip: null,
     pois: {},
@@ -5327,15 +5648,28 @@
     route: "#/plan",
     device: loadJSON(SETTINGS_KEY, {}),
     field: loadJSON(FIELD_KEY, { date: null, index: 0, simulate: false, simNowMin: null, ratings: {}, progress: {}, visited: {} }),
-    // 需求單（T26）：出發前在手機上填，存這支手機；記憶是上一份單子的消耗品與要買的（data/brief-memory.js）
+    // 需求單（T26）：出發前在電腦上填、按「提交」交給 Claude（原話 #186「需求單不是在手機跑 而是在電腦」、#188 輸出成一份 MD 檔到 trip-pilot 資料夾；
+    // 10-16 寫的「在手機上填」是推導、已作廢）。填的內容存這台裝置的瀏覽器；記憶是上一份單子的消耗品與要買的（data/brief-memory.js）
     brief: normalizeBrief(loadJSON(BRIEF_KEY, null)),
     briefMemory: normalizeMemory(loadJSON(BRIEF_MEMORY_KEY, null)),
     briefStatus: "",
     briefCopyText: null,
     // 剪貼簿不給用時，整份文字放進頁上的框讓他自己複製
-    briefUndo: null
+    briefUndo: null,
     // 載入別份或清空前的那份（一次性「復原上一份」；空單不留）
+    // 提交（#188）走哪條路看這兩樣（ui/brief.js briefEnv → data/brief.js briefSubmitMode）；需求單的入口也看它們（兩樣都沒有＝iPhone Safari，入口不出現）
+    briefEndpoint: null,
+    // 同源的提交端點（桌機伺服器的 /brief）：null 還沒探測、true 會收、false 沒有或不收（probeBriefEndpoint）
+    savePicker: typeof globalThis.showSaveFilePicker === "function",
+    // 瀏覽器有另存對話框（File System Access API）
+    briefBusy: false,
+    // 正在提交：再按不理
+    briefSubmitted: submittedOf(loadJSON(BRIEF_SUBMITTED_KEY, null))
+    // 這份單子上次交到桌機的檔 { file }；載入別份、清空、復原就忘掉（那是另一份單子了）
   };
+  function submittedOf(v) {
+    return v && typeof v.file === "string" && v.file ? { file: v.file } : null;
+  }
   function loadJSON(key2, fallback) {
     try {
       const v = JSON.parse(localStorage.getItem(key2) ?? "null");
@@ -5671,7 +6005,12 @@
     state.briefUndo = isBriefEmpty(state.brief) ? null : state.brief;
     state.brief = next;
     saveJSON(BRIEF_KEY, state.brief);
+    forgetSubmitted();
     replanIfPersonsChanged(prev);
+  }
+  function forgetSubmitted() {
+    state.briefSubmitted = null;
+    removeJSON(BRIEF_SUBMITTED_KEY);
   }
   function undoBrief() {
     if (!state.briefUndo) return;
@@ -5679,6 +6018,7 @@
     state.brief = state.briefUndo;
     state.briefUndo = null;
     saveJSON(BRIEF_KEY, state.brief);
+    forgetSubmitted();
     replanIfPersonsChanged(prev);
     state.briefStatus = TEXT.brief.undone;
     state.briefCopyText = null;
@@ -5728,6 +6068,136 @@
     state.briefCopyText = null;
     render();
   }
+  var BRIEF_PROBE_MS = 4e3;
+  var BRIEF_POST_MS = 8e3;
+  async function fetchWithin(ms, url, init) {
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), ms);
+    try {
+      return await fetch(url, { ...init, signal: ctl.signal });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  var briefEntryShown = () => canSubmitBrief(briefEnv(state));
+  var briefProbing = null;
+  function probeBriefEndpoint() {
+    const run = (async () => {
+      const url = briefEndpointFor(globalThis.location?.pathname);
+      let ok = false;
+      if (url) {
+        try {
+          const res = await fetchWithin(BRIEF_PROBE_MS, url, { method: "HEAD", cache: "no-store" });
+          ok = res.ok && res.headers.get("x-trip-pilot-brief") === "accepts";
+        } catch {
+          ok = false;
+        }
+      }
+      const shown = briefEntryShown();
+      state.briefEndpoint = ok;
+      if (briefEntryShown() !== shown && (state.route === "#/settings" || !state.trip && state.route !== "#/brief")) render();
+      return ok;
+    })();
+    briefProbing = run;
+    const done = () => {
+      if (briefProbing === run) briefProbing = null;
+    };
+    run.then(done, done);
+    return run;
+  }
+  async function postBrief(name, text) {
+    const E = TEXT.brief.submitErrors;
+    const url = briefEndpointFor(globalThis.location?.pathname);
+    if (!url) return { ok: false, gone: true, reason: E.offline };
+    let res;
+    try {
+      res = await fetchWithin(BRIEF_POST_MS, `${url}?name=${encodeURIComponent(name)}`, { method: "POST", headers: { "Content-Type": "text/markdown; charset=utf-8" }, body: text, cache: "no-store" });
+    } catch {
+      return { ok: false, gone: true, reason: E.offline };
+    }
+    let data = null;
+    try {
+      data = await res.json();
+    } catch {
+      data = null;
+    }
+    if (res.ok && data?.ok === true && typeof data.file === "string" && data.file) return { ok: true, file: data.file, history: typeof data.history === "string" && data.history ? data.history : null };
+    if (res.ok) return { ok: false, gone: true, reason: E.offline };
+    const code = typeof data?.error === "string" ? data.error : "";
+    const known = Object.prototype.hasOwnProperty.call(E, code) && typeof E[code] === "string" ? E[code] : null;
+    return { ok: false, gone: res.status === 404 || res.status === 405 || code === "disabled" || code === "cross-origin", reason: known ?? E.http(res.status) };
+  }
+  async function saveBriefWithPicker(fileName, text) {
+    let handle;
+    try {
+      handle = await globalThis.showSaveFilePicker({ suggestedName: fileName, id: "trip-pilot-brief", types: [{ description: TEXT.brief.mdFileType, accept: { "text/markdown": [".md"] } }] });
+    } catch (err) {
+      return err?.name === "AbortError" ? { via: "cancelled" } : { via: "failed", opened: false };
+    }
+    try {
+      const writable = await handle.createWritable();
+      await writable.write(text);
+      await writable.close();
+      return { via: "picker", file: handle.name || fileName };
+    } catch {
+      return { via: "failed", opened: true };
+    }
+  }
+  function briefSubmitText(result, failed) {
+    const L2 = TEXT.brief;
+    if (result.via === "server") return `${L2.submitted(result.file)}${result.history ? L2.submittedReplaced(result.history) : ""}${result.renamedFrom ? L2.submittedRenamed(result.renamedFrom) : ""}`;
+    if (result.via === "cancelled") return failed ? L2.submitFailed(failed) : "";
+    const lead = failed ? L2.submitFellBack(failed) : result.pickerFailed ? L2.pickerFailed : "";
+    return `${lead}${L2.savedForClaude(result.file)}`;
+  }
+  async function submitBrief() {
+    if (state.briefBusy) return null;
+    state.briefBusy = true;
+    const L2 = TEXT.brief;
+    let result = null;
+    let failed = "";
+    try {
+      rememberBrief();
+      const text = briefToMarkdown(state.brief, { themes: themeOptions(state.country) });
+      const name = briefMdName(state.brief, todayStr());
+      const fileName = `${name}.brief.md`;
+      state.briefCopyText = null;
+      if (state.briefEndpoint === null && briefProbing) await briefProbing;
+      if (briefSubmitMode(briefEnv(state)) === "server") {
+        state.briefStatus = L2.submitting;
+        render();
+        const r = await postBrief(name, text);
+        if (r.ok) {
+          const before = state.briefSubmitted?.file ?? null;
+          result = { via: "server", file: r.file, history: r.history, renamedFrom: before && before !== r.file ? before : null };
+          state.briefSubmitted = { file: r.file };
+          saveJSON(BRIEF_SUBMITTED_KEY, state.briefSubmitted);
+        } else {
+          failed = r.reason;
+          if (r.gone) state.briefEndpoint = false;
+        }
+      }
+      let pickerFailed = false;
+      if (!result && state.savePicker) {
+        const r = await saveBriefWithPicker(fileName, text);
+        if (r.via === "failed") pickerFailed = r.opened;
+        else result = r;
+      }
+      if (!result) {
+        downloadText(fileName, text, "text/markdown");
+        result = { via: "download", file: fileName, pickerFailed };
+      }
+      state.briefStatus = briefSubmitText(result, failed);
+    } catch (err) {
+      console.warn("\u9700\u6C42\u55AE\u63D0\u4EA4\u5931\u6557", err);
+      state.briefStatus = L2.submitFailed(failed || L2.submitErrors.unknown);
+      result = null;
+    } finally {
+      state.briefBusy = false;
+    }
+    render();
+    return result;
+  }
   function downloadText(name, text, type) {
     const url = URL.createObjectURL(new Blob([text], { type }));
     const a = el("a", { href: url, download: name });
@@ -5742,7 +6212,7 @@
     const root = document.getElementById("app");
     if (!root) return;
     clear(root);
-    const actions = { swapStop, removeStop, undoLast, upgradeCorridor, markVisited, chooseOption, deferStop, dismissNotice, resetTripEdits, saveDevice, setField, replanAll, updateFromUrl, importFile, setBrief, exportBrief, copyBrief, importBrief, clearBrief, undoBrief };
+    const actions = { swapStop, removeStop, undoLast, upgradeCorridor, markVisited, chooseOption, deferStop, dismissNotice, resetTripEdits, saveDevice, setField, replanAll, updateFromUrl, importFile, setBrief, submitBrief, exportBrief, copyBrief, importBrief, clearBrief, undoBrief };
     const view = !state.trip && !WITHOUT_TRIP.has(state.route) ? renderEmpty : VIEWS[state.route] ?? renderPlanner;
     root.append(el("main", { class: "view" }, view({ state, actions })));
     root.append(tabBar());
@@ -5764,7 +6234,8 @@
       el("p", { class: "muted", text: TEXT.shellHint }),
       el("div", { class: "actions" }, [
         el("a", { class: "btn primary", href: "#/settings" }, TEXT.goUpdate),
-        el("a", { class: "btn", href: "#/brief" }, TEXT.brief.fillFirst),
+        // 「先填需求單」只在交得出去的環境出現（桌機；原話 #186 需求單不在手機跑——iPhone Safari 沒有另存對話框、頁面也不是桌機伺服器供應的）
+        briefEntryShown() ? el("a", { class: "btn", href: "#/brief" }, TEXT.brief.fillFirst) : null,
         el("button", { class: "btn", type: "button", onclick: loadDemo }, TEXT.loadDemo)
       ])
     ];
@@ -5780,12 +6251,14 @@
     const apply = () => {
       state.route = location.hash && VIEWS[location.hash] ? location.hash : "#/plan";
       if (state.route === "#/plan") state.planScroll = true;
+      if (state.route === "#/brief") void probeBriefEndpoint();
       if (!flushPendingReplan()) render();
     };
     window.addEventListener("hashchange", apply);
     if (!state.field.date) state.field.date = todayStr();
     readPackParam();
     apply();
+    if (state.route !== "#/brief") void probeBriefEndpoint();
     try {
       const stored = await loadLatestPack();
       if (stored) {
@@ -5808,7 +6281,7 @@
   }
 
   // src/main.js
-  var VERSION = true ? "202610271236-46dfe416" : "dev";
+  var VERSION = true ? "202611061645-e02604f9" : "dev";
   function showUpdateBanner(registration) {
     if (document.querySelector(".banner")) return;
     const banner = el("div", { class: "banner", role: "status" }, [
