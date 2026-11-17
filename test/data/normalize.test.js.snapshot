@@ -1,4 +1,4 @@
-exports[`仙台 153 筆全部通過 normalize，分佈進 snapshot 1`] = `
+exports[`仙台 165 筆全部通過 normalize，分佈進 snapshot 1`] = `
 {
   "stats": {
     "byCategory": {
@@ -7,18 +7,18 @@ exports[`仙台 153 筆全部通過 normalize，分佈進 snapshot 1`] = `
       "temple": 5,
       "drugstore": 15,
       "arcade": 1,
-      "food": 19,
-      "department": 3,
+      "department": 4,
       "store": 18,
       "electronics": 1,
       "outlet": 2,
+      "food": 26,
       "gift": 2,
       "daytrip": 11,
       "experience": 2,
       "bar": 8,
       "brewery": 3,
       "onsen": 3,
-      "cafe": 12,
+      "cafe": 16,
       "market": 1,
       "logistics": 10,
       "event": 10,
@@ -27,12 +27,12 @@ exports[`仙台 153 筆全部通過 normalize，分佈進 snapshot 1`] = `
       "spot": 1
     },
     "byWalkFactor": {
-      "0": 107,
-      "1": 6,
+      "0": 118,
+      "1": 7,
       "0.5": 40
     },
-    "recovery": 46,
-    "cafeLike": 12
+    "recovery": 57,
+    "cafeLike": 16
   },
   "unknown": []
 }
