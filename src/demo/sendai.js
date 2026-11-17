@@ -1,5 +1,8 @@
 // 示範旅程：仙台 8/13 與 8/17（從 e2e-v4 抽出，營業時間照 v4 查證；站間分鐘是估值）。
 // 兩個用途：測試夾具（test/sendai）、App 裡的「載入示範」（他在家試走用，原話 #153）。
+// 能當哪一餐（知識庫欄位 meals；原話 #195）：示範資料只寫店型鍵、沒有店型原文，酒吧推導不出是不是酒場型（rules/_slots.js servesMeal），所以兩天當晚餐的那兩家
+// （汐谷、文化横丁 小酒場）照知識庫那兩筆的標註寫上 meals.dinner（11-17；之前載入示範兩天都多一句「今天沒排晚餐」）。其餘的站照店型推導：牛舌店午晚餐都算，咖啡廳與黑膠 bar 不算一餐。
+// 示範的國家層（COUNTRY）只有午餐、晚餐兩段，沒有早餐段：載入示範不排早餐、沒有早餐卡。
 import { normalizePoi } from '../data/schema.js';
 
 const H = (...pairs) => pairs;
@@ -12,7 +15,7 @@ export const RAW_POIS = [
   { name_zh: '珈巣多夢', category: 'cafe', zoneId: 'ichibancho', duration: '60 分鐘', hours: everyDay(H(['12:00', '24:00']), ['wed']), highlight: '定禪寺通欅木旁 2F、約 50 年的自家焙煎專門店。' },
   { name_zh: '火星の庭', category: 'cafe', zoneId: 'honcho', duration: '75 分鐘', hours: everyDay(H(['11:00', '18:00']), ['tue', 'wed']), highlight: '本町的二手書咖啡。' },
   { name_zh: '喫茶 Elbe', category: 'cafe', zoneId: 'ichibancho', duration: '60 分鐘', hours: everyDay(H(['11:30', '17:00'], ['17:30', '21:00']), ['sun']), highlight: '一番町地下的昭和純喫茶，名物塩味スパゲッティ。' },
-  { name_zh: '汐谷', category: 'bar', zoneId: 'ichibancho', duration: '90 分鐘', hours: everyDay(H(['17:00', '23:00']), ['sun']), highlight: '文化横丁口的日本酒小店，夫婦二人經營。' },
+  { name_zh: '汐谷', category: 'bar', zoneId: 'ichibancho', duration: '90 分鐘', hours: everyDay(H(['17:00', '23:00']), ['sun']), highlight: '文化横丁口的日本酒小店，夫婦二人經營。', meals: { dinner: '魟魚肝刺身、薑絲鮮魚捲這類魚料理，配日本酒' } },
   { name_zh: 'ディスクノート', category: 'record', zoneId: 'honcho', duration: '60 分鐘', hours: everyDay(H(['12:00', '20:00']), ['wed']), highlight: '本町二丁目 3F，1981 年起的爵士專門唱片行。' },
   { name_zh: '阿武隈書房', category: 'bookstore', zoneId: 'honcho', duration: '30 分鐘', hours: everyDay(H(['12:00', '19:00']), ['mon']), highlight: '本町的舊書店，收 LP 買取。' },
   { name_zh: '松本清', category: 'drugstore', zoneId: 'station', duration: '10 分鐘', hours: everyDay(H(['08:00', '22:00'])), highlight: 'クリスロード的藥妝。' },
@@ -23,7 +26,7 @@ export const RAW_POIS = [
   { name_zh: 'SEGA-RU', category: 'vintage', zoneId: 'ichibancho', duration: '60 分鐘', hours: everyDay(H(['12:00', '20:00']), ['wed']), highlight: '一番町北段 3F 的古著店。' },
   { name_zh: 'TRUE VINTAGE', category: 'vintage', zoneId: 'ichibancho', duration: '60 分鐘', deepDig: true, hours: everyDay(H(['11:00', '20:00'])), highlight: '一番町南端，藏量大的古著店。' },
   { name_zh: '星山珈琲店', category: 'cafe', zoneId: 'ichibancho', duration: '60 分鐘', hours: everyDay(H(['10:00', '22:00'])), highlight: '一番町四丁目 3F，松本民藝家具與古董杯的喫茶。' },
-  { name_zh: '文化横丁 小酒場', category: 'bar', zoneId: 'ichibancho', duration: '90 分鐘', hours: everyDay(H(['17:00', '24:00'])), highlight: '文化横丁與壱弐参横丁的小酒場巡禮。' },
+  { name_zh: '文化横丁 小酒場', category: 'bar', zoneId: 'ichibancho', duration: '90 分鐘', hours: everyDay(H(['17:00', '24:00'])), highlight: '文化横丁與壱弐参横丁的小酒場巡禮。', meals: { dinner: '橫丁小店一家吃一點，煎餃、和食小菜、鄉土菜配地酒' } },
   { name_zh: 'バンザイ', category: 'bar', zoneId: 'ichibancho', duration: '90 分鐘', hours: everyDay(H(['17:00', '23:00']), ['fri', 'sat', 'sun']), highlight: '一番町三丁目橫巷 3F 的黑膠 bar，客人點播。' },
 ];
 

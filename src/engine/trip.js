@@ -1,6 +1,6 @@
 // 整趟：把旅程的每一天交給 planDay（第一版：分天是他在規劃頁點的，引擎只排單日；決策樹 Q7）。
 // 這裡負責把 Trip／Day 的資料翻成 planDay 要的 day 上下文：時窗、早起日、晚出門、一日遊、主題、主行程、指定站、當日區域。
-import { planDay } from './core.js';
+import { planDay, chosenPullOf } from './core.js';
 import { hmToMin, openIntervals, overlapMin } from './time.js';
 import { haversineM, serviceDayOf } from '../geo/matrix.js';   // serviceDayOf：那天跑哪一種時刻表（末班分日別；11-06 第二批）
 import { distToSegmentM } from '../geo/corridor.js';
@@ -11,7 +11,7 @@ import { proposeChoices, swappedAwayFrom } from './choices.js';   // 二選一�
 import { personsOf, presentOn, mergeAdjustments, personAvoids, personAvoidWarnings, cityNamesOf } from './persons.js';   // 同行者（T19）：每天在場的人、合併後的調整（取最鬆，原話 #144）、不想去的店型
 import { nightWalkCapMin, taxRefundBufferMin } from '../data/country.js';   // 國家層（T20）：離境日免稅緩衝、夜間步行風險對時窗尾端的上限（誰讀哪個鍵都記在 data/country.js）
 import { dayTripNightHints, lastTrainHints, lastTrainMisses, planMealsOf, mealAssignments, breakfastSlotOf, breakfastHints } from '../rules/_slots.js';   // 一日遊晚回城還排了市區夜間站、他勾的站趕不上末班車的提示（原話 #190；11-06）：跟 person-avoid 同一種後處理，算法在規則那邊的共用尺；planMealsOf：每天哪一站是哪一餐（原話 #195）；早餐段與「今天沒排早餐」的提示（原話 #196）
-import { breakfastChoiceOf, servesBreakfast, breakfastStop, isPlacedBreakfast, retimeWithBreakfast, tryBreakfastFirst, breakfastOptions, assignBreakfasts, breakfastOffers, rememberedBreakfasts, blockedBreakfasts, breakfastKeepOf, BREAKFAST_POLICY } from './breakfast.js';   // 早餐（原話 #196、#197）：引擎替他挑店安插成第一站、推薦他沒去到的那家；breakfast.js 不 import 這一檔（引擎插站的門 engineMayInsert 由這裡傳進去）
+import { breakfastChoiceOf, servesBreakfast, breakfastStop, isPlacedBreakfast, retimeWithBreakfast, tryBreakfastFirst, breakfastOptions, assignBreakfasts, breakfastOffers, breakfastFitDays, rememberedBreakfasts, blockedBreakfasts, breakfastKeepOf, BREAKFAST_POLICY } from './breakfast.js';   // 早餐（原話 #196、#197）：引擎替他挑店安插成第一站、推薦他沒去到的那家；breakfast.js 不 import 這一檔（引擎插站的門 engineMayInsert 由這裡傳進去）
 import { samePlace } from './swap.js';   // 同一個地點在知識庫寫成兩筆（仙台朝市／仙台朝市商店街）：判「這家當過早餐沒」要當同一家
 import { pinnedOf, pinnedEngineIds, corridorPickIds, insertDroppedEngine, planPinnedDay, pickStopOf, CORRIDOR_PICK, INSERT_DROP } from './insert.js';   // 釘住順序的日子（原話 #192、#194：升級成站＝安插，之後那天照他調過的順序排）：不跑搜尋，照旅程檔 days[].pinned 組序列；insert.js 不 import 這一檔
 
@@ -237,8 +237,7 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
   // 代價：8/16 早上的填站從咖啡廳換成商店街（多一句「不是購物日」），七天包七天的分數合計從 3768.75 變 3718.75（8/14 少 2.75、8/15 多 16.25、8/16 少 63.5）；公務版、試走版兩種做法每天都相同。
   // 他自己勾的、走廊清單、換一家都不受影響。
   const bfSlot = breakfastSlotOf(country, settings);
-  const bfHomes = bfSlot ? [...new Set(trip.days.map((d) => resolveHome(trip, d.date)))] : [];
-  const nearSomeHome = (p) => bfHomes.some((h) => { const leg = legFn(h, p); return Boolean(leg) && (leg.rideMin ?? 0) === 0 && (leg.walkMin ?? 0) <= (settings.breakfastWalkMaxMin ?? 12); });
+  const nearSomeHome = bfSlot ? breakfastNearHome({ trip, legFn, settings }) : () => false;
   const bfReserved = bfSlot ? restPool.filter((p) => p && servesBreakfast(p) && nearSomeHome(p)).map((p) => p.id) : [];
   const work = [];   // 跟 out 一格對一格：每天排完之後安插早餐、掛提示要用的（住宿、這天拒絕過哪幾種引擎插站、他指定的早餐）；跳過沒排的日子是 null
   trip.days.forEach((d, index) => {
@@ -255,13 +254,16 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
     const pin = pinnedOf(d);
     let pinBreakfastSeen = false;
     const ordered = [];   // 這天勾的每一站照 picks 的先後（含指定的早餐）：排完之後把排不進的那幾站照原樣記在 plan.unplaced，安插試算要拿它們再試排
+    // 他在這天當場選進來的站（換一家、二選一選了 B：旅程檔那天 swapped 紀錄的 to，engine/choices.js chooseDay／engine/swap.js applySwap 寫的）——候選帶 chosen：
+    // 他剛選的那一家要排得進去，不是跟其他勾選站重新比一次分數（照平常排卻沒排進去時才多算再排一次，見下面 runDay）。後來又被換掉、按了「不去了」的不在 picks 裡，自然不算。
+    const chosenToday = new Set((d.swapped ?? []).map((x) => x?.to).filter((id) => typeof id === 'string' && id));
     const candidates = (d.picks ?? []).map((p) => {
       const poi = pois[p.poiId];
       if (!poi) { warnings.push({ code: 'pick-unknown', date: d.date, msg: `${d.date} 的 ${p.poiId} 不在知識庫` }); return null; }
       // 指定的早餐不進搜尋：其餘的站照常排完，再把它安插成第一站——他換一家早餐、按了「或 X」之後，別的站的先後才不會跟著翻。這天不要早餐（晚出門日）就當一般的站排
       if (!pin && wantsBreakfast && p.breakfast === true && !forcedBreakfast) { forcedBreakfast = { poi, pick: p }; ordered.push({ poi, priority: p.priority ?? 'want', breakfastPick: p }); return null; }
       const fixedWindow = fixedWindowOf(p.fixedWindow, settings, warnings, d.date, poi);
-      const cand = { poi, priority: p.priority ?? 'want', dwellMin: p.dwellMin ?? fixedSpanMin(fixedWindow), fixedWindow, designated: (d.designated ?? []).includes(p.poiId), isAnchor: d.anchor?.poiId === p.poiId || Boolean(d.anchor?.poiIds?.includes(p.poiId)), errand: Boolean(p.errand), deferredFrom: p.deferredFrom ?? null };
+      const cand = { poi, priority: p.priority ?? 'want', dwellMin: p.dwellMin ?? fixedSpanMin(fixedWindow), fixedWindow, designated: (d.designated ?? []).includes(p.poiId), isAnchor: d.anchor?.poiId === p.poiId || Boolean(d.anchor?.poiIds?.includes(p.poiId)), errand: Boolean(p.errand), deferredFrom: p.deferredFrom ?? null, ...(chosenToday.has(p.poiId) ? { chosen: true } : {}) };
       if (pin && wantsBreakfast && p.breakfast === true && !pinBreakfastSeen) { pinBreakfastSeen = true; cand.breakfastPick = p; }
       ordered.push(cand);
       return cand;
@@ -327,13 +329,32 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
       .map((p) => ({ poi: p, priority: 'rest', optional: true, insertedBy: 'engine', dwellMin: p.dwellMin ?? 30 }))
       .filter(notLate);   // 挑好才拿掉（見上面 lateIds）：下面恢復站、填站、順路站三個池同一個做法
     // 這一天從搜尋排到順路站的整套（runDay）：平常就跑一次（他勾的全部）；早餐的推薦要知道「把他勾的那一站早餐換掉之後這天會排成什麼樣」時，拿少一站的勾選再跑一次（work[].replanWithout）。
+    // 他當場選進來的站（candidate.chosen；上面 chosenToday）怎麼保證排得進去：先照平常排一次（不多算——跟沒有換站紀錄時一模一樣）；
+    // 排完那幾家都在就用它。有哪一家被留在排不進清單，才帶著多算的那一份（engine/core.js chosenPullOf）整套再排一次，選的那幾家排進去的比較多才採用。
+    // 不直接一律多算：這一天是分段排的（第一趟、看警告加恢復站與填站的第二趟、順路站），第一趟一變、後面拿到的候選就跟著變——
+    // 11-17 量的（待套用版七天包 8/13 的 20 筆換一家，每天預算放到 5000 ms 不截斷，跟不多算的排法比）：一律多算的話 20 筆裡 6 筆排出來不一樣，
+    // 其中 2 筆是選的那家本來就排得進、只是整天換了一種排法而且分數比較低（喫茶 Elbe 換成 FLAT WHITE：618 變 575；珈巣多夢 換成 埃比昂 東一店：615.5 變 582.75）；
+    // 先照平常排的做法只有選的那家原本排不進的 4 筆不一樣（那 4 筆現在都排進去了）。
     const runDay = (candidates) => {
+      const chosenIds = candidates.filter((c) => c.chosen).map((c) => c.poi.id);
+      if (!chosenIds.length) return runDayWith(candidates, []);
+      const placedOf = (p) => chosenIds.filter((id) => p.sequence.some((s) => s.poi.id === id)).length;
+      const usual = runDayWith(candidates.map(({ chosen, ...c }) => c), []);
+      if (placedOf(usual) === chosenIds.length) return usual;
+      const pulled = runDayWith(candidates, chosenIds);
+      return placedOf(pulled) > placedOf(usual) ? pulled : usual;
+    };
+    const runDayWith = (candidates, chosenIds) => {
+      // 兩趟比哪一趟好：分數加上「他當場選進來的站排進去了幾家」多算的那一份（搜尋裡比的就是這個數）。chosenIds 是空的（平常）就是比分數，跟以前一樣。
+      // 這裡只負責讓第二趟（加了恢復站、填站）不會因為分數高一點就把他剛選的那家換掉。
+      const pull = chosenIds.length ? chosenPullOf(settings) : 0;
+      const worth = (p) => (pull ? p.score + pull * p.sequence.filter((s) => chosenIds.includes(s.poi.id)).length : p.score);
       const planOnce = (dayCtx) => {
         let p = planDay({ candidates: [...candidates, ...spots], day: dayCtx, home, legFn, rules, settings, country, kb, options });
         const extra = extraCandidates({ restPool, candidates, day: dayCtx, exclude, home, plan: p, settings, rejected, legFn }).filter(notLate);
         if (extra.length) {
           const withExtra = planDay({ candidates: [...candidates, ...spots, ...extra], day: dayCtx, home, legFn, rules, settings, country, kb, options });
-          if ((withExtra.complete && !p.complete) || (withExtra.complete === p.complete && withExtra.score > p.score)) p = withExtra;
+          if ((withExtra.complete && !p.complete) || (withExtra.complete === p.complete && worth(withExtra) > worth(p))) p = withExtra;
         }
         return p;
       };
@@ -443,6 +464,17 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
 }
 
 /**
+ * 「住宿旁邊」的尺（引擎排得成早餐的店）：breakfastNearHome({ trip, legFn, settings }) → (poi) → 從這趟任何一晚的住宿走得到（不搭車）、走路 ≤ settings.breakfastWalkMaxMin（預設 12）。
+ * planTrip 拿它把住宿旁能當早餐的店留給早餐（bfReserved：恢復站、填站、順路站三個池都不拿）；分配器 engine/allocate.js 拿同一把尺判「只供早餐的吃的店不分」——
+ * 離住宿遠、要搭車的店引擎不會排成早餐（先吃再上車），留給早餐等於沒有人排它。
+ */
+export function breakfastNearHome({ trip, legFn, settings = {} }) {
+  const homes = [...new Set((trip?.days ?? []).map((d) => resolveHome(trip, d.date)))];
+  const maxWalk = settings.breakfastWalkMaxMin ?? 12;
+  return (p) => homes.some((h) => { const leg = legFn(h, p); return Boolean(leg) && (leg.rideMin ?? 0) === 0 && (leg.walkMin ?? 0) <= maxWalk; });
+}
+
+/**
  * 整趟的早餐安插（planTrip 每天都排完之後呼叫；國家層有早餐段才會進來）。直接改 out[i].plan；回還記著、等著推薦的那幾家 [{ fromDate, mode, poiId, poi }]。
  * 1. 他指定的早餐（work[i].forcedBreakfast＝那天 picks 裡標 breakfast: true 的那一筆）：排成第一站（engine/breakfast.js tryBreakfastFirst）；
  *    排成第一站會害別的站撞硬規則就不排，落到那天的排不進清單（理由寫那一句），那天改由引擎挑。
@@ -511,6 +543,51 @@ function breakfastDropReason(r) {
   if (r?.why === 'last-train') return '排成早餐（第一站）的話，後面有站會趕不上末班車';
   if (r?.why === 'day') return `排成早餐（第一站）的話，這天排不成：${r?.msg ?? '撞到整天的限制'}`;
   return `排成早餐（第一站）的話，後面的站要往後挪：${r?.msg ?? '有站會排不進'}`;
+}
+
+/**
+ * 這家早餐後面有哪幾天排得進（11-17；原話 #196「…不是不去了可能是改天去或是我吃飯店早餐」、#197「…後續的其中一天在不影響原定行程的前提下 可以再推薦我一次」）。
+ * breakfastLaterDays({ trip, days, date, poiId?, pois, restPool, legFn, rules, settings, country, kb, visited }) → ['YYYY-MM-DD'…]（照日期，可能是空陣列）或 null。
+ * 問的是「date 那天的這一家早餐，在 date 之後的哪幾天排得成早餐」——純函式，不改傳入的、不重排整趟。畫面拿它做兩件事：
+ * (1) 還沒按之前：回空陣列的那一家，早餐卡不出「改天去」（旅程最後一天後面沒有日子；要搭車才到的店哪天都當不了第一站）；
+ * (2) 按了「改天去」「吃飯店早餐」之後：回空陣列就在復原列多講半句（後面沒有排得進的日子）——之前這種時候畫面沒有任何一句話（11-12 審查：試走版 8/15 的松島星鰻丼）。
+ * 參數：trip＝現在的旅程檔；days＝planTrip 回的 days（或畫面 state.plans 的值，陣列或 { [date]: … } 都收；要是 trip 現在排出來的那一份）；date＝問哪一天的早餐；
+ * poiId＝哪一家（不給：那天有「改天去／吃飯店早餐」的紀錄就問紀錄裡記著的那一家，沒有紀錄就問那天現在的早餐 plan.meals.breakfast）；
+ * pois、restPool＝找得到那家店的 POI 的地方；legFn、rules、settings、country、kb＝跟 planTrip 同一份；visited＝planTrip 的 options.visited（{ [poiId]: 'YYYY-MM-DD' }，可不給）。
+ * 回 null＝沒有哪一家可問：國家層沒有早餐段、沒有那一天、那天沒有早餐也沒有記著的店（他只是說在飯店吃、那天本來就沒排到）。
+ * 答案怎麼來（合格的條件只有 engine/breakfast.js breakfastFitOn 那一套，跟引擎掛「或 X」用的是同一個函式）：
+ * - 那家已經排在後面的哪一天（按過「或 X」、在別天的換一家選了它、他自己勾進別天；或紀錄上有 movedTo）：就回那幾天。
+ * - 那天的紀錄就是這一家、還等著推薦：「改天去」＝引擎重排時掛了「或 X」的那幾天（plan.breakfastOffers，每個合格的日子都掛，這裡照抄）；
+ *   「吃飯店早餐」＝引擎只在第一個合格的日子掛一次——一天都沒掛就是空陣列（引擎每一天都試過）；有掛就回那一天，再加上它之後、拿現在的行程試出來排得進的日子。
+ * - 還沒按（沒有紀錄、或紀錄記的不是這一家）：後面每一天拿現在排好的行程試（breakfastFitDays）。
+ * 「拿現在的行程試」比引擎掛推薦時寬一點的只有一種日子：那天的早餐是他勾的站自己落在早餐時段——引擎會真的少勾那一站重排一次再驗（planTrip 裡才做得到），這裡直接拿現在的序列試。
+ * 所以還沒按時回的日子可能比按了之後多；反過來不會（這裡說排不進的，引擎也不會掛）。現場套過改案的日子（plan.applied）不算：那天畫面不出早餐的推薦（ui/applied.js）。
+ * 11-17 在待套用版三包上量（每個有早餐的日子：還沒按問一次、按改天去與吃飯店早餐之後各問一次，共 27 次）：按了「改天去」之後的答案 8 天都等於引擎掛推薦的日子；
+ * 還沒按說排不進、按了卻掛出推薦的 0 次；還沒按時多列一天的 4 次（都是 8/18——那天的早餐是他勾的朝市）。問一次（後面各天都試：重定時刻＋整天重算，不搜尋）平均 0.1 ms。
+ */
+export function breakfastLaterDays({ trip, days = [], date, poiId = null, pois = {}, restPool = [], legFn, rules, settings = {}, country = null, kb = null, visited = null }) {
+  if (!breakfastSlotOf(country, settings)) return null;
+  const tripDay = (trip?.days ?? []).find((d) => d?.date === date);
+  if (!tripDay) return null;
+  const list = (Array.isArray(days) ? days : Object.values(days ?? {})).filter((x) => x?.date && x.plan).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const rec = breakfastChoiceOf(tripDay);
+  const id = poiId ?? (rec ? rec.poiId : list.find((x) => x.date === date)?.plan?.meals?.breakfast ?? null);
+  if (!id) return null;
+  const later = list.filter((x) => x.date > date);
+  const placedOn = later.filter((x) => (x.plan.sequence ?? []).some((s) => s.poi.id === id)).map((x) => x.date);
+  if (placedOn.length) return placedOn;
+  const mine = rec && rec.poiId === id ? rec : null;
+  if (mine?.movedTo) return [mine.movedTo];
+  const tryOn = (candidates) => {
+    const poi = pois?.[id] ?? restPool.find((p) => p?.id === id) ?? null;
+    if (!poi) return [];
+    const prepared = candidates.filter((x) => !x.plan.applied).map((x) => ({ date: x.date, day: x.day, plan: x.plan, home: resolveHome(trip, x.date), visited: visitedBefore(visited, x.date), pinned: Boolean(x.plan.pinned) }));
+    return breakfastFitDays({ poi, fromDate: date, days: prepared, legFn, rules, settings, country, kb }).map((f) => f.date);
+  };
+  if (!mine) return tryOn(later);
+  const offered = later.filter((x) => (x.plan.breakfastOffers ?? []).some((o) => o.poiId === id && o.fromDate === date)).map((x) => x.date);
+  if (mine.mode === 'later' || !offered.length) return offered;
+  return [offered[0], ...tryOn(later.filter((x) => x.date > offered[0]))];
 }
 
 /** '2026-08-15' → '8/15'（整趟警告的人話；畫面另有 dom.js dateLabel）。 */

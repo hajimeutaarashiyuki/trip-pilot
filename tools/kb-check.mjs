@@ -1,6 +1,8 @@
 // 驗一城的研究產出（data.json）能不能進管線：必填欄位、店型認不認得、營業時間解析得出幾成、歸區率、座標覆蓋、重複 id、研究註記欄位（值看不懂的、註記還寫在店名裡的）、
-// 能當哪一餐的欄位 meals（吃的類標了幾站、各餐幾家、值看不懂的、咖啡廳酒吧只寫 true 沒有說明的、還沒標的照店型推導會算成什麼）。
-// 用法：node tools/kb-check.mjs <知識庫資料夾>
+// 能當哪一餐的欄位 meals（吃的類標了幾站、各餐幾家、值看不懂的、咖啡廳酒吧只寫 true 沒有說明的、還沒標的照店型推導會算成什麼）、
+// 幾個選填欄位的形狀（closedDates、samePlace、closeRisk、zones.json 連結的末班 last、國家層的餐段與特殊時刻表；11-17，判法在 tools/kb-shape.mjs，也可以單獨跑）。
+// 用法：node tools/kb-check.mjs <知識庫資料夾> [--country <country.json>]
+//   國家層預設照 <城>/city.json 的 countryId 找 <城>/../country/<id>.json（跟 tools/pack.mjs 同一個找法）；找不到就不查國家層那兩樣、報告裡寫明。
 // 唯讀、報告型：永遠 exit 0；最後一行「可以打包」或「先補這些」。有 zones.json／coords.json 才算歸區率與座標覆蓋。
 // 統計以「站」為單位（同店多類別算一站，打包時會合併）；交通類（logistics）不算營業時間與座標覆蓋，跟 geocode 一樣不查。
 import { readFile } from 'node:fs/promises';
@@ -12,6 +14,7 @@ import { researchNameHints } from '../src/rules/_helpers.js';
 import { servesMeal, hasMealsField, MEAL_NAMES } from '../src/rules/_slots.js';   // 這家店能當哪一餐：引擎的讀法（欄位優先、沒欄位照店型推導），統計用同一個
 import { zoneOfPoi } from '../src/geo/zones.js';
 import { SKIP_CATEGORIES } from './geocode.mjs';
+import { checkShapes, loadShapeInputs } from './kb-shape.mjs';   // 選填欄位的形狀（11-17）：獨立模組，這裡把結果併進結論
 
 // === 需修改 ===
 export const REQUIRED_FIELDS = ['name_zh', 'name_local', 'category', 'area', 'hours', 'maps_query'];
@@ -32,8 +35,14 @@ const storeKey = (raw) => {
   return s.replace(/[（(].*?[)）]/g, '').replace(/^[^\p{L}\p{N}]+/u, '').replace(/\s+/g, '').toLowerCase();
 };
 
-/** checkKb({ data, zones?, coords? }) → 統計物件（純函式；印表交給 formatReport）。 */
-export function checkKb({ data, zones = null, coords = null }) {
+// 形狀檢查裡 kb-check 本來就有自己那一行在報的兩欄（經 normalizePoi 的警告：research-field-bad、meals-bad），結論不重複算
+const SHAPE_ALREADY_REPORTED = Object.freeze(['meals', 'researchRank']);
+
+/**
+ * checkKb({ data, zones?, coords?, links?, country? }) → 統計物件（純函式；印表交給 formatReport）。
+ * links＝zones.json 的 links、country＝國家層物件：給了才查末班 last 與國家層餐段、特殊時刻表的形狀（s.shapes；tools/kb-shape.mjs checkShapes）。
+ */
+export function checkKb({ data, zones = null, coords = null, links = null, country = null }) {
   const rows = Object.values(data?.categories ?? {}).flatMap((v) => (Array.isArray(v) ? v : v.items ?? []));
   const s = {
     rows: rows.length, stations: 0, notPlaces: 0,
@@ -102,6 +111,8 @@ export function checkKb({ data, zones = null, coords = null }) {
     }
   }
   for (const [id, { names, keys }] of seen) if (names.length > 1) s.duplicates.push({ id, names, sameStore: keys.size === 1 });
+  // 選填欄位的形狀（tools/kb-shape.mjs）：closedDates、samePlace、closeRisk、連結的末班 last、國家層的餐段與特殊時刻表；meals 與 researchRank 也在裡面，上面已經各有一行在報
+  s.shapes = checkShapes({ data, links, country });
   s.verdict = verdictOf(s);
   return s;
 }
@@ -136,7 +147,18 @@ function verdictOf(s) {
   if (s.meals.bad.length) blocking.push(`能當哪一餐（meals）的值看不懂 ${s.meals.bad.length} 處（照 src/data/schema.js MEALS_FIELD 改）`);
   if (s.meals.bareTrue.length) blocking.push(`${s.meals.bareTrue.length} 筆不是吃的類卻只寫 true、沒有說明（咖啡廳、酒吧、攤位能當一餐要寫一句是怎麼個能法，畫面會顯示）`);
   if (s.meals.unmarked.length) notes.push(`${s.meals.unmarked.length} 站吃的類還沒標能當哪一餐（meals），引擎照店型推導：咖啡廳不算一餐、酒吧只有酒場型的算晚餐、早餐一律不算`);
+  // 選填欄位的形狀（11-17）：值看不懂、指到不存在的東西直接擋——跟上面兩種「值看不懂」同一個理由：讀的那邊看不懂就當沒寫，不會有任何一句話，
+  // 排出來卻是錯的（closedDates 寫錯格式＝公休日照排；末班寫壞＝那條路不判末班；samePlace 指錯＝同一處排兩次；國家層餐段寫壞＝那一餐整段不見）
+  const shapeBad = shapeProblemsOf(s);
+  if (shapeBad.length) blocking.push(`欄位形狀看不懂 ${shapeBad.length} 處（${[...new Set(shapeBad.map((p) => p.field))].join('、')}；寫壞的值引擎會靜靜當成沒寫，明細看「欄位形狀」那一行或跑 node tools/kb-shape.mjs）`);
+  // 形狀檢查裡只提醒的（特殊時刻表少 name：引擎不讀它，那一段期間照樣生效）：進「要注意」、不擋打包
+  for (const p of (s.shapes?.problems ?? []).filter((x) => x.level === 'note')) notes.push(`${p.where}：${p.msg}`);
   return { ok: blocking.length === 0, blocking, notes };
+}
+
+/** 形狀檢查裡要擋打包、而且上面還沒報過的那幾處。 */
+function shapeProblemsOf(s) {
+  return (s.shapes?.problems ?? []).filter((p) => p.level === 'block' && !SHAPE_ALREADY_REPORTED.includes(p.field));
 }
 
 const list = (names) => (names.length ? `：${names.slice(0, LIST_LIMIT).join('、')}${names.length > LIST_LIMIT ? `…（共 ${names.length}）` : ''}` : '');
@@ -166,6 +188,14 @@ export function formatReport(s, label = 'data.json') {
   lines.push(`能當哪一餐（meals）：${m.eating ? `吃的類 ${m.eating} 站，標了 ${m.annotated}${m.annotated ? `（${perMeal(m.byMeal)}、三餐都不算 ${m.none}）` : ''}` : '沒有吃的類的站'}`
     + `${m.derived.count ? `；沒標 ${m.derived.count} 站照店型推導（${perMeal(m.derived.byMeal)}、都不算 ${m.derived.none}）${list(m.unmarked)}` : ''}`
     + `${m.bad.length ? `；值看不懂 ${m.bad.length}${list(m.bad)}` : ''}${m.bareTrue.length ? `；不是吃的類卻只寫 true ${m.bareTrue.length}${list(m.bareTrue)}` : ''}`);
+  if (s.shapes) {
+    const c = s.shapes.counts; const k = s.shapes.checked;
+    const bad = shapeProblemsOf(s);
+    lines.push(`欄位形狀：closedDates ${c.closedDates}、samePlace ${c.samePlace}、closeRisk ${c.closeRisk} 筆有寫`
+      + `；${k.links ? `連結的末班 last ${c.last} 條` : '連結的末班沒查（沒有 zones.json 的 links）'}`
+      + `；${k.country ? `國家層餐段 ${c.mealSlots} 段、特殊時刻表 ${c.specialSchedule} 筆` : '國家層的餐段與特殊時刻表沒查（找不到國家層檔）'}`
+      + `${bad.length ? `；看不懂 ${bad.length}${list(bad.map((p) => `${p.where}［${p.msg}］`))}` : '；都看得懂'}`);
+  }
   if (s.verdict.notes.length) lines.push(`要注意：${s.verdict.notes.join('；')}`);
   lines.push(s.verdict.ok ? '結論：可以打包' : `結論：先補這些：${s.verdict.blocking.join('；')}`);
   return lines.join('\n');
@@ -174,14 +204,18 @@ export function formatReport(s, label = 'data.json') {
 async function readJson(file) { return existsSync(file) ? JSON.parse(await readFile(file, 'utf8')) : null; }
 
 async function main() {
-  const dir = process.argv[2];
-  if (!dir) { console.error('用法：node tools/kb-check.mjs <知識庫資料夾>'); process.exit(2); }
+  const args = process.argv.slice(2);
+  const ci = args.indexOf('--country');
+  const dir = args.find((a, i) => !a.startsWith('--') && !(i > 0 && args[i - 1] === '--country'));
+  if (!dir) { console.error('用法：node tools/kb-check.mjs <知識庫資料夾> [--country <country.json>]'); process.exit(2); }
   const data = await readJson(path.join(dir, 'data.json'));
   if (!data) { console.log(`${path.join(dir, 'data.json')} 不存在\n結論：先補這些：data.json`); return; }
   const zones = (await readJson(path.join(dir, 'zones.json')))?.zones ?? null;
   const coords = await readJson(path.join(dir, 'coords.json'));
   if (!existsSync(path.join(dir, 'city.json'))) console.log(`沒有 ${path.join(dir, 'city.json')}：geocode／walk-matrix／pack 都會停，先照 kb/sendai/city.json 建一份`);
-  console.log(formatReport(checkKb({ data, zones, coords }), path.resolve(dir)));
+  // 形狀檢查另外要的兩樣：zones.json 的 links（末班）、國家層（餐段、特殊時刻表）
+  const { links, country } = await loadShapeInputs(dir, { countryFile: ci >= 0 ? args[ci + 1] : null });
+  console.log(formatReport(checkKb({ data, zones, coords, links, country }), path.resolve(dir)));
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch((err) => { console.error(err.message); process.exit(0); });

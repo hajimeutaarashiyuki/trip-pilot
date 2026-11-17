@@ -235,10 +235,10 @@ test('planTrip：兩天各自排好；第二天是古著主題日、第一天不
         picks: [{ poiId: POIS.Utah.id, priority: 'must' }, { poiId: POIS.me.id }, { poiId: POIS['SEGA-RU'].id }, { poiId: POIS['おやま'].id, priority: 'must' }, { poiId: POIS['バンザイ'].id }, { poiId: 'ghost' }] },
     ],
   };
-  // 汐谷標成能當晚餐（知識庫欄位 meals；示範資料還沒標）：這天只勾了五站，午後到 17:00 開門之間是空的，它是因為頂得了晚餐才值得等——
-  // 沒標的酒吧 11-06 第二批起不算一餐（原話 #195），引擎會把它丟掉（等開門的罰大過它的價值；下面另外驗）
-  const shioya = { ...POIS['汐谷'], meals: { dinner: '魚料理配日本酒，吃得成一頓晚餐' } };
-  const r = planTrip({ trip, pois: { ...pois, [shioya.id]: shioya }, rules, settings, country: COUNTRY, kb: KB, legFn });
+  // 汐谷標了能當晚餐（知識庫欄位 meals；示範資料 11-17 照知識庫那一筆補上）：這天只勾了五站，午後到 17:00 開門之間是空的，它是因為頂得了晚餐才值得等——
+  // 沒標的酒吧 11-06 第二批起不算一餐（原話 #195），引擎會把它丟掉（等開門的罰大過它的價值；下面拿掉 meals 另外驗）
+  assert.deepEqual(POIS['汐谷'].meals, { dinner: '魟魚肝刺身、薑絲鮮魚捲這類魚料理，配日本酒' });
+  const r = planTrip({ trip, pois, rules, settings, country: COUNTRY, kb: KB, legFn });
   assert.equal(r.days.length, 2);
   assert.ok(r.warnings.some((w) => w.code === 'pick-unknown' && w.msg.includes('ghost')));
   const d1 = r.days[0]; const d2 = r.days[1];
@@ -257,8 +257,9 @@ test('planTrip：兩天各自排好；第二天是古著主題日、第一天不
   assert.deepEqual(d1.plan.meals, { breakfast: null, lunch: POIS['たん焼き一隆'].id, dinner: POIS['汐谷'].id });
   assert.deepEqual(d2.plan.meals, { breakfast: null, lunch: POIS['おやま'].id, dinner: null }, '8/17 沒勾能當晚餐的店（バンザイ 是黑膠 bar、沒標）');
   assert.ok(d2.plan.warnings.some((w) => w.ruleId === 'meal-slots' && w.msg === '今天沒排晚餐'));
-  // 沒標的汐谷（示範資料原樣：只有店型鍵 bar、沒有店型原文）不算晚餐：那天沒有晚餐、黃字提醒
-  const raw = planTrip({ trip, pois, rules, settings, country: COUNTRY, kb: KB, legFn }).days[0].plan;
+  // 沒標的汐谷（把 meals 拿掉＝示範資料 11-17 以前的樣子：只有店型鍵 bar、沒有店型原文）不算晚餐：那天沒有晚餐、黃字提醒
+  const { meals: _marked, ...unmarked } = POIS['汐谷'];
+  const raw = planTrip({ trip, pois: { ...pois, [unmarked.id]: unmarked }, rules, settings, country: COUNTRY, kb: KB, legFn }).days[0].plan;
   assert.equal(raw.meals.dinner, null);
   assert.ok(raw.warnings.some((w) => w.ruleId === 'meal-slots' && w.msg === '今天沒排晚餐'));
 });

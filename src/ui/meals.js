@@ -7,7 +7,7 @@
 import { mealOfStop, mealNoteOf, MEAL_NAMES } from '../rules/_slots.js';
 import { swapCandidates, samePlace } from '../engine/swap.js';
 import { pinnedSwapCheck } from '../engine/choices.js';
-import { visitedDates } from './corridor.js';
+import { planArgsOf } from './plan-args.js';
 import { breakfastKind, breakfastSwapCandidates } from '../engine/breakfast.js';
 import { isLockedStop } from '../engine/insert.js';
 import { pickedOrRemoved, resolveHome } from '../engine/trip.js';
@@ -47,29 +47,39 @@ export function breakfastExclude(trip, plans = {}) {
 }
 
 /**
- * 別天序列裡引擎排的站（早餐、恢復站、填站、順路站、坐下來的地方）→ POI 陣列。一般的換一家清單不列它們、也不列同一處的另一筆（11-12 畫面審查）：
- * 選了它，那一家變成這天勾的，原本排它的那一天引擎就得另挑——選的是別天的早餐，那天的早餐就被搶走（待套用版七天包 107 筆候選裡 18 筆是別天引擎排的站，
- * 18 筆選了別天都跟著變）。早餐自己的清單本來就不列（breakfastExclude）；這裡比照。別天他自己勾的站照列——那是他要不要兩天都去的事，主控還沒定。
- * plans＝state.plans（{ [date]: { plan } }）。
+ * 別天行程裡的店 → POI 陣列：別天序列裡的每一站（他勾的、引擎排的早餐／恢復站／填站／順路站／坐下來的地方），加上別天勾了但排不進的（那天的「今天排不進」清單）。
+ * 一般的換一家清單不列它們、也不列同一處的另一筆（知識庫 samePlace）——原話 #195「早中晚餐的換一間 應該要推薦對應餐廳吧…」的推導（主控 11-17 定）：
+ * 換一家是在推薦「這一站可以改去哪」，別天已經排了的店選下去同一家會出現在兩天；要把店挪到別天，原本就有「排到別天」那個鍵。
+ * 11-12 先擋了別天引擎排的站（選了它，原本排它的那一天引擎就得另挑——選的是別天的早餐，那天的早餐就被搶走）；別天他自己勾的站當時照列：
+ * 11-17 量待套用版三包（每張有「換一家」的站卡各開一次、畫出來的前六家），七天包 101 筆裡 56 筆、公務版 98 筆裡 41 筆、試走版 60 筆裡 3 筆是別天他勾的站。
+ * 別天勾了但排不進的那幾家一起擋是多推的一步（主控的字面是「別天行程裡的店」）：選了它，這天排進去、那一天的勾選還留著（公務版 8/13 排不進的喫茶 Elbe 出現在 8/15、8/17 的清單上，3 筆）——
+ * 同一家還是勾在兩天；「排到別天」那個鍵就掛在它那一列上。當天勾了但排不進的照列（選了就是這一站換成它，app.js swapStop）。
+ * 早餐自己的清單本來就扣整趟（breakfastExclude）。plans＝state.plans（{ [date]: { plan } }）；date＝正在換的那一天（它自己序列裡的站 engine/swap.js 本來就不列）。
  */
-export function otherDaysEngineStops(plans = {}, date = null) {
+export function otherDaysStops(plans = {}, date = null) {
   const out = [];
   for (const [d, x] of Object.entries(plans ?? {})) {
     if (d === date) continue;
-    for (const s of x?.plan?.sequence ?? []) if (s?.insertedBy === 'engine' && s.poi?.id) out.push(s.poi);
+    for (const s of x?.plan?.sequence ?? []) if (s?.poi?.id) out.push(s.poi);
+    for (const q of x?.plan?.dropped ?? []) if (q?.poi?.id) out.push(q.poi);
   }
   return out;
 }
 
+/** 換一家清單最多畫幾家（原本寫死在 planner.js 的 slice(0, 6)）。不該列的店都在取這幾家之前濾掉，空出來的位子由後面還沒排的店補上，不是清單變短。 */
+export const SWAP_LIST_MAX = 6;
+
 /**
- * 這一站按「換一家」要畫的清單：{ meal, title, breakfast, cands: [{ poi, detourMin, open, note }], empty }。
+ * 這一站按「換一家」要畫的清單：{ meal, title, breakfast, cands: [{ poi, detourMin, open, note }], empty }——cands 就是畫面上畫的那幾家（最多 SWAP_LIST_MAX）。
  * - meal：這一站是哪一餐（null＝不是哪一餐）；title：清單最上面那一句「晚餐換一家」「早餐換一家」，不是哪一餐就是 null（不寫）。
  * - 早餐（breakfastCardOf().own）：engine/breakfast.js breakfastSwapCandidates（只列能當早餐、那時有開、離住宿不遠或順路、換了不會害別的站排不進的）；breakfast: true＝選了要走早餐的寫法（app.js swapStop）。
  * - 其餘：engine/swap.js swapCandidates（午餐晚餐只列能當那一餐的店、店型不限；不是哪一餐只列同店型）。day 給了：主行程不在序列裡時也認得出活動日。
- *   別天引擎排的站不列（otherDaysEngineStops）；釘住順序的日子每一家再真的換過去試排一次。
+ *   別天行程裡的店不列（otherDaysStops：他勾的、引擎排的、同一處的另一筆）；釘住順序的日子每一家再真的換過去試排一次。
+ *   這兩道都在取前 SWAP_LIST_MAX 家之前濾：被濾掉的位子由排在後面、還沒排的店補上（11-17；之前只濾別天引擎排的站，取前六家寫在畫面那一層）。
  * - note：候選那一餐的說明（mealNoteText），沒有是 null。
  * - empty：清單是空的時候寫哪一句——是某一餐的站寫「附近沒有能當晚餐、順路又開著的店」（餐段的換一家不分店型，不寫「同類型」）、不是哪一餐寫「附近沒有同類型…」；
- *   釘住的日子有候選卻全被試排濾掉時多半句。
+ *   有候選是因為排在別天才沒列的，多半句「（別天已經排了的店不列）」——不然那一句不是實情：附近有，只是別天排了
+ *   （七天包 8/15 的竹屋：附近六家酒吧都排在別天，清單是空的）；釘住的日子有候選卻全被試排濾掉時也多半句。
  */
 export function swapListOf(state, date, stop) {
   const planned = state.plans?.[date];
@@ -77,25 +87,35 @@ export function swapListOf(state, date, stop) {
   if (!plan || !stop?.poi) return { meal: null, title: null, breakfast: false, cands: [], empty: TEXT.noSwap };
   const meal = mealOf(plan, stop);
   const breakfast = Boolean(breakfastCardOf(plan, stop)?.own);
-  let cands; let cutByPinned = false;
+  let cands; let cutByPinned = false; let elsewhere = 0;
   if (breakfast) {
-    cands = breakfastSwapCandidates({ plan, day: planned.day, home: resolveHome(state.trip, date), pool: state.pool, legFn: state.legFn, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, exclude: [...breakfastExclude(state.trip, state.plans)] });
+    cands = breakfastSwapCandidates({ plan, day: planned.day, home: resolveHome(state.trip, date), pool: state.pool, legFn: state.legFn, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, exclude: [...breakfastExclude(state.trip, state.plans)] }).slice(0, SWAP_LIST_MAX);
   } else {
     // adjust：那天在場的人不想去的店型（T19）——別類進來的不列，同類照列（他勾的那一類由他）
-    const taken = otherDaysEngineStops(state.plans, date);
+    const taken = otherDaysStops(state.plans, date);
     const open = swapCandidates({ plan, stopId: stop.poi.id, pool: state.pool, legFn: state.legFn, date, settings: state.settings, adjust: planned.day?.adjust ?? null, day: planned.day,
-      check: (poi) => !taken.some((p) => samePlace(p, poi)) });
-    // 釘住順序的日子每一家先真的換過去排一次（engine/choices.js pinnedSwapCheck；11-12 審查）——換了會害別的站不見或排不進的不列；沒釘住的日子不試
-    const fits = plan.pinned ? pinnedSwapCheck({ trip: state.trip, date, fromPoiId: stop.poi.id, plan, pois: state.pois, planArgs: { rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, legFn: state.legFn, restPool: Object.values(state.pois ?? {}), brief: state.brief, options: { visited: visitedDates(state.field?.visited) } } }) : null;
-    cands = fits ? open.filter((c) => fits(c.poi)) : open;
+      check: (poi) => { const free = !taken.some((p) => samePlace(p, poi)); if (!free) elsewhere += 1; return free; } });
+    // 釘住順序的日子每一家先真的換過去排一次（engine/choices.js pinnedSwapCheck；11-12 審查）——換了會害別的站不見或排不進的不列；沒釘住的日子不試。
+    // 照清單的先後一家一家試、湊滿要畫的家數就停（每試一家是重排那一天一次）
+    const fits = plan.pinned ? pinnedSwapCheck({ trip: state.trip, date, fromPoiId: stop.poi.id, plan, pois: state.pois, planArgs: planArgsOf(state) }) : null;
+    cands = [];
+    for (const c of open) {
+      if (cands.length >= SWAP_LIST_MAX) break;
+      if (!fits || fits(c.poi)) cands.push(c);
+    }
     cutByPinned = Boolean(fits) && open.length > 0 && cands.length === 0;
   }
   const name = meal ? MEAL_NAMES[meal] ?? '' : '';
   return {
     meal, title: meal ? TEXT.swapTitle(name) : null, breakfast,
     cands: cands.map((c) => ({ poi: c.poi, detourMin: c.detourMin, open: c.open, note: mealNoteText(c.meal, c.mealNote) })),
-    empty: `${meal ? TEXT.noSwapMeal(name) : TEXT.noSwap}${cutByPinned ? TEXT.noSwapPinnedTail : ''}`,
+    empty: `${meal ? TEXT.noSwapMeal(name) : TEXT.noSwap}${emptyTail(!cands.length && elsewhere > 0, cutByPinned)}`,
   };
+}
+
+/** 空清單那一句後面的括號：候選是因為排在別天才沒列（elsewhere）、釘住的日子有候選卻全被試排濾掉（pinned）；兩個都有就併成一個括號，都沒有是空字串。 */
+function emptyTail(elsewhere, pinned) {
+  return elsewhere && pinned ? TEXT.noSwapBothTail : elsewhere ? TEXT.noSwapElsewhereTail : pinned ? TEXT.noSwapPinnedTail : '';
 }
 
 /**
@@ -137,4 +157,25 @@ export function breakfastOffText(day, pois = {}, tripDay = null) {
 export function pickedBreakfast(tripDay, poiId) {
   const pick = tripDay?.breakfast?.pick;
   return Boolean(poiId) && Boolean(pick) && typeof pick === 'object' && pick.poiId === poiId;
+}
+
+/**
+ * 這一天後面還有沒有別的日子（旅程檔 days 裡日期比它晚的）。旅程最後一天的早餐卡不出「改天去」（原話 #196 的推導，主控 11-17 定）：後面沒有日子可以去，
+ * 按了只是那天不排早餐——那就是「吃飯店早餐」。規劃頁與現場頁共用。
+ */
+export function hasLaterDay(trip, date) {
+  return Boolean(date) && (trip?.days ?? []).some((d) => typeof d?.date === 'string' && d.date > date);
+}
+
+/**
+ * 候選頁：這家店是不是被「吃飯店早餐／改天去」從某一天拿掉的勾選站（旅程檔那天的 breakfast.pick 記著被拿掉的那筆勾選）——是就回那一句
+ * 「8/15（六） 早餐在飯店吃，這天不去」／「8/18（二） 不排早餐，改天去」，不是回 null。之前候選頁對這種站寫「沒排進」，像是引擎排不進去；實情是他自己說這天不去
+ * （11-12 畫面審查）。原定那家是引擎排的早餐不算（那不是他勾的站，候選頁本來就只標他勾的）；後來在別天排進去了，呼叫端先看到的是「已排 X」（pool.js）。
+ */
+export function breakfastSkipMark(trip, poiId) {
+  if (!poiId) return null;
+  const day = (trip?.days ?? []).find((d) => pickedBreakfast(d, poiId));
+  if (!day) return null;
+  const L = TEXT.breakfast;
+  return day.breakfast.mode === 'later' ? L.poolLater(dateLabel(day.date)) : L.poolHotel(dateLabel(day.date));
 }

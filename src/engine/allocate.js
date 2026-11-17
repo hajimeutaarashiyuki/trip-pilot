@@ -49,18 +49,31 @@
 //    估計回到市區不晚於 settings.dayTripNightReturnByHM，而且回到之後、放寬後的晚餐時窗裡它還開著才給（judge 的 townDinner）；只當晚餐、不當午餐。
 //    主行程那一區與路上的店照舊，而且先挑（回市區的店離主行程的分鐘＝回程的車＋從住宿走過去）。
 //    末班車：單日引擎不再丟他勾的站（規則 last-train 只擋引擎插的），改成照排、那一站掛提示 last-train——分配器自己分進去的看到這條就收回、那天不再試（留池理由就是那一句）；
-//    需求單點名的與旅程檔原本就有的（骨架）不收。末班分日別（zones.json 的 last 寫 { weekday, saturday, holiday }）：當地夜間站查末班時帶那天的日別（geo/matrix.js serviceDayOf）。
+//    需求單點名的與旅程檔原本就有的（骨架）不收。「待到太晚回不了住宿」那一種 11-17 起不看提示、自己逐站判（提示同一區只掛最晚離開的那一站；takeDrops）。末班分日別（zones.json 的 last 寫 { weekday, saturday, holiday }）：當地夜間站查末班時帶那天的日別（geo/matrix.js serviceDayOf）。
 // 9. 11-06 第二批（原話 #195「早中晚餐的換一間 應該要推薦對應餐廳吧…」）：「這家店能不能當午餐／晚餐」接到全引擎共用的 rules/_slots.js servesMeal——
 //    知識庫欄位 meals（研究標的，哪一餐、怎麼個能法）優先，沒有欄位才照店型推導（derive/meals.json：food 甜點除外＝午餐晚餐）。改的只有三處：isMeal（這家店算不算一餐的候選）、
 //    mealSlotFor（能佔哪一餐：只標午餐的不會被分成晚餐、只供早餐的不會被分成午餐）、骨架裡吃的站佔哪一餐。沒有 meals 欄位的知識庫，分配結果跟之前一樣（推導出來的就是原本的判法）。
 //    店型那一條沒動：分配器還是只把 food 當「一餐」分，咖啡廳走同類配額、酒吧走夜間站。早餐不在這裡分（每天預設的早餐是另一段的事）。
 // 10. 11-11（主控對上一批待確認的裁定；總則 3 點名的一律排）：需求單點名「坐下來的地方」（spot：海邊、公園、展望台）照點名那一層（②）排，不再列進對不上——
 //    NAMED_CATEGORY_BYPASS。沒被點名的照舊不進池（引擎每天自己當 optional 候選）；交通、會場、一日遊摘要點名也不排、照舊進 report.briefUnmatched。
-import { planTrip, dayWindow, airportTransitMin, resolveHome, shoppingDaysOf, themeCategoryOf, fixedWindowOf, fixedSpanMin } from './trip.js';
+// 11. 11-17 分配器不把早餐候選當一般的站分（原話 #196「還有預設上每天都要有早餐的安排 但我也有可能在飯店吃早餐 所以早餐的按鈕會不太一樣 不是不去了可能是改天去或是我吃飯店早餐」的推導）：
+//    每天的早餐由 engine/breakfast.js 挑（先後：沒排到 ＞ 用備案 ＞ 不合這天），分配器把早餐候選當一般的站分掉就繞過了那個先後。11-12 審查在待套用版七天包實測到三件
+//    （8/17 11:03 排了只賣早餐的外帶飯糰；8/13 研究標備案的咖啡站被分成 09:02 的咖啡廳、成了那天的早餐；8/18 朝市早餐佔掉午餐段、引擎排在 09:02、那天沒午餐），對應下面三條。
+//    三條都只管「沒被需求單點名」的候選（骨架是他自己勾的、不是候選）；點名的照排（總則 3）：
+//    (a) 吃的類、只供早餐的店（知識庫 meals 有 breakfast、午餐晚餐都不能當；rules/_slots.js servesMeal）不分——國家層有早餐段時才有這一條（沒有早餐段引擎不排早餐，照舊當一般的站分）。
+//        只管引擎排得成早餐的那幾家（11-17 審查後收窄）：其餘那一層、而且從住宿走得到（engine/trip.js breakfastNearHome）；品項落點（④）、六星與意義類（③）、要搭車才到的照舊分（judge 裡有理由）。
+//    (b) 研究標備案的吃喝類（food／cafe／bar）不主動分：原本只擋「吃的站當一餐」，咖啡廳、酒吧、不算一餐的吃的站漏掉。品項落點的備案（首選排不下才輪到它）是另一回事、照舊。
+//    (c) 國家層有早餐段時，「這一站佔哪一餐」認得早餐（breakfastOn）：吃的站照原本的路贏到午餐／晚餐的位子、而它在這天會是早餐（能當早餐、從住宿走得到、出門之後早餐段裡有開、
+//        這天的早餐還沒有人佔），佔的就是早餐，午餐／晚餐的位子留給下一家。早餐不由分配器主動分：沒贏到位子的不會因為早餐空著就被分進去。骨架與點名的站同一把尺。
+//    另外（(c) 的必要條件）：同一處在知識庫寫成兩筆的（欄位 samePlace；主控 11-11 定「同一處當同一家」）整趟只分一筆——不然朝市佔了早餐、空出來的午餐會被同一個朝市的另一筆拿走。
+//    品項落點例外：同一家店各帶一樣他要買的東西的兩筆可以排在同一天（進去一次買兩樣），別天不再去一次（judge 裡有三種做法的數字）。
+//    (c) 與同一處兩種做法各試過幾種才取的，數字在 judge 與 breakfastOn 的註解。沒有 meals 欄位、沒有早餐段、沒有 samePlace 的舊打包檔分配結果不變。
+import { planTrip, dayWindow, airportTransitMin, resolveHome, shoppingDaysOf, themeCategoryOf, fixedWindowOf, fixedSpanMin, breakfastNearHome } from './trip.js';
+import { samePlace } from './swap.js';   // 同一個地點在知識庫寫成兩筆（仙台朝市／仙台朝市商店街）：「同一家整趟一次」要當同一家
 import { openIntervals, minToHm } from './time.js';
 import { serviceDayOf } from '../geo/matrix.js';   // 那天跑哪一種時刻表（末班分日別）
 import { SAME_TYPE_CATEGORIES, SAME_TYPE_NAMES, SHOPPING_CATEGORIES, researchSaysSkip, researchRank, notAStop } from '../rules/_helpers.js';   // 後三個＝研究註記的讀法（知識庫欄位優先、沒欄位退回店名字樣）
-import { mealSlotsOf, coversMealSlot, nightWindowOf, dayTripReturnByMin, servesMeal } from '../rules/_slots.js';   // 餐段（含放寬，原話 #189）、夜間時段、一日遊回程（原話 #190）、這家店能當哪一餐（原話 #195）：跟規則同一把尺
+import { mealSlotsOf, coversMealSlot, nightWindowOf, dayTripReturnByMin, servesMeal, lastTrainMisses, lastTrainText } from '../rules/_slots.js';   // 餐段（含放寬，原話 #189）、夜間時段、一日遊回程（原話 #190）、這家店能當哪一餐（原話 #195）、哪幾站趕不上末班車（驗證收回用）：跟規則同一把尺
 import { personsOf, presentOn, mergeAdjustments, personAvoids, cityNamesOf } from './persons.js';
 import { classifyCategory } from '../data/schema.js';
 import { toList } from '../data/brief.js';
@@ -87,6 +100,8 @@ export const LEVEL_NAMES = Object.freeze({ skeleton: '骨架', 2: '②', 3: '③
 const MEAL_CATEGORY = 'food';
 const NIGHT_CATEGORY = 'bar';
 const EVENT_CATEGORY = 'event';
+/** 吃喝類（研究標備案就不主動分的那三種店型；檔頭 11(b)）與留池理由裡的叫法。 */
+const EAT_DRINK_NAMES = Object.freeze({ food: '吃的站', cafe: '咖啡廳', bar: '酒吧' });
 /**
  * 晚上沒有夜間站的日型：離境日與城際移動日（那晚人在飛機或車上）。抵達日有：原話 #18「每晚都要安排」是通則、v4 8/12 抵達晚上就排了 かけはし；
  * rules/night-slot.js 對抵達日只是不要求（缺了不罰）、沒有禁。10-16 審查後把 arrival 拿掉（之前三種飛機日都不給），待確認。
@@ -346,11 +361,12 @@ export function freeIntervals(startMin, endMin, spans = []) {
  * 國家層的餐段與夜間時段（分鐘；算法在 rules/_slots.js，跟規則 meal-slots、night-slot 同一把尺）；缺或壞回 null（那一條配額就不算時段、只數家數）。
  * lunch／dinner＝原本的餐段：這天要不要這一餐（餐段落不落在當天時窗內）、被固定時段蓋住看它；
  * win.lunch／win.dinner＝前後各放寬 settings.mealGraceMin 之後的時窗：「這家店這一餐開不開」看它（原話 #189 晚餐提早或延後都可以；11-06）。
+ * breakfast／win.breakfast＝早餐段（國家層有才有；11-17）：分配器不分早餐，只拿它認「這一站在這天會是早餐」（allocateTrip 的 breakfastOn）。
  */
 function slotsOf(country, settings) {
-  const out = { lunch: null, dinner: null, night: nightWindowOf(country), win: { lunch: null, dinner: null } };
+  const out = { breakfast: null, lunch: null, dinner: null, night: nightWindowOf(country), win: { breakfast: null, lunch: null, dinner: null } };
   for (const m of mealSlotsOf(country, settings)) {
-    if (m.slot !== 'lunch' && m.slot !== 'dinner') continue;
+    if (m.slot !== 'breakfast' && m.slot !== 'lunch' && m.slot !== 'dinner') continue;
     out[m.slot] = m.core; out.win[m.slot] = m.window;
   }
   return out;
@@ -403,6 +419,8 @@ export function allocateTrip({ trip, pois, kb = null, country = null, settings =
   const persons = personsOf(trip, theBrief, warnings, cityNamesOf(kb));
   const shopping = shoppingDaysOf(trip, settings, warnings);
   const slots = slotsOf(country, settings);
+  // 住宿旁邊（引擎排得成早餐）的尺：跟單日引擎把店留給早餐用的是同一個（engine/trip.js breakfastNearHome）；國家層沒有早餐段就沒有這回事
+  const nearHomeForBreakfast = slots.breakfast ? breakfastNearHome({ trip, legFn, settings }) : () => false;
   const returnBy = dayTripReturnByMin(settings);   // 一日遊回到市區不晚於這個時刻才主動排市區的夜間站（原話 #190；settings.dayTripNightReturnByHM，21:00）
   const removed = new Set(trip.days.flatMap((d) => (d.removed ?? []).map((r) => r?.poiId)).filter(Boolean));
   const zoneIds = [...new Set([...Object.keys(kb?.zones ?? {}), ...poiList.map((p) => p.zoneId), ...(trip.homeBases ?? []).map((b) => b?.poi?.zoneId)].filter(Boolean))];
@@ -411,6 +429,42 @@ export function allocateTrip({ trip, pois, kb = null, country = null, settings =
   const usedItems = new Set();   // 同一品項整趟一個落點
   const placedAt = new Map();   // 分配到的 poiId → 那一天的 state
   const dropped = new Map();   // poiId → [{ date, reason }]：單日引擎驗證時丟過它的日子（那天不再試）
+  const skeletonAt = new Map();   // 骨架的 poiId → 那一天的日期（留池理由「同一處的另一筆已經排在哪天」用）
+  // 同一處在知識庫寫成兩筆（欄位 samePlace；engine/swap.js samePlace 的判法：一邊指到另一邊就算）：poiId → 同一處的其他幾筆的 id。知識庫沒有這個欄位時是空的。
+  const twinsOf = new Map();
+  if (poiList.some((p) => p.samePlace)) {
+    for (const a of poiList) for (const b of poiList) if (a !== b && a.id && b.id && a.id !== b.id && samePlace(a, b)) twinsOf.set(a.id, [...(twinsOf.get(a.id) ?? []), b.id]);
+  }
+
+  /** 這家店在 [lo, hi] 裡、固定時段以外的空檔有沒有一段開著而且夠長：true／false；沒營業時間資料而空檔夠長回 null（當有開）。 */
+  const openInFree = (p, day, lo, hi, needMin) => {
+    let unknown = false;
+    for (const [a, b] of day.free) {
+      const s = Math.max(a, lo); const e = Math.min(b, hi);
+      if (e - s < needMin) continue;
+      const r = openWithin(p, day.date, s, e, needMin);
+      if (r === true) return true;
+      if (r === null) unknown = true;
+    }
+    return unknown ? null : false;
+  };
+
+  /**
+   * 這一站在這一天會是早餐嗎（分配器的估法；檔頭 11(c)）：國家層有早餐段、這天有早餐這回事（早餐段跟當天原時窗有重疊）而且還沒有人佔、那家店能當早餐（servesMeal）、
+   * 從住宿走得到（要搭車的不算：引擎排早餐也是「先吃再上車」，engine/breakfast.js tryBreakfastFirst 的 'ride'——一日遊那天松島的星鰻丼開門就能吃，但人到的時候已經是午餐）、
+   * 出門走到之後早餐段裡它有開 ≥20 分（原本的早餐段看一次、放寬後的時窗扣掉固定時段再看一次，跟午餐晚餐同一個看法）。
+   * 只是估計：這一站最後排在幾點是單日引擎定的。它的用處是別讓一家早上就會被吃掉的店把午餐的位子佔住（11-12 審查：七天包 8/18 朝市早餐被標成午餐、引擎排在 09:02、那天沒午餐）。
+   */
+  const breakfastOn = (p, day) => {
+    const core = slots.breakfast;
+    if (!core || day.breakfast || servesMeal(p, 'breakfast') === false) return false;
+    if (!(core[0] < (day.win.raw?.endMin ?? day.win.endMin) && core[1] > day.win.startMin)) return false;
+    const leg = legFn(day.home, p);
+    if (!leg || (leg.rideMin ?? 0) > 0) return false;
+    const from = day.win.startMin + (leg.walkMin ?? 0);
+    if (openWithin(p, day.date, Math.max(core[0], from), Math.min(core[1], day.win.endMin), 20) === false) return false;
+    return openInFree(p, day, Math.max(slots.win.breakfast[0], from), Math.min(slots.win.breakfast[1], day.win.endMin), 20) !== false;
+  };
 
   // ── 每一天的骨架與狀態 ──
   const days = trip.days.map((d, index) => {
@@ -477,26 +531,30 @@ export function allocateTrip({ trip, pois, kb = null, country = null, settings =
       eventDay: anchorPoi?.category === EVENT_CATEGORY,
       themeCategory, adjust, shoppingDay: shopping.has(d.date), shoppingFromMin: shopping.get(d.date)?.fromMin ?? null,
       nightOff: NO_NIGHT_TYPES.has(type) || Boolean(d.nightSlotOff) || Boolean(trip.days[index + 1]?.earlyDay) || adjust.nightSlot === 'none',
-      target, max, stops: 0, cat: {}, lunch: false, dinner: false, night: false, items: 0,
+      target, max, stops: 0, cat: {}, breakfast: false, lunch: false, dinner: false, night: false, items: 0,
       skeleton, original, picks: [],   // picks＝分配到的 [{ poiId, priority, errand?, dwellMin?, level, slot, travelMin, movedFrom }]
     };
     for (const p of skeleton) {
       const poi = poiMap[p.poiId];
       usedIds.add(p.poiId);
+      if (!skeletonAt.has(p.poiId)) skeletonAt.set(p.poiId, d.date);
       state.stops += 1;
       if (!poi) continue;
       state.cat[poi.category] = (state.cat[poi.category] ?? 0) + 1;
       if (poi.item) { state.items += 1; usedItems.add(poi.item); }
       const fw = fixedWindowOf(p.fixedWindow, settings);
       const dwell = p.dwellMin ?? (fw ? fixedSpanMin(fw) : null) ?? poi.dwellMin ?? 60;
-      // 骨架裡吃的站先佔餐段（午餐優先；沒有國家層餐段時只數家數，judge 用 cat 看）；它是哪一餐的店：那家店能當那一餐（servesMeal）、而且原本的餐段裡有開
-      if (isMeal(poi)) {
+      // 骨架裡吃的站先佔餐段（沒有國家層餐段時只數家數，judge 用 cat 看）；它是哪一餐的店：那家店能當那一餐（servesMeal）、而且原本的餐段裡有開。
+      // 國家層有早餐段時先看早餐（檔頭 11(c)；固定時段的站時刻是釘死的，不估）：這一站在這天會是早餐就佔早餐，午餐晚餐留給分配器補；不然照舊午餐優先
+      if (!fw && poi.category === MEAL_CATEGORY && breakfastOn(poi, state)) state.breakfast = true;
+      else if (isMeal(poi)) {
         const takes = (k) => Boolean(slots[k]) && !state[k] && servesMeal(poi, k) !== false && openWithin(poi, d.date, slots[k][0], slots[k][1], 20) !== false;
         if (takes('lunch')) state.lunch = true;
         else if (takes('dinner')) state.dinner = true;
       }
       if (poi.category === NIGHT_CATEGORY) state.night = true;
       if (fw) {
+        if (coveredByFixed(fw, slots.breakfast, dwell)) state.breakfast = true;
         if (coveredByFixed(fw, slots.lunch, dwell)) state.lunch = true;
         if (coveredByFixed(fw, slots.dinner, dwell)) state.dinner = true;
         if (slots.night && fw.startMin < slots.night[1] && (Number.isFinite(fw.endMin) ? fw.endMin : fw.startMin + dwell) > slots.night[0]) state.night = true;
@@ -536,19 +594,6 @@ export function allocateTrip({ trip, pois, kb = null, country = null, settings =
   }
   const placeReason = new Map();   // poiId → { stage, counts }（每次重算前清掉）
 
-  /** 這家店在 [lo, hi] 裡、固定時段以外的空檔有沒有一段開著而且夠長：true／false；沒營業時間資料而空檔夠長回 null（當有開）。 */
-  const openInFree = (p, day, lo, hi, needMin) => {
-    let unknown = false;
-    for (const [a, b] of day.free) {
-      const s = Math.max(a, lo); const e = Math.min(b, hi);
-      if (e - s < needMin) continue;
-      const r = openWithin(p, day.date, s, e, needMin);
-      if (r === true) return true;
-      if (r === null) unknown = true;
-    }
-    return unknown ? null : false;
-  };
-
   /**
    * 吃的站這一天能佔哪個餐段：want 給了只看那一段；沒給午餐優先。回 'lunch'／'dinner'／null。四個條件（餐段的數字與「能當哪一餐」都來自 rules/_slots.js，跟規則 meal-slots 同一把尺）：
    * 那家店能當這一餐（servesMeal：知識庫欄位 meals 優先、沒有才照店型推導——只標了午餐的店不會被分成晚餐、只供早餐的不會被分成午餐；原話 #195，11-06 第二批）；
@@ -583,6 +628,29 @@ export function allocateTrip({ trip, pois, kb = null, country = null, settings =
   /** 這個候選對這一天：過了硬條件與配額回 { ok: true, slot, travel, score }；不行回 { ok: false, stage, reason }。want 是餐段挑店時指定的那一段。 */
   const judge = (cand, day, want = null) => {
     const p = cand.poi;
+    const named = cand.level === 2;   // 需求單點名的：下面「不主動分」的幾條都不擋它（總則 3）
+    // 吃的類、只供早餐的店不分（檔頭 11(a)）：它是早餐候選，哪一天吃由每天的早餐安排（engine/breakfast.js）挑。國家層沒有早餐段時引擎不排早餐，照舊當一般的站分。
+    // 跟哪一天無關，所以放最前面：留池理由一律是這一句。
+    // 只管「引擎排得成早餐」的店（11-17 審查後收窄；之前只放行點名的，下面三種也一起被擋、理由那一句對它們不成立）：
+    // - 只擋其餘那一層：品項落點（④）照品項分——引擎的早餐不拿帶品項的店（engine/trip.js engineMayInsert），擋了品項就沒有落點；
+    //   六星與有憑據的意義類（③）照排——profile §2.2「③ 六星：可移日，不可丟」，引擎挑早餐不看星等，交給它等於可能整趟沒排到；
+    // - 只擋住宿走得到的（nearHomeForBreakfast：跟單日引擎把店留給早餐同一把尺）——要搭車才到的店引擎不會排成早餐（先吃再上車），留給早餐等於沒有人排它。
+    if (slots.breakfast && cand.level === 'rest' && p.category === MEAL_CATEGORY && servesMeal(p, 'breakfast') !== false && servesMeal(p, 'lunch') === false && servesMeal(p, 'dinner') === false && nearHomeForBreakfast(p)) {
+      return { ok: false, stage: STAGE.limit, reason: '只供早餐，由每天的早餐安排' };
+    }
+    // 同一處的另一筆已經排了（骨架或分配到的；知識庫欄位 samePlace）：同一家整趟一次，點名的也一樣——那是同一個地方。
+    // 品項落點（④）例外：同一家店賣他要買的兩樣東西時，知識庫是一樣東西一筆（各有各的買法說明）——另一筆排在這一天就照排（進去一次買兩樣），別天才擋。
+    // 11-17 在較新的待套用版（知識庫 samePlace 6 對，兩對是同一家藥妝各帶一個品項）三包 × 三種需求單共 9 組上比過三種
+    // （數字＝同一處的兩筆排在同一天的對數／分在兩天的對數／9 組合計分到的站數；有落點的品項三種都是 33 個）：
+    // - 品項落點也整趟只分一筆：0／0／326——第二樣東西 7 組改落到別家店（研究標首選的那家明明就是他正要進去的店），多跑一家；
+    // - 品項落點完全不看同一處：3／4／326——同一家店被分在兩天各去一次；
+    // - 這裡的做法：7／0／328——那 7 對都是同一家藥妝同一天連著兩筆。
+    for (const t of twinsOf.get(p.id) ?? []) {
+      if (!usedIds.has(t)) continue;
+      const at = placedAt.get(t)?.date ?? skeletonAt.get(t) ?? null;
+      if (cand.level === 4 && at === day.date) continue;
+      return { ok: false, stage: STAGE.quota, reason: `同一處的另一筆（${poiMap[t]?.name_zh ?? t}）已經排在 ${at ?? '別天'}${cand.level === 4 ? '；要買的東西只跟它排同一天' : ''}` };
+    }
     const need = Math.min(p.dwellMin ?? 60, 30);
     if (openWithin(p, day.date, day.win.startMin, day.win.endMin, need) === false) return { ok: false, stage: STAGE.open, reason: '那天沒開' };
     if (openInFree(p, day, day.win.startMin, day.win.endMin, need) === false) return { ok: false, stage: STAGE.open, reason: '固定時段以外沒有它開著的空檔' };
@@ -606,10 +674,26 @@ export function allocateTrip({ trip, pois, kb = null, country = null, settings =
       if (day.shoppingFromMin != null && openInFree(p, day, day.shoppingFromMin, day.win.endMin, need) === false) return { ok: false, stage: STAGE.limit, reason: '購物時段沒開' };
     }
     let slot = null;
+    // 研究標備案的吃喝類不主動排（檔頭 11(b)；docs/pipeline.md §2 researchRank「備案、保底、備援寫 backup」）：下面「吃的站當一餐」那一條只管得到算一餐的吃的站，
+    // 咖啡廳、酒吧、不算一餐的吃的站（甜點攤、只供早餐的店）漏掉——11-12 審查：研究標備案、店裡沒有餐點的咖啡站被分成七天包 8/13 09:02 的咖啡廳，成了那天的早餐。
+    // 品項落點（④）不擋：同品項幾家店的備案是「首選排不下才輪到它」，那是另一回事（下面品項分組的排序鍵）。放在同類上限之前：留池理由講這一句，不講「咖啡廳一天 2 家滿了」
+    if (!named && cand.level !== 4 && !isMeal(p) && EAT_DRINK_NAMES[p.category] && researchRank(p) === 2) {
+      return { ok: false, stage: STAGE.quota, reason: `研究標備案／保底的${EAT_DRINK_NAMES[p.category]}不主動排` };
+    }
     if (SAME_TYPE_CATEGORIES.includes(p.category) && day.themeCategory !== p.category && (day.cat[p.category] ?? 0) >= (settings.sameTypeMaxPerDay ?? 2)) {
       return { ok: false, stage: STAGE.quota, reason: `${SAME_TYPE_NAMES[p.category] ?? '同類'}一天 ${settings.sameTypeMaxPerDay ?? 2} 家滿了` };
     }
     let note = null;   // 這一站排進去時補在理由欄的一句（回市區才吃的晚餐）
+    // 這一站在這天會是早餐（檔頭 11(c)；breakfastOn）：照原本的路拿到午餐／晚餐的位子時，佔的改成早餐、那個位子留給下一家。回市區才吃的晚餐不算（人晚上才回來）。
+    // 11-17 在待套用版三包 × 三種需求單（不帶、審查的探針、照他的需求單轉的）共 9 組上比過五種做法（數字＝分配後單日引擎「今天沒排午餐」＋「今天沒排晚餐」的天數／
+    // 沒被點名卻由分配器決定的早餐天數（住宿走得到的店）／同一處排了兩次的組數；現況是 4＋3／8／0）：
+    // - 只做 (a)(b)、不認早餐：1＋3／1／0，但 8/18 朝市早餐仍標成午餐（沒有黃字只是引擎剛好把它排在 10:53、算成午餐，前面另排一碗蕎麥當早餐）；
+    // - 早餐的位子空著就補（能當早餐的食堂沒贏到午餐也照一般的站分進去）：1＋2／10／6——分配器自己決定了十天的早餐，朝市的兩筆被分到兩天；
+    // - 分配器主動分早餐（多一輪早餐的配額）：0＋3／10／6；
+    // - 會是早餐的那天整個不分：3＋3／1／0——早餐全交給引擎，但離境日的朝市也跟著不見（他手排那版 8/18 就是朝市＋牛舌）；
+    // - 這裡的做法（照原本的路贏到位子才分、佔的算早餐；另加「同一處整趟只分一筆」）：1＋3／5／0，那五天都是 8/18 的朝市早餐、後面接一家午餐。
+    //   不加同一處那一條的話，空出來的午餐有四組被朝市的另一筆拿走（同一天排兩次朝市）。
+    const bfFirst = p.category === MEAL_CATEGORY && !townDinner && breakfastOn(p, day);
     if (isMeal(p)) {
       // 研究標備案的吃的站不主動排當一餐；需求單點名的照排（總則 3：點名不是「主動」）
       if (researchRank(p) === 2 && cand.level !== 2) return { ok: false, stage: STAGE.quota, reason: '研究標備案／保底的吃的站不主動排當一餐' };
@@ -621,9 +705,13 @@ export function allocateTrip({ trip, pois, kb = null, country = null, settings =
         note = `一日遊回到市區才吃，離住宿 ${travelMin(legFn, day.home, p)} 分`;
       } else if (slots.lunch || slots.dinner) {
         slot = mealSlotFor(p, day, want);
+        // 拿到午餐／晚餐的位子、而它在這天會是早餐：佔的算早餐（那個位子還空著，分配器接著分下一家）。沒拿到位子的不因為早餐空著就分進去（早餐不由分配器主動分）；
+        // 點名的例外——午餐晚餐都有人了也照排，佔早餐
+        if (bfFirst && (slot || named)) slot = 'breakfast';
         if (!slot) return { ok: false, stage: STAGE.quota, reason: day.lunch && day.dinner ? '午餐、晚餐都有了' : '餐段對不上（已有的那餐佔了、另一餐它沒開或時窗外）' };
       } else if ((day.cat[MEAL_CATEGORY] ?? 0) >= 2) return { ok: false, stage: STAGE.quota, reason: '吃的一天 2 家滿了（沒有國家層餐段）' };
-    } else if (want && want !== 'night') return { ok: false, stage: STAGE.quota, reason: '不是吃的站' };
+    } else if (bfFirst && (named || cand.level === 3) && !want) slot = 'breakfast';   // 只供早餐的吃的店被點名、或是六星／意義類（其餘那一層住宿旁邊的在最前面就擋了）：照排，這天的早餐算它的；早餐已經有人佔就照一般的站排。品項落點（④）是順路買東西，不算早餐
+    else if (want && want !== 'night') return { ok: false, stage: STAGE.quota, reason: '不是吃的站' };
     if (isNightCand) {
       if (day.nightOff) return { ok: false, stage: STAGE.quota, reason: NO_NIGHT_TYPES.has(day.type) ? '離境日、城際移動日晚上沒有夜間站' : '那晚不排夜間站（早起日前一晚、或同行者不要）' };
       let nightEnd = slots.night ? Math.min(slots.night[1], day.win.raw?.endMin ?? day.win.endMin) : null;
@@ -639,9 +727,14 @@ export function allocateTrip({ trip, pois, kb = null, country = null, settings =
       if (slots.night && openInFree(p, day, slots.night[0], nightEnd, 30) === false) return { ok: false, stage: STAGE.quota, reason: '夜間時段沒開（或被固定時段釘住）' };
       slot = 'night';
     } else if (want === 'night') return { ok: false, stage: STAGE.quota, reason: '不是夜間站' };
+    // sameShop：同一處的另一筆就排在這一天（上面同一處那一條放行的品項落點）——同一家店的第二樣東西，進去一次買兩樣：那天的品項落點已經滿了也照排。
+    // 不這樣的話它這天排不進、別天又不准去，品項沒有落點（11-17 審查的合成情境；5514647 是排到別天再去一次）。它照樣算一個落點（下面 place 照加）：
+    // 改成「不佔名額」試過——kb-stage2 三包 × 三種需求單 9 組裡 5 組跟著洗牌（松本清 Clis Road 的兩筆只算一個，On 鞋的落點從 8/17 擠進 8/12 抵達日，
+    // 七天版不帶需求單那一組伴手禮被擠出去、8/15 多一句「今晚沒排夜間站」），所以只開這一個口、平常的算法不動（9 組逐行相同）。
+    const sameShop = isItem && (twinsOf.get(p.id) ?? []).some((t) => usedIds.has(t) && (placedAt.get(t)?.date ?? skeletonAt.get(t) ?? null) === day.date);
     if (isItem) {
       if (p.item && usedItems.has(p.item)) return { ok: false, stage: STAGE.quota, reason: `品項「${p.item}」已有落點` };
-      if (day.items >= setting(settings, 'allocItemMaxPerDay')) return { ok: false, stage: STAGE.quota, reason: `品項落點一天 ${setting(settings, 'allocItemMaxPerDay')} 個滿了` };
+      if (!sameShop && day.items >= setting(settings, 'allocItemMaxPerDay')) return { ok: false, stage: STAGE.quota, reason: `品項落點一天 ${setting(settings, 'allocItemMaxPerDay')} 個滿了` };
     }
     if (day.stops >= day.max) return { ok: false, stage: STAGE.stops, reason: `站數滿（上限 ${day.max}）` };
     // 離主行程多遠：回市區才吃的店＝回程的車（主行程→住宿）＋從住宿走過去。這樣算，主行程那一區與路上的店自然先挑（照舊），回市區的幾家再照離住宿的遠近排。
@@ -670,6 +763,7 @@ export function allocateTrip({ trip, pois, kb = null, country = null, settings =
     day.picks.push({ ...pick, level: cand.level, why: [cand.why, r.note].filter(Boolean).join('；') || null, slot: r.slot, travelMin: r.travel, movedFrom: dropped.get(p.id)?.at(-1)?.date ?? null });
     day.stops += 1;
     day.cat[p.category] = (day.cat[p.category] ?? 0) + 1;
+    if (r.slot === 'breakfast') day.breakfast = true;
     if (r.slot === 'lunch') day.lunch = true;
     if (r.slot === 'dinner') day.dinner = true;
     if (r.slot === 'night') day.night = true;
@@ -685,6 +779,7 @@ export function allocateTrip({ trip, pois, kb = null, country = null, settings =
     const p = poiMap[poiId];
     day.stops -= 1;
     if (p) day.cat[p.category] = Math.max(0, (day.cat[p.category] ?? 1) - 1);
+    if (pick.slot === 'breakfast') day.breakfast = false;
     if (pick.slot === 'lunch') day.lunch = false;
     if (pick.slot === 'dinner') day.dinner = false;
     if (pick.slot === 'night') day.night = false;
@@ -803,8 +898,10 @@ export function allocateTrip({ trip, pois, kb = null, country = null, settings =
         //   分配前的估計只算骨架，會估得太早。
         // - last-train：這一站趕不上末班車（rules/_slots.js lastTrainHints；單日引擎已經試過換順序，還是趕不上才有這條）。留池理由就是提示那一句。
         //   需求單點名的（②）不收：點名就排（總則 3），提示留在那一站給他看。
+        //   「待到太晚回不了住宿」那一種（kind 'home'）不看提示、下面逐站判：提示同一個外地的區只掛最晚離開的那一站（11-17），照提示收的話一趟只收得到一家。
         for (const w of x.plan.warnings ?? []) {
           if (!w.hint || !w.poiId || (w.ruleId !== 'day-trip-night' && w.ruleId !== 'last-train')) continue;
+          if (w.ruleId === 'last-train' && w.kind === 'home') continue;
           const cand = byId.get(w.poiId);
           const pick = day.picks.find((p) => p.poiId === w.poiId);
           if (!cand || !pick) continue;
@@ -812,6 +909,24 @@ export function allocateTrip({ trip, pois, kb = null, country = null, settings =
           const reason = w.ruleId === 'last-train' ? w.msg : lateReturnReasonFor(cand.poi);
           unplace(day, w.poiId);
           dropped.set(w.poiId, [...(dropped.get(w.poiId) ?? []), { date: x.date, reason }]);
+          out.push({ cand, pick, date: x.date, reason });
+        }
+        // 待到太晚回不了住宿的分配站：每一站各自判（rules/_slots.js lastTrainMisses，跟規則 last-train 同一個判法），晚於末班的一趟全部收回——
+        // 11-17 提示改成同一區只掛一句之後，這裡照提示收會一趟只收一家：同一個外地的區有三家以上分配站都晚於末班時，驗證 MAX_VERIFY_RUNS 趟用完還留著回不了住宿的站
+        // （審查的合成情境：一日遊、主行程 15:00–16:30、海邊末班 16:50、同一區五家 16:35 才開的候選——留下 16:40–17:00 與 17:10–17:30 兩家；改成逐站判是一家不留、驗證 2 趟。
+        //   另一個做法「照提示收、驗證趟數放寬到收完為止」結果相同，但候選 5 家要驗 6 趟、8 家 9 趟（逐站判是 2 趟、3 趟，跟 5514647 一樣），每趟是整趟重排一次）。
+        // 同一區有他自己的站（骨架、需求單點名的）更晚離開、也回不了住宿時不收：人本來就待到那時候，前面的站不會讓他更回不去（提示只掛最晚那一站的同一個道理）。
+        const homeMisses = lastTrainMisses({ sequence: x.plan.sequence ?? [], day: x.day, home: day.home, legFn }).filter((m) => m.kind === 'home' && !m.stop.insertedBy);
+        const allocated = (m) => { const c = byId.get(m.stop.poi.id); return Boolean(c) && c.level !== 2 && day.picks.some((p) => p.poiId === m.stop.poi.id); };
+        for (const m of homeMisses) {
+          if (!allocated(m)) continue;
+          if (homeMisses.some((o) => !allocated(o) && o.stop.poi.zoneId === m.stop.poi.zoneId && o.stop.endMin >= m.stop.endMin)) continue;
+          const id = m.stop.poi.id;
+          const cand = byId.get(id);
+          const pick = day.picks.find((p) => p.poiId === id);
+          const reason = lastTrainText(m.stop, m, kb);
+          unplace(day, id);
+          dropped.set(id, [...(dropped.get(id) ?? []), { date: x.date, reason }]);
           out.push({ cand, pick, date: x.date, reason });
         }
       }
@@ -846,8 +961,11 @@ export function allocateTrip({ trip, pois, kb = null, country = null, settings =
 
   // ── 留在候選池的：理由在最後重算（分配當下記的，驗證搬動之後會失真——站數滿的那天後來空了、同品項的落點換了家）──
   placeReason.clear();
-  const itemWhere = new Map();   // 品項 → 落在哪一天的哪家（骨架或分配到的）
-  for (const d of days) for (const p of [...d.skeleton, ...d.picks]) { const poi = poiMap[p.poiId]; if (poi?.item && !itemWhere.has(poi.item)) itemWhere.set(poi.item, { date: d.date, name: nameOf(p.poiId) }); }
+  // 品項 → 落在哪一天的哪家：骨架裡帶品項的站，或照品項那一層（④）分進去的站——就是佔掉「同一品項整趟一個落點」的那一家（usedItems）。
+  // 需求單點名的店（②）剛好帶同一個品項標記的不算：它不佔品項的落點（品項另外照④分），留池理由指到它就指錯了
+  // （11-12 審查：點名「藤崎百貨 本館1F 香氛區」排在 8/12，同品項其餘四家的理由寫落在 8/12 的香氛區，實際落點是 8/18 的唐吉訶德）
+  const itemWhere = new Map();
+  for (const d of days) for (const p of [...d.skeleton, ...d.picks.filter((x) => x.level === 4)]) { const poi = poiMap[p.poiId]; if (poi?.item && !itemWhere.has(poi.item)) itemWhere.set(poi.item, { date: d.date, name: nameOf(p.poiId) }); }
   const reasonFor = (cand) => {
     const drops = dropped.get(cand.poi.id) ?? [];
     const rec = placeReason.get(cand.poi.id);

@@ -160,6 +160,79 @@ export function pinnedSwapCheck({ trip, date, fromPoiId, plan, pois = {}, planAr
   };
 }
 
+const PRIORITY_RANK = Object.freeze({ must: 3, want: 2, maybe: 1 });
+/** 兩個優先度取高的（must > want > maybe；不認得的算最低）。 */
+const higherPriority = (x, y) => ((PRIORITY_RANK[x] ?? 0) >= (PRIORITY_RANK[y] ?? 0) ? x : y);
+
+/**
+ * 二選一選了 B，那一天的旅程檔怎麼改：chooseDay(day, fromPoiId, toPoi, at?) → 新的 day（不改傳入的；A 順延到別天是另一步，defer）。
+ * 這是 ui/choices.js swapPick 的做法搬進引擎（11-17）：試算（pinnedChoiceCheck）與真的套用要走同一個函式，不然試算說沒事、套下去卻是另一個樣子。
+ * - B 不在那天的 picks 裡（候選池來的）：就是換一家（engine/swap.js applySwap）——picks 原位置換掉、priority 沿用 A 的、記 day.swapped（換掉的不算落選）；
+ *   釘住順序的日子 pinned 裡 A 的那一筆原位置換成 B。
+ * - B 本來就是那天的勾選（來源是「今天排不進的同類勾選站」）：A 的那筆拿掉、B 自己那筆留著（停留照它自己的）、優先度取 A 與 B 之間高的
+ *   （他選了它頂 A 的位置，至少要有 A 的分量；B 本來就比 A 高就不降——10-16 審查）；記 day.swapped。
+ *   釘住順序的日子：pinned 裡 A 的那一筆原位置換成 B（B 在順序裡殘留的舊筆先清掉）。swapPick 原本不改 pinned、靠重排時順著 swapped 紀錄把接手的那家對回原位置
+ *   （engine/insert.js planPinnedDay 的 heir）；結果相同，這裡直接寫明，「B 在 A 的原位置」不必靠那條推回來。A 不在順序裡就不動 pinned。
+ * at：swapped 那一筆的時間戳（不給就是現在）。
+ */
+export function chooseDay(day, fromPoiId, toPoi, at = null) {
+  const when = typeof at === 'string' && at ? at : new Date().toISOString();
+  const own = (day.picks ?? []).find((p) => p.poiId === toPoi.id);
+  if (!own) {
+    const next = applySwap(day, fromPoiId, toPoi);
+    return { ...next, swapped: next.swapped.map((x, i) => (i === next.swapped.length - 1 ? { ...x, at: when } : x)) };
+  }
+  const a = (day.picks ?? []).find((p) => p.poiId === fromPoiId);
+  const picks = (day.picks ?? []).filter((p) => p.poiId !== fromPoiId).map((p) => (p === own ? { ...own, priority: higherPriority(a?.priority, own.priority) ?? 'want' } : p));
+  const swapped = [...(day.swapped ?? []), { from: fromPoiId, to: toPoi.id, at: when }];
+  const pin = day.pinned && typeof day.pinned === 'object' && Array.isArray(day.pinned.sequence) ? day.pinned : null;
+  if (!pin || !pin.sequence.some((e) => e?.poiId === fromPoiId)) return { ...day, picks, swapped };
+  const sequence = pin.sequence.filter((e) => e?.poiId !== toPoi.id).map((e) => (e?.poiId === fromPoiId ? { poiId: toPoi.id } : e));
+  return { ...day, picks, swapped, pinned: { ...pin, sequence } };
+}
+
+/**
+ * 釘住順序的日子（days[].pinned；engine/insert.js）上，二選一的「或 B」選了會不會讓其餘各站少掉或換位置（11-17；跟上面換一家的 pinnedSwapCheck 同一個洞、同一個做法）。
+ * pinnedChoiceCheck({ trip, date, plan, pois, planArgs }) → (choice) → true＝選了沒事、可以出這個「或 B」。choice＝plan.choices 的一筆（{ poiId: A, options: [A, B], altPoi: B 的 POI }）。
+ * 每一個真的選下去排那一天一次（chooseDay＋planTrip 只排那天；跟他按下去之後走的是同一條路），下面都成立才是 true：
+ * B 排在 A 的原位置、原本的每一站（他勾的、引擎插的）都還在而且先後不變、沒有站因此多掉進排不進清單。
+ * B 原本就在排不進清單（來源是今天排不進的勾選站）、選了排進來是本意，不算；別的原本排不進的站跟著排得進來也不算壞事。
+ * A 順延到哪一天不影響這一天（順延那一步自己會試排，engine/choices.js defer），不在這裡試。
+ * 之前沒有這一步：B 停得比 A 久、或那個時段撐不到，後面的站會落到排不進清單、或 B 自己先落到排不進、下一次重排再被排到別的位置。
+ * 11-17 在六個打包檔上量（每天走廊清單裡每一家直接排得下的安插之後，共 279 個釘住的情境、254 個「或 B」）：選了出事 1 個
+ * （10-27 舊七天包 8/17「星山珈琲店 或 darestore」：darestore 在那個時段撐不到，先落到排不進、下一次重排被排到 14:32 的另一個位置）；
+ * 試算放行 253 個，選下去出事 0 個；每個試算約 1.3 ms。真包上很少見，會出事的是「B 的營業時間或停留跟 A 差很多」的那一種。
+ * plan＝那天現在排好的 plan（沒釘住就回一個永遠 true 的函式——沒釘住的日子選了本來就整天重排）；pois＝{ [id]: poi }；planArgs＝planTrip 的其他參數。純函式，不改傳入的。
+ */
+export function pinnedChoiceCheck({ trip, date, plan, pois = {}, planArgs = {} }) {
+  const day = (trip?.days ?? []).find((d) => d?.date === date);
+  if (!day || !plan?.pinned || !Array.isArray(plan.sequence)) return () => true;
+  const before = plan.sequence.map((s) => s.poi.id);
+  const wasDropped = new Set((plan.dropped ?? []).map((x) => x.poi.id));
+  return (choice) => {
+    const fromPoiId = choice?.poiId;
+    const toPoi = choice?.altPoi ?? pois[choice?.options?.[1]] ?? null;
+    if (!fromPoiId || !toPoi?.id || !before.includes(fromPoiId)) return false;
+    const trial = { ...trip, days: trip.days.map((d) => (d.date === date ? chooseDay(d, fromPoiId, toPoi) : d)) };
+    const r = planTrip({ ...planArgs, trip: trial, pois: pois[toPoi.id] ? pois : { ...pois, [toPoi.id]: toPoi }, options: { ...(planArgs.options ?? {}), onlyDates: [date] } });
+    const p = r.days.find((x) => x.date === date)?.plan;
+    if (!p) return false;
+    const want = before.map((id) => (id === fromPoiId ? toPoi.id : id));
+    const kept = p.sequence.map((s) => s.poi.id).filter((id) => want.includes(id));
+    return kept.join('\n') === want.join('\n') && !(p.dropped ?? []).some((x) => !wasDropped.has(x.poi.id));
+  };
+}
+
+/**
+ * 這天畫面上可以出的二選一：choicesFor({ trip, date, plan, pois, planArgs }) → plan.choices 的子集。
+ * 沒釘住的日子＝plan.choices 原樣（同一個陣列）；釘住順序的日子只留試算過、選了沒事的（pinnedChoiceCheck）。畫面畫「或 B」拿這一份，不直接拿 plan.choices。
+ */
+export function choicesFor({ trip, date, plan, pois = {}, planArgs = {} }) {
+  const list = plan?.choices ?? [];
+  if (!plan?.pinned || !list.length) return list;
+  return list.filter(pinnedChoiceCheck({ trip, date, plan, pois, planArgs }));
+}
+
 /**
  * 順延的候選日（日期字串陣列）：同店型主題日優先、再其餘日子，各自由早到晚；排除 fromDate、不是 normal 的日子（抵達、離境、固定時段）、一日遊、購物日、那天休息、當日區域不含、
  * 他在那天換掉過它的（day.swapped[].from）。

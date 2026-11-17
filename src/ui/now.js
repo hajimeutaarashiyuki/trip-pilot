@@ -13,7 +13,7 @@ import { darkBeforeMinOf } from './daylight.js';
 import { pendingRatings, progressOf, daysBetween, skipStopPatch } from './ratings.js';
 import { remainingFrom, lostStops, appliedPlan, snapshotPlan } from './applied.js';
 import { corridorOfLeg, corridorNames, corridorListNode, corridorDisclosure, visitedDates } from './corridor.js';
-import { breakfastCardOf } from './meals.js';
+import { breakfastCardOf, hasLaterDay } from './meals.js';
 import { undoBar } from './planner.js';   // 復原列（那一句、復原、關閉）跟規劃頁同一份
 
 export function renderNow({ state, actions }) {
@@ -75,11 +75,13 @@ export function renderNow({ state, actions }) {
   const arriveMin = nowMin + leg.walkMin + leg.rideMin;
   const threatened = limitMin != null && (ends != null ? arriveMin > ends : arriveMin + Math.min(next.dwellMin, 30) > limitMin);
   const status = lateMin > (state.settings.lateThresholdMin ?? 15) ? TEXT.late(lateMin) : lateMin < -5 ? TEXT.early(-lateMin) : '';
-  // 下一站是這天的早餐（原話 #196）：鍵換成「吃飯店早餐」「改天去」——引擎先挑的早餐原本那顆「略過這站」換成這兩顆，他勾的早餐也多這兩顆（指定站與主行程不出）。
+  // 下一站是這天的早餐（原話 #196）：鍵換成「吃飯店早餐」「改天去」——引擎先挑的早餐原本那顆「略過這站」換成這兩顆，他勾的早餐也多這兩顆（指定站與主行程不出；旅程最後一天只出「吃飯店早餐」）。
   // 按了那天不排早餐、那家留給後面的日子推薦（app.js breakfastOff，會重排；帶 idx 讓這一頁知道復原列要不要畫）
   const bf = breakfastCardOf(planned.plan, next);
+  // 旅程最後一天不出「改天去」（後面沒有日子可以去；跟規劃頁的早餐卡同一條，ui/meals.js hasLaterDay）
+  const later = Boolean(bf?.keys) && hasLaterDay(state.trip, date);
   // 引擎排的早餐後來不再是當天那一餐時（他在它前面插了一家能當早餐的店）：這張卡的鍵是「略過這站」，那一句也用一般的寫法，不叫他按卡上沒有的「吃飯店早餐」「改天去」（11-12 畫面審查）
-  const engineNote = next.priority === 'breakfast' ? (bf ? TEXT.breakfast.insertedNow : TEXT.engineInsertedNow) : next.poi.category === 'spot' ? TEXT.spotInsertedNow(hm(next.endMin)) : next.priority === 'filler' ? TEXT.fillerInsertedNow : next.priority === 'onway' ? TEXT.onTheWayInsertedNow : TEXT.restInsertedNow;
+  const engineNote = next.priority === 'breakfast' ? (bf ? (later ? TEXT.breakfast.insertedNow : TEXT.breakfast.insertedNowLast) : TEXT.engineInsertedNow) : next.poi.category === 'spot' ? TEXT.spotInsertedNow(hm(next.endMin)) : next.priority === 'filler' ? TEXT.fillerInsertedNow : next.priority === 'onway' ? TEXT.onTheWayInsertedNow : TEXT.restInsertedNow;
 
   nodes.push(el('section', { class: 'card big next' }, [
     el('p', { class: 'muted small', text: TEXT.nextStop + (status ? `　${status}` : '') }),
@@ -94,7 +96,7 @@ export function renderNow({ state, actions }) {
     el('div', { class: 'actions' }, [
       el('a', { class: 'btn', href: routeUrl({ to: next.poi, mode: legMode(leg), cityName: tripCityName(state) }), target: '_blank', rel: 'noopener' }, TEXT.openMaps),
       bf?.keys ? el('button', { class: 'btn quiet', type: 'button', onclick: () => actions.breakfastOff(date, 'hotel', idx) }, TEXT.breakfast.hotel) : null,
-      bf?.keys ? el('button', { class: 'btn quiet', type: 'button', onclick: () => actions.breakfastOff(date, 'later', idx) }, TEXT.breakfast.later) : null,
+      later ? el('button', { class: 'btn quiet', type: 'button', onclick: () => actions.breakfastOff(date, 'later', idx) }, TEXT.breakfast.later) : null,
       next.insertedBy === 'engine' && !bf ? el('button', { class: 'btn quiet', type: 'button', onclick: () => actions.setField(skipStopPatch(f, date, next.poi.id, new Date().toISOString())) }, TEXT.skipStop) : null,
     ]),
   ]));

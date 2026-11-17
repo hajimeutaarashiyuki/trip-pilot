@@ -510,9 +510,22 @@ export function lastTrainMisses({ sequence, day, home = null, legFn = null }) {
  * 引擎自己插的站不會出現在這裡（規則 last-train 擋掉）。回 [{ ruleId: 'last-train', code: 'hint', hint: true, poiId, kind, msg }]，字就是 lastTrainText 那兩句。
  * 跟 dayTripNightHints 同一種後處理：engine/trip.js planTrip 每天排完掛、ui/applied.js 現場套過改案的那天重掛；
  * 分配器（engine/allocate.js）看到自己分的站被掛這條就收回（需求單點名的、旅程檔原本就有的不收）。
+ * 「待到太晚回不了住宿」（kind 'home'）同一個外地的區只講一次，掛在他勾的站裡最晚離開的那一站（11-17）：判定照舊是每一站各自判（missedLastTrain、lastTrainMisses 不變——
+ * 引擎插的站照樣一站一站擋、算「趕不上的站有沒有變多」的地方也照舊數每一站），只是提示不重複。之前主行程本身晚於末班時，同一區排在它前面、也待過末班的站各掛一句，
+ * 人其實整晚都在那一區，回不回得去看的只有最後離開的那一站；分配器還會把前面那幾站當成趕不上收回（11-12 審查，合成情境：瑞巌寺 14:59–16:29 與流灯会各一句）。
+ * 所以這一種的提示不是「哪幾站回不了住宿」的清單：分配器收回自己分的站時不讀它，自己拿 lastTrainMisses 逐站判（engine/allocate.js takeDrops；照提示收的話同一區一趟只收得到一家）。
+ * 「去這一站的那段搭車趕不上」（kind 'leg'）是一段一段的事，不併。
  */
 export function lastTrainHints({ sequence, day, home = null, legFn = null, kb = null }) {
-  return lastTrainMisses({ sequence, day, home, legFn })
-    .filter((x) => !x.stop.insertedBy)
+  const misses = lastTrainMisses({ sequence, day, home, legFn }).filter((x) => !x.stop.insertedBy);
+  const latest = new Map();   // 外地的區 → 那一區 kind 'home' 裡最晚離開的那一筆（一樣晚取排在後面的）
+  for (const x of misses) {
+    if (x.kind !== 'home') continue;
+    const zone = x.stop.poi.zoneId;
+    const cur = latest.get(zone);
+    if (!cur || x.stop.endMin >= cur.stop.endMin) latest.set(zone, x);
+  }
+  return misses
+    .filter((x) => x.kind !== 'home' || latest.get(x.stop.poi.zoneId) === x)
     .map((x) => ({ ruleId: 'last-train', code: 'hint', hint: true, poiId: x.stop.poi.id, kind: x.kind, msg: lastTrainText(x.stop, x, kb) }));
 }

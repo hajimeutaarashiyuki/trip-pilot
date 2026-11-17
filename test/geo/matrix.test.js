@@ -1,7 +1,7 @@
 // T5：站對站移動的查法——先 walk.json，再直線距離估（記警告），再跨區連結，最後區域預設。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeLegFn, haversineM, lastDepartMin, serviceDayOf, SERVICE_DAYS } from '../../src/geo/matrix.js';
+import { makeLegFn, haversineM, lastDepartMin, lastHmToMin, serviceDayOf, SERVICE_DAYS } from '../../src/geo/matrix.js';
 
 const A = { id: 'a', name_zh: 'A', zoneId: 'ichibancho', lat: 38.2600, lng: 140.8710 };
 const B = { id: 'b', name_zh: 'B', zoneId: 'ichibancho', lat: 38.2650, lng: 140.8750 };
@@ -52,6 +52,25 @@ test('lastDepartMin：連結上某一區往另一端的末班發車時刻；沒�
   assert.equal(lastDepartMin({ mode: 'jr', rideMin: 38 }, 'matsushima'), null, '連結沒有 last');
   assert.equal(lastDepartMin({ last: { a: '03:59' } }, 'a'), 24 * 60 + 3 * 60 + 59);
   assert.equal(lastDepartMin({ last: { a: '04:00' } }, 'a'), 4 * 60, '04:00 起算當天');
+});
+
+test('末班時刻的時分要合法（11-17）：分鐘 60 以上、小時 28 以上不是一個時刻，當成沒資料（那一條不判）——之前 "25:99" 會被算成 26:39；"24:12"、"00:12" 算隔天照舊', () => {
+  // 過了午夜的寫法兩種都收：00:00–03:59（04:00 前算隔天）與 24:00–27:59（同一段時間的另一種寫法）；28:00 以後就是當天早上 04:00 以後，不會是末班的寫法
+  for (const [hm, min] of [['00:00', 1440], ['00:12', 1452], ['24:12', 1452], ['25:30', 1530], ['27:59', 1679], ['3:59', 1679], ['23:59', 1439], ['04:00', 240], ['9:05', 545]]) {
+    assert.equal(lastHmToMin(hm), min, hm);
+    assert.equal(lastDepartMin({ last: { a: hm } }, 'a'), min, hm);
+  }
+  for (const bad of ['25:99', '23:60', '12:75', '28:00', '99:00', '24:60', '7:5', '07:5', '0712', '24', '', ' 23:10', '23:10 ', '-1:30', '１２:３０', null, undefined, 1390, {}, ['23:10']]) {
+    assert.equal(lastHmToMin(bad), null, JSON.stringify(bad) ?? 'undefined');
+    assert.equal(lastDepartMin({ last: { a: bad } }, 'a'), null, JSON.stringify(bad) ?? 'undefined');
+  }
+  // 分日別：那一種寫壞就當沒寫，取其餘寫對的裡面最早的；三個都壞就是沒資料
+  assert.equal(lastDepartMin({ last: { a: { weekday: '25:99', saturday: '22:10', holiday: '21:50' } } }, 'a', 'weekday'), 21 * 60 + 50);
+  assert.equal(lastDepartMin({ last: { a: { weekday: '22:61', saturday: '29:00', holiday: '30:99' } } }, 'a', 'saturday'), null);
+  // 寫壞的那一條引擎不判：搭車的 leg 不帶 last（跟沒有資料的連結一樣）
+  const legFn = makeLegFn({ walk: {}, settings: {}, zoneLinks: { 'town|sea': { mode: 'jr', rideMin: 30, walkMin: 5, last: { sea: '25:99', town: '24:12' } } } });
+  assert.equal(legFn.linkBetween('sea', 'town').last, undefined, '寫壞的方向沒有末班資料');
+  assert.deepEqual(legFn.linkBetween('town', 'sea').last, { leaveByMin: 1452 - 5, departMin: 1452, fromZoneId: 'town' }, '寫對的方向照舊');
 });
 
 test('搭車的 leg 帶末班：直達＝從起區發車的那一班，最晚離開＝發車 − 連結的走路分鐘；只有一個方向有資料時另一個方向沒有 last；沒資料的連結不帶這個鍵', () => {

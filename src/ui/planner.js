@@ -9,9 +9,9 @@ import { resolveHome } from '../engine/trip.js';
 import { placeUrl, routeUrl, coordQuery, legMode, tripCityName } from './maps.js';
 import { darkBeforeMinOf } from './daylight.js';
 import { corridorOfLeg, legSuggestOf, corridorNames, corridorListNode, corridorDisclosure } from './corridor.js';
-import { choiceOf } from './choices.js';
+import { choiceOf, dayChoices } from './choices.js';
 import { askView } from './insert.js';
-import { breakfastCardOf, swapListOf, offersOn, looseOffers, breakfastOffText } from './meals.js';
+import { breakfastCardOf, swapListOf, offersOn, looseOffers, breakfastOffText, hasLaterDay } from './meals.js';
 
 export function renderPlanner({ state, actions }) {
   const nodes = [el('h1', { text: state.trip.name ?? TEXT.appName })];
@@ -86,7 +86,9 @@ function dayBlock(d, planned, state, actions) {
   ]);
   // 累積型警告（今天走路會到 N 分、連跑）每站都會再響一次，只在第一次超過的那站寫
   const seenCumulative = new Set();
-  plan.sequence.forEach((s, i) => block.append(stopCard(s, i, plan, d, state, actions, seenCumulative)));
+  // 這天可以出的「或 B」：釘住順序的日子先試排過、選了會讓其餘各站少掉或換位置的不出（ui/choices.js dayChoices；每天算一次）
+  const choices = dayChoices(state, d.date);
+  plan.sequence.forEach((s, i) => block.append(stopCard(s, i, plan, d, state, actions, seenCumulative, choices)));
   if (plan.dropped.length) {
     // 排不進的每一條（must 的除外）多一顆「排到別天」：直接順延到別的排得進的日子（T16；原話 #119）
     block.append(el('details', { class: 'dropped' }, [
@@ -109,12 +111,13 @@ function introLines(poi, note = null, cls = 'muted small intro') {
 }
 
 /**
- * 二選一那行（T16；DESIGN §6.3.2「卡上顯示『或 B』」）：這站在 plan.choices 裡就在店名下面寫「或 [B]」——B 是一顆小鍵，按了把 A 換成 B、A 順延到別天（app.js chooseOption）；
+ * 二選一那行（T16；DESIGN §6.3.2「卡上顯示『或 B』」）：這站在這天可以出的二選一裡（choices＝ui/choices.js dayChoices：引擎給的 plan.choices，釘住順序的日子先試排過）
+ * 就在店名下面寫「或 [B]」——B 是一顆小鍵，按了把 A 換成 B、A 順延到別天（app.js chooseOption；釘住的日子 B 就在 A 的原位置）；
  * B 來自今天排不進的同類勾選站就補一句「今天只塞得下一家」，來自候選池就寫順路／多繞幾分。沒按＝照引擎；選完 B 進 picks、這行就不再出現。
  * 下面再一行 B 的簡介（有才畫；跟「換一家」同一個理由，原話 #177「單看店名 我會不清楚選哪間好」，推導）。
  */
-function choiceLine(s, plan, d, state, actions) {
-  const c = choiceOf(plan, s.poi.id);
+function choiceLine(s, choices, d, state, actions) {
+  const c = choiceOf(choices, s.poi.id);
   if (!c?.altPoi) return null;
   const b = state.pois[c.altPoi.id] ?? c.altPoi;
   return el('p', { class: 'choice small' }, [
@@ -187,30 +190,39 @@ function legBlock({ line, legIndex, plan, d, state, actions }) {
 
 /**
  * 升級成站排不下時，那一家底下的那組選項（原話 #194「再跳一組選項問我 要壓縮哪個行程或是砍掉」；state.insertAsk 對得上這一家才畫，ui/insert.js askView 算要畫什麼）：
- * 一句為什麼排不下（引擎那幾條硬規則的句子）、前幾輪選過的、每個選項一顆鍵——鍵上寫做什麼（「Y 少待 20 分（60→40）」「不去 Z」「X 只待 30 分」）與後果
- * （排得下：後面順延幾分、用掉幾分留白、會多哪一句黃字；還排不下：還差幾分），鍵底下那一站的簡介（原話 #193）；最後一顆「算了，不插」。
+ * 最上面照舊——前幾輪選過的、一句為什麼排不下（引擎那幾條硬規則的句子）、提示句（行尾可以多一顆「算了，不插」）；最底下一顆「算了，不插」。
+ * 中間的選項分兩組、各一行小標（11-17，主控定的版面）：「少待一點」與「這站不去」，沒有選項的那一組不畫。每個選項是一整列可以按的鍵（至少 44px 高），三行——
+ * 第一行：粗體店名（要插的這家後面標「（要插的這家）」）＋靠右的重點（少待寫「90 → 80 分」、不去寫店型小標；引擎排的站再多一個小標「引擎排的」）；
+ * 第二行：後果（排得下：後面順延或提早幾分、用掉幾分留白；還排不下：還差幾分），選了會多出來的黃字另起一行（warn 色）；
+ * 第三行：那一站的簡介（原話 #193），最多兩行、超過截斷（樣式 .opt-intro 的 line-clamp；完整的在那一站自己的卡上）；
+ *   選項有 ASK_ONE_LINE_FROM 個以上時收成一行（那一塊加 .many）——量出來的：四個以下的兩行也看得完，五個以上要收成一行才進得了一個螢幕。
+ * 之前每顆鍵是一整行粗體把動作與後果混在一起、下面接整段簡介：390×844 上 28 組的高度中位數 1,122px、17 組超過一個螢幕；量過的幾種排法見 src/index.html .insert-ask 那一段。
  * 選了還排不下就換成下一輪的選項（app.js pickInsertOption），最多三輪。
- * 選項有 ASK_TOP_CANCEL_FROM 個以上時，「算了，不插」在提示那一行的行尾也放一顆：選項多的時候這一塊在手機上比一個螢幕還長（11-12 畫面審查量的：390px 最高 1,995px），
- * 之前只有最底下那一顆，要捲到底才收得掉。
+ * 選項有 ASK_TOP_CANCEL_FROM 個以上時，「算了，不插」在提示那一行的行尾也放一顆（11-12 畫面審查：選項多的時候要捲到底才收得掉）。
  */
 const ASK_TOP_CANCEL_FROM = 3;
+const ASK_ONE_LINE_FROM = 5;
 function insertAskNode(poi, date, legIndex, state, actions) {
   const ask = state.insertAsk;
   if (!ask || ask.date !== date || ask.legIndex !== legIndex || ask.poiId !== poi.id) return null;
   const v = askView(ask, (id) => state.pois[id]?.name_zh ?? id, state.plans[date]?.plan ?? null);
-  const optionButton = (row) => el('button', { class: 'btn alt', type: 'button', onclick: () => actions.pickInsertOption(row.option) }, [
-    el('strong', { text: row.label }), ` · ${row.note}`,
-    row.adds ? el('span', { class: 'intro adds', text: row.adds }) : null,
-    row.intro ? el('span', { class: 'intro', text: row.intro }) : null,
+  // <button> 裡只能放 phrasing content：每一行都是 span，用樣式排成一行一行
+  const optionButton = (row) => el('button', { class: 'btn alt opt', type: 'button', onclick: () => actions.pickInsertOption(row.option) }, [
+    el('span', { class: 'opt-top' }, [
+      el('span', { class: 'opt-name' }, [el('strong', { text: row.name }), row.mine ? el('span', { class: 'opt-mine', text: TEXT.insert.mine }) : null]),
+      el('span', { class: 'opt-side' }, [row.side, row.cat ? el('span', { class: 'cat', text: row.cat }) : null, row.engine ? el('span', { class: 'cat', text: TEXT.insert.engineTag }) : null]),
+    ]),
+    el('span', { class: 'opt-note', text: row.note }),
+    row.adds ? el('span', { class: 'opt-note adds', text: row.adds }) : null,
+    row.intro ? el('span', { class: 'opt-intro', text: row.intro }) : null,
   ]);
-  const topCancel = v.fits.length + v.more.length >= ASK_TOP_CANCEL_FROM;
-  return el('div', { class: 'insert-ask' }, [
+  const count = v.fits.length + v.more.length;
+  const topCancel = count >= ASK_TOP_CANCEL_FROM;
+  return el('div', { class: count >= ASK_ONE_LINE_FROM ? 'insert-ask many' : 'insert-ask' }, [
     v.chosen.length ? el('p', { class: 'small', text: TEXT.insert.chosen(v.chosen.join('、')) }) : null,
     el('p', { class: 'warn-line small', text: v.why }),
     el('p', { class: 'muted small ask-head' }, [v.prompt, topCancel ? el('button', { class: 'btn quiet sm', type: 'button', onclick: () => actions.cancelInsert() }, TEXT.insert.cancel) : null]),
-    ...v.fits.map(optionButton),
-    v.moreHead ? el('p', { class: 'muted small', text: v.moreHead }) : null,
-    ...v.more.map(optionButton),
+    ...v.groups.flatMap((g) => [el('p', { class: 'small ask-group', text: g.head }), ...g.rows.map(optionButton)]),
     el('div', { class: 'actions' }, [el('button', { class: 'btn quiet', type: 'button', onclick: () => actions.cancelInsert() }, TEXT.insert.cancel)]),
   ]);
 }
@@ -240,13 +252,14 @@ const CUMULATIVE_RULES = new Set(['walk-budget', 'walk-run', 'shop-run']);
  * isBreakfast＝這一站真的是這天的早餐（breakfastCardOf 有值）：引擎排的早餐後來不再是當天那一餐時（他在它前面插了一家能當早餐的店，早餐的小標與鍵移到那一家），
  * 這張卡的鍵是一般的「不去了」，那一句也要用一般的寫法——之前照 priority 寫「不合意就按『換一家』；也可以改天去、或吃飯店早餐」，叫他按的鍵卡上沒有（11-12 畫面審查）。
  */
-function engineNote(s, isBreakfast = false) {
-  if (s.priority === 'breakfast') return isBreakfast ? TEXT.breakfast.inserted : TEXT.engineInserted;
+function engineNote(s, isBreakfast = false, later = true) {
+  // later＝這張早餐卡有「改天去」（旅程最後一天沒有）：沒有那顆鍵就不叫他按它
+  if (s.priority === 'breakfast') return isBreakfast ? (later ? TEXT.breakfast.inserted : TEXT.breakfast.insertedLast) : TEXT.engineInserted;
   if (s.poi.category === 'spot') return TEXT.spotInserted(hm(s.endMin));
   return s.priority === 'filler' ? TEXT.fillerInserted : s.priority === 'onway' ? TEXT.onTheWayInserted : TEXT.restInserted;
 }
 
-function stopCard(s, i, plan, d, state, actions, seenCumulative = new Set()) {
+function stopCard(s, i, plan, d, state, actions, seenCumulative = new Set(), choices = []) {
   const poi = s.poi;
   const next = plan.sequence[i + 1];
   const legNext = next ? state.legFn(poi, next.poi) : null;
@@ -262,8 +275,10 @@ function stopCard(s, i, plan, d, state, actions, seenCumulative = new Set()) {
     if (CUMULATIVE_RULES.has(w.ruleId)) { if (seenCumulative.has(w.ruleId)) return false; seenCumulative.add(w.ruleId); }
     return true;
   });
-  // 這一站是這天的早餐（plan.meals.breakfast；原話 #196）：店型旁多一個「早餐」小標、鍵換成「換一家」「改天去」「吃飯店早餐」（沒有「不去了」）；引擎先挑的也能換一家
+  // 這一站是這天的早餐（plan.meals.breakfast；原話 #196）：店型旁多一個「早餐」小標、鍵換成「換一家」「改天去」「吃飯店早餐」（沒有「不去了」）；引擎先挑的也能換一家。
+  // 旅程最後一天不出「改天去」（後面沒有日子可以去；ui/meals.js hasLaterDay）
   const bf = breakfastCardOf(plan, s);
+  const later = Boolean(bf?.keys) && hasLaterDay(state.trip, d.date);
   const engine = s.insertedBy === 'engine';
   const cat = el('span', { class: 'cat', text: CATEGORY[poi.category] ?? '' });
   const card = el('article', { class: `card${s.isAnchor ? ' anchor' : ''}${poi.recovery ? ' rest' : ''}` }, [
@@ -277,16 +292,16 @@ function stopCard(s, i, plan, d, state, actions, seenCumulative = new Set()) {
     el('p', { class: 'muted small', text: [introOf(poi) ?? '', limitText].filter(Boolean).join('　') }),
     // 二選一沒選的那家順延到這天（picks[].deferredFrom → stop.deferredFrom；DESIGN §4 Stop.deferredFrom）
     s.deferredFrom ? el('p', { class: 'muted small', text: TEXT.deferredFrom(dateLabel(s.deferredFrom)) }) : null,
-    choiceLine(s, plan, d, state, actions),
+    choiceLine(s, choices, d, state, actions),
     ...(bf ? offersOn(plan, poi.id, state.pois).map((x) => offerLine(x, d, actions)) : []),
     warns.length ? warnList(warns) : null,
-    engine ? el('p', { class: 'muted small', text: engineNote(s, Boolean(bf)) }) : null,
+    engine ? el('p', { class: 'muted small', text: engineNote(s, Boolean(bf), later) }) : null,
     el('div', { class: 'actions' }, [
       // 引擎插的站不在 picks 裡，「換一家」接不上；「不去了」會記進 day.removed，下次重排就不再插＝拒絕（原話 #126）。引擎先挑的早餐例外：能換，換了就變成他勾的
       // 引擎插的站不是 designated 也不是 anchor（core 只從候選帶這兩個旗標），所以「不去了」照這個條件一定會出現
       engine && !bf ? null : el('button', { class: 'btn', type: 'button', onclick: () => toggleSwap(card, s, d, state, actions) }, TEXT.swap),
       ...(bf?.keys
-        ? [el('button', { class: 'btn quiet', type: 'button', onclick: () => actions.breakfastOff(d.date, 'later') }, TEXT.breakfast.later), el('button', { class: 'btn quiet', type: 'button', onclick: () => actions.breakfastOff(d.date, 'hotel') }, TEXT.breakfast.hotel)]
+        ? [later ? el('button', { class: 'btn quiet', type: 'button', onclick: () => actions.breakfastOff(d.date, 'later') }, TEXT.breakfast.later) : null, el('button', { class: 'btn quiet', type: 'button', onclick: () => actions.breakfastOff(d.date, 'hotel') }, TEXT.breakfast.hotel)]
         : [s.designated || s.isAnchor ? null : el('button', { class: 'btn quiet', type: 'button', onclick: () => actions.removeStop(d.date, poi.id, s.insertedBy, s.priority) }, TEXT.remove)]),
       el('a', { class: 'btn quiet', href: placeUrl(poi, tripCityName(state)), target: '_blank', rel: 'noopener' }, TEXT.mapLink),
     ]),
@@ -302,7 +317,8 @@ function stopCard(s, i, plan, d, state, actions, seenCumulative = new Set()) {
 
 /**
  * 換一家清單（展開收合只動 DOM）：最上面一句講在換哪一餐（「晚餐換一家」「早餐換一家」；不是哪一餐就不寫，原話 #195），最多列六家——
- * 店名、順路或多繞幾分、那一餐的說明（「可以當晚餐：…」，有才有、不分店型）、簡介。要列誰在 ui/meals.js swapListOf：午餐晚餐只列能當那一餐的店，早餐走早餐自己的清單。
+ * 店名、順路或多繞幾分、那一餐的說明（「可以當晚餐：…」，有才有、不分店型）、簡介。要列誰、取哪幾家都在 ui/meals.js swapListOf（回來的就是要畫的那幾家）：
+ * 午餐晚餐只列能當那一餐的店，早餐走早餐自己的清單，別天行程裡的店不列。
  */
 function toggleSwap(card, s, d, state, actions) {
   const existing = card.querySelector('.swap-list');
@@ -312,7 +328,7 @@ function toggleSwap(card, s, d, state, actions) {
   if (title) list.append(el('p', { class: 'muted small', text: title }));
   // 沒有候選時那一句照餐別寫（「附近沒有能當晚餐、順路又開著的店」；不是哪一餐才寫「同類型」）——上面那句是「晚餐換一家」，下面不能寫「沒有同類型的店」
   if (!cands.length) list.append(el('p', { class: 'muted small', text: empty }));
-  for (const c of cands.slice(0, 6)) {
+  for (const c of cands) {
     list.append(el('button', { class: 'btn alt', type: 'button', onclick: () => actions.swapStop(d.date, s.poi.id, c.poi, { breakfast }) }, [
       el('strong', { text: c.poi.name_zh }), ` · ${TEXT.swapNote(c.detourMin)}`, c.open === null ? ` · ${TEXT.openUnknown}` : '',
       // 每家下面的說明與簡介，整段、不截（原話 #177「換一家 跳出來的選項 也要有簡介 不然單看店名 我會不清楚選哪間好」）；<button> 裡只能放 phrasing content，用 span 配 CSS display:block 換行

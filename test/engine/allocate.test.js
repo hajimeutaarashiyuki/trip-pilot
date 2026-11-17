@@ -575,3 +575,226 @@ test('咖啡廳、酒吧不會被分配器分成一餐（就算知識庫標了�
   assert.equal(slotOf(b, 'foodd'), 'dinner');
   assert.equal(placed(b, 'foodl'), false, '沒標的指定食堂先佔午餐（照舊）');
 });
+
+// ── 11-17：分配器不把早餐候選當一般的站分（原話 #196「還有預設上每天都要有早餐的安排 但我也有可能在飯店吃早餐 所以早餐的按鈕會不太一樣 不是不去了可能是改天去或是我吃飯店早餐」的推導）──
+// 每天的早餐由 engine/breakfast.js 挑（先後：沒排到 ＞ 用備案 ＞ 不合這天）；分配器把早餐候選當一般的站分掉，等於繞過那個先後。
+// 上一輪審查在待套用版七天包實測到三件：8/17 11:03 排了只賣早餐的外帶飯糰、8/13 研究標備案的咖啡站被分成 09:02 的咖啡廳（成了那天的早餐）、8/18 朝市早餐佔掉午餐段（引擎排在 09:02，那天沒午餐）。
+const BF_COUNTRY = { ...COUNTRY, mealSlots: { breakfast: ['07:00', '10:00'], ...COUNTRY.mealSlots } };
+const hoursOf = (open, close) => Object.fromEntries(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((d) => [d, [[open, close]]]));
+const bfRun = (pois, { days = mealDay, country = BF_COUNTRY, brief = null } = {}) => allocateTrip({ trip: { id: 'm', party: 1, homeBases: [{ poi: HOME }], days }, pois, kb: KB, country, settings, rules, legFn, brief, options: { verify: false } });
+const reasonOf = (r, id) => r.unplaced.find((u) => u.poiId === id)?.reason ?? null;
+const naming = (...names) => ({ persons: [{ isMe: true, go: { designated: names } }] });
+
+test('國家層有早餐段時，吃的類、只供早餐的店沒被點名就不分（哪一天吃由引擎的早餐安排挑）；點名的照排、算那天的早餐；國家層沒有早餐段照舊當一般的站分', () => {
+  const onigiri = { ...POIS.foodx, id: 'onigiri', name_zh: '阿美飯糰舖', meals: { breakfast: '外帶飯糰，賣完就收' }, hours: hoursOf('06:00', '14:00'), dwellMin: 10 };
+  const world = mealWorld({ onigiri, foodl: POIS.foodl, foodd: POIS.foodd });
+  const r = bfRun(world);
+  assert.equal(placed(r, 'onigiri'), false, '沒被點名：不分');
+  assert.equal(reasonOf(r, 'onigiri'), '只供早餐，由每天的早餐安排');
+  assert.deepEqual([slotOf(r, 'foodl'), slotOf(r, 'foodd')], ['lunch', 'dinner'], '午餐晚餐照分');
+  // 點名（總則 3：點名的一律排）：照排，佔的是早餐、不是午餐晚餐
+  const n = bfRun(world, { brief: naming('阿美飯糰舖') });
+  assert.equal(placed(n, 'onigiri'), true);
+  assert.equal(slotOf(n, 'onigiri'), 'breakfast');
+  assert.deepEqual([slotOf(n, 'foodl'), slotOf(n, 'foodd')], ['lunch', 'dinner']);
+  // 國家層沒有早餐段（舊打包檔）：引擎不排早餐，這種店照舊當一般的站分、不佔餐段
+  const old = bfRun(world, { country: COUNTRY });
+  assert.equal(placed(old, 'onigiri'), true);
+  assert.equal(slotOf(old, 'onigiri'), null);
+});
+
+test('「只供早餐的吃的店不分」只管引擎排得成早餐的店（11-17 審查）：帶品項的（品項落點）、六星與有憑據的意義類、離住宿要搭車的照舊分——引擎的早餐不拿帶品項的店、不拿要搭車的店、也不看星等，那一句「由每天的早餐安排」對它們不成立', () => {
+  const bfOnly = (over = {}) => ({ ...POIS.foodx, id: 'onigiri', name_zh: '阿美飯糰舖', meals: { breakfast: '外帶飯糰，賣完就收' }, hours: hoursOf('06:00', '14:00'), dwellMin: 10, ...over });
+  // 對照：住宿走得到、沒被點名、不帶品項、不是六星——照舊不分
+  assert.equal(reasonOf(bfRun(mealWorld({ onigiri: bfOnly() })), 'onigiri'), '只供早餐，由每天的早餐安排');
+  // 品項落點（④）：唯一賣明太子的店——照品項那一層分（順路購買），不然品項沒有落點
+  const item = bfRun(mealWorld({ onigiri: bfOnly({ item: '明太子' }) }));
+  assert.deepEqual(item.days[0].picks.find((p) => p.poiId === 'onigiri'), { poiId: 'onigiri', priority: 'maybe', errand: true });
+  // 六星（③；profile §2.2「可移日，不可丟」）與有憑據的意義類：照排，這天的早餐算它的
+  const six = bfRun(mealWorld({ onigiri: bfOnly({ my: { rating: 6 } }), foodl: POIS.foodl, foodd: POIS.foodd }));
+  assert.deepEqual([placed(six, 'onigiri'), slotOf(six, 'onigiri'), slotOf(six, 'foodl'), slotOf(six, 'foodd')], [true, 'breakfast', 'lunch', 'dinner']);
+  assert.equal(placed(bfRun(mealWorld({ onigiri: bfOnly({ significance: 'origin', significanceSource: '公會名錄' }) })), 'onigiri'), true);
+  // 外地（從住宿要搭車）：一日遊那天海邊只有早上開的朝市食堂——引擎的早餐是「先吃再上車」、不會排它，照舊當一般的站分
+  const seaDay = [{ date: '2026-08-15', type: 'normal', dayTrip: true, anchor: { poiId: 'templesea' }, picks: [] }];
+  const sea = bfRun({ templesea: POIS.templesea, seabf: bfOnly({ id: 'seabf', name_zh: '海邊朝市食堂', zoneId: 'sea', hours: hoursOf('06:00', '13:00'), dwellMin: 60 }) }, { days: seaDay });
+  assert.equal(placed(sea, 'seabf'), true);
+  assert.equal(slotOf(sea, 'seabf'), null, '不是早餐也不是午餐晚餐：一般的站');
+});
+
+test('研究標備案的吃喝類（咖啡廳、酒吧、不算一餐的吃的站）沒被點名就不主動分；點名的照排；品項落點的備案照舊（首選排不下才輪到它）', () => {
+  const backupCafe = { ...POIS.cafe1, id: 'cafeback', name_zh: '朝市咖啡站', researchRank: 'backup' };
+  const backupBar = { ...POIS.barn1, id: 'barback', name_zh: '巷口立飲', researchRank: 'backup' };
+  const backupSweet = { ...POIS.foodsweet, id: 'sweetback', name_zh: '備用麻糬攤', researchRank: 'backup' };
+  const world = mealWorld({ cafeback: backupCafe, barback: backupBar, sweetback: backupSweet, cafe1: POIS.cafe1, barn1: POIS.barn1 });
+  const r = bfRun(world, { country: COUNTRY });   // 這一條跟早餐段無關：沒有早餐段的國家層也一樣
+  assert.equal(placed(r, 'cafe1'), true, '沒標的咖啡廳照分');
+  assert.equal(slotOf(r, 'barn1'), 'night', '沒標的酒吧照夜間站');
+  assert.equal(reasonOf(r, 'cafeback'), '研究標備案／保底的咖啡廳不主動排');
+  assert.equal(reasonOf(r, 'barback'), '研究標備案／保底的酒吧不主動排');
+  assert.equal(reasonOf(r, 'sweetback'), '研究標備案／保底的吃的站不主動排');
+  // 只管吃喝類：別的店型標了備案（不是品項落點的街區）照舊分
+  const backupStreet = { ...POIS.street1, id: 'streetback', name_zh: '備用街區', researchRank: 'backup' };
+  assert.equal(placed(bfRun(mealWorld({ streetback: backupStreet }), { country: COUNTRY }), 'streetback'), true);
+  // 只有備案的酒吧時，夜間站寧可空著（不主動排），不拿備案湊數
+  const lone = bfRun(mealWorld({ barback: backupBar }), { country: COUNTRY });
+  assert.equal(placed(lone, 'barback'), false);
+  // 點名的照排
+  const n = bfRun(world, { country: COUNTRY, brief: naming('朝市咖啡站', '巷口立飲') });
+  assert.equal(placed(n, 'cafeback'), true);
+  assert.equal(slotOf(n, 'barback'), 'night');
+  // 品項落點的備案是另一回事：同品項只有備案那一家排得了時照樣輪到它（店型是咖啡廳也一樣）
+  const beansFirst = { ...POIS.cafe2, id: 'beans1', name_zh: '焙煎所甲', item: '咖啡豆', researchRank: 'first', hours: { mon: [['09:00', '18:00']] } };   // 這趟的日子（週四）沒開
+  const beansBackup = { ...POIS.cafe3, id: 'beans2', name_zh: '焙煎所乙', item: '咖啡豆', researchRank: 'backup' };
+  const items = bfRun(mealWorld({ beans1: beansFirst, beans2: beansBackup }), { country: COUNTRY });
+  assert.equal(placed(items, 'beans2'), true, '首選那天沒開，備案的落點照樣分');
+  assert.deepEqual(items.days[0].picks.find((p) => p.poiId === 'beans2'), { poiId: 'beans2', priority: 'maybe', errand: true, dwellMin: 30 });
+});
+
+test('國家層有早餐段時分配器認得早餐：能當早餐也能當午餐的食堂贏了午餐的位子，佔的是早餐、午餐另外分一家；早餐不由分配器主動分', () => {
+  // 朝市：早上 07:30 開、能當早餐與午餐、離住宿走得到；停留 60 分最像一餐，午餐的位子它先贏
+  const market = { ...POIS.foodx, id: 'amarket', name_zh: '朝市食堂', meals: { breakfast: '7:30 起的海鮮丼', lunch: true }, hours: hoursOf('07:30', '15:00') };
+  const world = mealWorld({ amarket: market, foodl: POIS.foodl, foodd: POIS.foodd });
+  const r = bfRun(world);
+  assert.equal(slotOf(r, 'amarket'), 'breakfast', '這一站在這天會是早餐，不佔午餐');
+  assert.deepEqual([slotOf(r, 'foodl'), slotOf(r, 'foodd')], ['lunch', 'dinner'], '午餐另外分一家');
+  // 沒有早餐段的國家層（舊打包檔）：照舊，朝市佔午餐、午餐食堂沒位子
+  const old = bfRun(world, { country: COUNTRY });
+  assert.equal(slotOf(old, 'amarket'), 'lunch');
+  assert.equal(placed(old, 'foodl'), false);
+  // 早餐不由分配器主動分：午餐晚餐的位子都被別家贏走時，能當早餐的食堂不會因為早餐的位子空著就被分進去
+  const loser = { ...market, id: 'zmarket', name_zh: '遠一點的朝市食堂', dwellMin: 20 };   // 停留離 60 分遠、id 也排後面：午餐的位子輪不到它
+  const full = bfRun(mealWorld({ zmarket: loser, foodx: POIS.foodx, foodd: POIS.foodd }));
+  assert.equal(slotOf(full, 'foodx'), 'lunch');
+  assert.equal(placed(full, 'zmarket'), false, '沒贏到午餐晚餐的位子就不分');
+  assert.equal(reasonOf(full, 'zmarket'), '午餐、晚餐都有了');
+  // 要搭車才到得了的（外地）不算早餐：引擎的早餐也是「先吃再上車」——一日遊那天海邊的朝市食堂照舊佔午餐
+  const seaDay = [{ date: '2026-08-13', type: 'normal', dayTrip: true, anchor: { poiId: 'templesea' }, picks: [] }];
+  const sea = bfRun({ templesea: POIS.templesea, seamarket: { ...market, id: 'seamarket', name_zh: '海邊朝市食堂', zoneId: 'sea' } }, { days: seaDay });
+  assert.equal(slotOf(sea, 'seamarket'), 'lunch');
+  // 晚出門的日子（旅程第三天起 11:00 出門）沒有早餐這回事：照舊佔午餐
+  const lateDays = ['2026-08-11', '2026-08-12', '2026-08-13'].map((date, i) => ({ date, type: 'normal', anchor: i === 2 ? { poiId: 'gardeng' } : undefined, picks: [] }));
+  const late = bfRun({ gardeng: POIS.gardeng, amarket: { ...market, hours: { thu: [['07:30', '15:00']] } } }, { days: lateDays });
+  assert.equal(slotOf(late, 'amarket'), 'lunch', '只有第三天（週四）有開，那天 11:00 才出門');
+  // 早餐段過了才出門的日子（10:30 出門、早餐段到 10:00）同樣沒有早餐：沒有營業時間資料的店也不會被當成早餐
+  const lateStart = [{ date: '2026-08-13', type: 'normal', earlyDay: true, departHM: '10:30', anchor: { poiId: 'gardeng' }, picks: [] }];
+  assert.equal(slotOf(bfRun(mealWorld({ amarket: { ...market, hours: null } }), { days: lateStart }), 'amarket'), 'lunch');
+  // 一天只有一個早餐的位子：同一天第二家能當早餐的食堂贏到午餐時，早餐已經有人佔了，它照舊算午餐
+  const two = bfRun(mealWorld({ amarket: market, bmarket: { ...market, id: 'bmarket', name_zh: '另一家朝市食堂' }, foodd: POIS.foodd }));
+  assert.deepEqual([slotOf(two, 'amarket'), slotOf(two, 'bmarket'), slotOf(two, 'foodd')], ['breakfast', 'lunch', 'dinner']);
+});
+
+test('驗證收回標成早餐的站，早餐的位子要還回去：同一天之後贏到午餐的食堂才能再算早餐、午餐留給下一家（11-17 審查的變異測試：這一行拿掉沒有測試會紅）', () => {
+  // 甲朝市：分配器看得到它早上與中午都有開（各 50 分），其實要待 60 分、哪一段都待不完——分進去之後單日引擎一定丟它。
+  // 一天最多 2 站（主行程＋1）：甲先贏到午餐、算成早餐，站數就滿了，乙朝市排不進；甲被收回之後乙才分得進來
+  const twice = { thu: [['09:00', '09:50'], ['11:30', '12:20']] };
+  const doomed = { ...POIS.foodx, id: 'aamarket', name_zh: '甲朝市食堂', meals: { breakfast: '海鮮丼', lunch: true }, hours: twice, dwellMin: 60 };
+  const market = { ...POIS.foodx, id: 'zzmarket', name_zh: '乙朝市食堂', meals: { breakfast: '7:30 起的海鮮丼', lunch: true }, hours: hoursOf('07:30', '15:00') };
+  const tight = { ...settings, allocMaxStops: 2, allocTargetStops: 2 };
+  const go = (verify) => allocateTrip({ trip: { id: 'm', party: 1, homeBases: [{ poi: HOME }], days: mealDay }, pois: mealWorld({ aamarket: doomed, zzmarket: market }), kb: KB, country: BF_COUNTRY, settings: tight, rules, legFn, options: { verify } });
+  const dry = go(false);
+  assert.deepEqual([slotOf(dry, 'aamarket'), placed(dry, 'zzmarket'), reasonOf(dry, 'zzmarket')], ['breakfast', false, '站數滿（上限 2）'], '沒驗證：甲佔了早餐、站數滿');
+  const r = go(true);
+  assert.equal(placed(r, 'aamarket'), false, '單日引擎排不進甲（哪一段營業時間都待不完），收回');
+  assert.equal(slotOf(r, 'zzmarket'), 'breakfast', '早餐的位子還回去了：乙贏到午餐、這天會是早餐，佔的算早餐（沒還的話它會被標成午餐）');
+});
+
+test('骨架與點名的站也照同一把尺：指定站是能當早餐的食堂就佔早餐（分配器再補午餐晚餐）；點名的在午餐晚餐都滿時還能佔早餐', () => {
+  const market = { ...POIS.foodx, id: 'amarket', name_zh: '朝市食堂', meals: { breakfast: '7:30 起的海鮮丼', lunch: true }, hours: hoursOf('07:30', '15:00') };
+  const skeletonDay = [{ date: '2026-08-13', type: 'normal', anchor: { poiId: 'gardeng' }, designated: ['amarket'], picks: [] }];
+  const a = bfRun(mealWorld({ amarket: market, foodl: POIS.foodl, foodd: POIS.foodd }), { days: skeletonDay });
+  assert.deepEqual([slotOf(a, 'foodl'), slotOf(a, 'foodd')], ['lunch', 'dinner'], '指定的朝市佔早餐，午餐晚餐都還分得到');
+  const old = bfRun(mealWorld({ amarket: market, foodl: POIS.foodl, foodd: POIS.foodd }), { days: skeletonDay, country: COUNTRY });
+  assert.equal(placed(old, 'foodl'), false, '沒有早餐段：指定的朝市照舊先佔午餐');
+  // 點名：午餐（骨架的整天食堂）與晚餐（另一家點名的）都有人了，點名的朝市還是排得進——它佔的是早餐
+  const days = [{ date: '2026-08-13', type: 'normal', anchor: { poiId: 'gardeng' }, designated: ['foodx'], picks: [] }];
+  const n = bfRun(mealWorld({ amarket: market, foodx: POIS.foodx, foodd: POIS.foodd }), { days, brief: naming('晚餐食堂', '朝市食堂') });
+  assert.equal(slotOf(n, 'foodd'), 'dinner');
+  assert.equal(slotOf(n, 'amarket'), 'breakfast');
+});
+
+test('同一處在知識庫寫成兩筆（samePlace）：整趟只分其中一筆，另一筆留池並講原因（同一家整趟一次；主控 11-11 定「同一處當同一家」）', () => {
+  const market = { ...POIS.foodx, id: 'amarket', name_zh: '朝市食堂', meals: { breakfast: '7:30 起的海鮮丼', lunch: true }, hours: hoursOf('07:30', '15:00') };
+  const street = { ...market, id: 'amarketstreet', name_zh: '朝市商店街（買＋吃）', samePlace: 'amarket' };
+  const r = bfRun(mealWorld({ amarket: market, amarketstreet: street, foodd: POIS.foodd }));
+  assert.equal(slotOf(r, 'amarket'), 'breakfast');
+  assert.equal(placed(r, 'amarketstreet'), false, '同一處的另一筆不會接著佔掉空出來的午餐');
+  assert.equal(reasonOf(r, 'amarketstreet'), '同一處的另一筆（朝市食堂）已經排在 2026-08-13');
+  // 骨架裡有其中一筆：另一筆也不分
+  const days = [{ date: '2026-08-13', type: 'normal', anchor: { poiId: 'gardeng' }, designated: ['amarketstreet'], picks: [] }];
+  const s = bfRun(mealWorld({ amarket: market, amarketstreet: street, foodd: POIS.foodd }), { days });
+  assert.equal(placed(s, 'amarket'), false);
+  assert.equal(reasonOf(s, 'amarket'), '同一處的另一筆（朝市商店街（買＋吃））已經排在 2026-08-13');
+  // 沒有這個欄位的知識庫（舊打包檔）：兩筆照舊各分各的
+  const { samePlace: _gone, ...plainStreet } = street;
+  const old = bfRun(mealWorld({ amarket: market, amarketstreet: plainStreet, foodd: POIS.foodd }), { country: COUNTRY });
+  assert.equal(slotOf(old, 'amarket'), 'lunch');
+  assert.equal(reasonOf(old, 'amarketstreet'), '午餐、晚餐都有了', '沒有欄位：照舊是兩家各自比，理由是餐段、不是同一處');
+});
+
+test('同一處的兩筆各帶一樣他要買的東西（知識庫一樣東西一筆、同一家店）：品項落點可以跟另一筆排同一天（進去一次買兩樣），別天不再去一次；不是品項落點的另一筆照舊整趟只分一筆', () => {
+  // 11-17 在較新的待套用版（知識庫 samePlace 6 對，其中兩對是同一家藥妝各帶一個品項）量到：整趟只分一筆時第二樣東西改落到別家店（9 組裡 7 組），
+  // 品項落點完全不看同一處時同一家店被分在兩天各去一次（9 組裡 4 組）。
+  const mascara = { ...POIS.itema1, id: 'druga', name_zh: '大藥妝（睫毛膏）', item: '睫毛膏' };
+  const mask = { ...POIS.itema1, id: 'drugb', name_zh: '大藥妝（面膜）', item: '面膜', samePlace: 'druga' };
+  // 一天的旅程：兩筆都分得到、都是順路購買
+  const one = bfRun(mealWorld({ druga: mascara, drugb: mask }), { country: COUNTRY });
+  assert.equal(placed(one, 'druga'), true);
+  assert.equal(placed(one, 'drugb'), true, '同一家店的第二樣東西排在同一天');
+  assert.deepEqual(one.days[0].picks.filter((p) => p.poiId === 'druga' || p.poiId === 'drugb').map((p) => p.errand), [true, true]);
+  // 兩天的旅程、他自己把其中一筆排在第一天（骨架）：另一筆只會排在同一天，就算第二天比較空
+  const days = [
+    { date: '2026-08-13', type: 'normal', anchor: { poiId: 'gardeng' }, designated: ['druga'], picks: [] },
+    { date: '2026-08-14', type: 'normal', anchor: { poiId: 'templet' }, picks: [] },
+  ];
+  const world = (over = {}) => ({ gardeng: POIS.gardeng, templet: POIS.templet, street1: POIS.street1, street2: POIS.street2, druga: mascara, drugb: { ...mask, ...over } });
+  const two = bfRun(world(), { days, country: COUNTRY });
+  assert.equal(two.days.find((d) => ids(d).includes('drugb'))?.date, '2026-08-13');
+  // 第一天它沒開（只開週五）：不會改排到第二天再去同一家店一次，留池並講原因
+  const friOnly = bfRun(world({ hours: { fri: [['09:00', '23:00']] } }), { days, country: COUNTRY });
+  assert.equal(placed(friOnly, 'drugb'), false);
+  assert.equal(reasonOf(friOnly, 'drugb'), '同一處的另一筆（大藥妝（睫毛膏））已經排在 2026-08-13；要買的東西只跟它排同一天');
+  // 那天的品項落點已經滿了（一天最多 2 個：骨架的睫毛膏與別家的鞋）：同一家店的第二樣東西照排（進去一次買兩樣）——
+  // 不然這天排不進、別天又不准去，面膜就沒有落點（11-17 審查；5514647 是排到第二天再去一次）
+  const shoes = { ...POIS.itema1, id: 'itemz', name_zh: '別家（鞋）', item: '鞋' };
+  const fullDays = [{ ...days[0], designated: ['druga', 'itemz'] }, days[1]];
+  const full = bfRun({ ...world(), itemz: shoes }, { days: fullDays, country: COUNTRY });
+  assert.equal(full.days.find((d) => ids(d).includes('drugb'))?.date, '2026-08-13', `面膜跟睫毛膏排同一天（留池：${reasonOf(full, 'drugb')}）`);
+  // 不是同一家店的第三個品項照舊受名額限制
+  const third = { ...POIS.itema1, id: 'itemy', name_zh: '第三家（帽子）', item: '帽子' };
+  const capped = bfRun({ gardeng: POIS.gardeng, druga: mascara, itemz: shoes, itemy: third }, { days: [fullDays[0]], country: COUNTRY });
+  assert.equal(reasonOf(capped, 'itemy'), '品項落點一天 2 個滿了');
+  // 同一家店的第二樣東西照樣算一個落點（平常的算法不動）：睫毛膏＋面膜就是 2 個，別家的帽子這天排不進
+  const counted = bfRun({ gardeng: POIS.gardeng, druga: mascara, drugb: mask, itemy: third }, { days: [{ ...days[0], designated: ['druga'] }], country: COUNTRY });
+  assert.deepEqual([placed(counted, 'drugb'), reasonOf(counted, 'itemy')], [true, '品項落點一天 2 個滿了']);
+  // 不是品項落點的另一筆（同一家店的一般條目）照舊：同一天也不分第二筆
+  const plain = { ...POIS.street1, id: 'drugstorefront', name_zh: '大藥妝（逛）', samePlace: 'druga' };
+  const p = bfRun(mealWorld({ druga: mascara, drugstorefront: plain }), { country: COUNTRY });
+  assert.equal(placed(p, 'druga'), true);
+  assert.equal(reasonOf(p, 'drugstorefront'), '同一處的另一筆（大藥妝（睫毛膏））已經排在 2026-08-13');
+});
+
+test('留池理由「品項落在哪一天的哪家」指的是品項那一層的落點：需求單點名的店剛好帶同一個品項標記（研究判可略過的香氛區）不算落點', () => {
+  // 11-12 審查：點名「藤崎百貨 本館1F 香氛區」（帶 DKNY 香水的品項標記、研究判可略過）排在 8/12，品項真正的落點是 8/18 的唐吉訶德，同品項其餘四家的留池理由卻寫「落在 8/12 的香氛區」
+  const brief = naming('百貨香氛區');
+  const r = run({ pois: FIELD_POIS, brief, options: { verify: false } });
+  const where = (id) => r.report.days.find((d) => d.picks.some((p) => p.poiId === id));
+  assert.equal(where('gateskip')?.picks.find((p) => p.poiId === 'gateskip').level, 2, '點名的香氛區照點名那一層排');
+  const drop = where('itema2');
+  assert.equal(drop?.picks.find((p) => p.poiId === 'itema2').level, 4, '品項的落點是首選那家藥妝');
+  assert.ok(where('gateskip').date <= drop.date, '點名的那家排在落點的同一天或更早（舊的寫法會先看到它）');
+  assert.equal(reasonOf(r, 'itema1'), `品項「香水」落在 ${drop.date} 的 藥妝二`);
+});
+
+test('原話 #198「可抽菸店家 都是可接受的」：全店可吸菸的店不因為吸菸被任何一道門擋——分配器的候選池、引擎插站、換一家、二選一都照常過，分配器照分', async () => {
+  // 引擎本來就沒有任何跟吸菸有關的判斷（11-17 兩位審查各自搜過 src 與 tools）；這一條把他的話釘住：之後有人加這種門，這裡會紅。
+  // 知識庫現在把它寫在簡介裡（「全店可吸菸」）；profile §10 另有在地訊號 frictionSignals.smokingAllowed 的寫法，兩種都試
+  const { engineMayInsert } = await import('../../src/engine/trip.js');
+  const { swapGated } = await import('../../src/engine/swap.js');
+  const { choiceEligible } = await import('../../src/engine/choices.js');
+  const smoky = { ...POIS.cafe1, id: 'smokycafe', name_zh: '路旁的昭和喫茶', highlight: '辦公街巷子裡的昭和喫茶，全店可吸菸。', frictionSignals: { smokingAllowed: true } };
+  const plainCafe = { ...POIS.cafe1, id: 'plaincafe', name_zh: '一般的喫茶' };
+  for (const p of [smoky, plainCafe]) assert.deepEqual([poolEligible(p), poolGatesOf(p), engineMayInsert(p), swapGated(p), choiceEligible(p)], [true, [], true, false, true], p.id);
+  const r = bfRun(mealWorld({ smokycafe: smoky }));
+  assert.equal(placed(r, 'smokycafe'), true, '分配器照分');
+  assert.equal(reasonOf(r, 'smokycafe'), null);
+});

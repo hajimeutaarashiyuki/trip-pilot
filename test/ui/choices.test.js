@@ -3,7 +3,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { planTrip } from '../../src/engine/trip.js';
-import { choiceOf, chooseOptionTrip, deferStopTrip, swapPick, deferNotice, deferredMark, displacedPicks } from '../../src/ui/choices.js';
+import { choiceOf, dayChoices, chooseOptionTrip, deferStopTrip, deferNotice, deferredMark, displacedPicks } from '../../src/ui/choices.js';
 import { snapshotTripEdits, overlayTripEdits, diffTripEdits } from '../../src/ui/trip-edits.js';
 import { TEXT } from '../../src/ui/text.js';
 import { loadRules } from '../../src/rules/index.js';
@@ -27,8 +27,8 @@ test('示範 8/13：勾三家咖啡廳只排得進兩家 → 排進的那家出�
   assert.equal(c.options[1], POIS['火星の庭'].id);
   assert.ok(ids(d13.sequence).includes(c.poiId), 'A 在序列裡');
   assert.equal(d13.sequence[c.slot].poi.id, c.poiId, 'slot 指到 A');
-  assert.equal(choiceOf(d13, c.poiId), c);
-  assert.equal(choiceOf(d13, POIS['汐谷'].id), null);
+  assert.equal(choiceOf(d13.choices, c.poiId), c);
+  assert.equal(choiceOf(d13.choices, POIS['汐谷'].id), null);
   assert.equal(choiceOf(null, 'x'), null);
   const d17 = r.days[1].plan;
   assert.ok(d17.choices.some((x) => x.poiId === POIS['SEGA-RU'].id && x.options[1] === POIS['TRUE VINTAGE'].id && x.source === 'dropped'), JSON.stringify(d17.choices.map((x) => x.options)));
@@ -61,18 +61,69 @@ test('chooseOptionTrip（示範 8/13 選火星の庭）：A 換成 B（B 本來�
   assert.equal(deferNotice(out.entry, POIS['珈巣多夢'].name_zh), TEXT.deferredUnplaced('珈巣多夢'));
 });
 
-test('swapPick：B 不在今天的 picks 就照 applySwap（A 的那筆換成 B、優先度與停留沿用）；B 已在就拿掉 A、留 B 自己那筆、優先度取 A 與 B 自己之間高的（不降級）；不改傳入的 day', () => {
-  assert.deepEqual(swapPick({ date: 'x', picks: [{ poiId: 'a', priority: 'maybe' }, { poiId: 'b', priority: 'want' }] }, 'a', { id: 'b' }).picks, [{ poiId: 'b', priority: 'want' }], 'A maybe、B want：B 不降級（10-16 審查）');
-  assert.deepEqual(swapPick({ date: 'x', picks: [{ poiId: 'a' }, { poiId: 'b' }] }, 'a', { id: 'b' }).picks, [{ poiId: 'b', priority: 'want' }], '兩邊都沒寫就 want');
+test('選了 B 那一天怎麼改走引擎的 chooseDay（11-17；之前是這一檔自己的 swapPick）：B 不在今天的 picks 就是換一家（A 的那筆換成 B、優先度與停留沿用）；B 已在就拿掉 A、留 B 自己那筆、優先度取高的；釘住順序的日子 B 直接寫進順序裡 A 的原位置；不改傳入的 trip', () => {
+  const tripOf = (day) => ({ id: 't', party: 1, homeBases: [{ poi: home }], days: [day, { date: '2026-08-14', type: 'normal', picks: [] }] });
+  const dayOf = (trip) => chooseOptionTrip({ trip, pois: {}, date: '2026-08-13', fromPoiId: 'a', toPoi: { id: 'b' }, baseline: { days: [] }, planArgs: smallArgs }).trip.days[0];
+  assert.deepEqual(dayOf(tripOf({ date: '2026-08-13', picks: [{ poiId: 'a', priority: 'maybe' }, { poiId: 'b', priority: 'want' }] })).picks, [{ poiId: 'b', priority: 'want' }], 'A maybe、B want：B 不降級（10-16 審查）');
+  assert.deepEqual(dayOf(tripOf({ date: '2026-08-13', picks: [{ poiId: 'a' }, { poiId: 'b' }] })).picks, [{ poiId: 'b', priority: 'want' }], '兩邊都沒寫就 want');
   const day = { date: '2026-08-13', picks: [{ poiId: 'a', priority: 'want', dwellMin: 60 }, { poiId: 'b', priority: 'maybe', dwellMin: 75 }] };
-  const toC = swapPick(day, 'a', { id: 'c' });
+  const trip = tripOf(day);
+  const toC = chooseOptionTrip({ trip, pois: {}, date: '2026-08-13', fromPoiId: 'a', toPoi: { id: 'c' }, baseline: { days: [] }, planArgs: smallArgs }).trip.days[0];
   assert.deepEqual(toC.picks, [{ poiId: 'c', priority: 'want', dwellMin: 60 }, { poiId: 'b', priority: 'maybe', dwellMin: 75 }]);
   assert.deepEqual(toC.swapped.map((s) => [s.from, s.to]), [['a', 'c']]);
-  const toB = swapPick(day, 'a', { id: 'b' });
+  const toB = dayOf(trip);
   assert.deepEqual(toB.picks, [{ poiId: 'b', priority: 'want', dwellMin: 75 }], 'B 留自己的停留、優先度提到 want');
   assert.deepEqual(toB.swapped.map((s) => [s.from, s.to]), [['a', 'b']]);
+  assert.equal(toB.pinned, undefined, '沒釘住的日子不多那個鍵');
   assert.deepEqual(day.picks.map((p) => p.poiId), ['a', 'b'], '不改傳入的');
-  assert.deepEqual(swapPick({ date: 'x' }, 'a', { id: 'b' }).picks, [], '沒 picks 也不丟錯');
+  assert.deepEqual(dayOf(tripOf({ date: '2026-08-13' })).picks, [], '沒 picks 也不丟錯');
+  // 釘住順序的日子：B 本來就是那天的勾選（今天排不進的同類勾選站）——順序裡 A 的那一筆原位置換成 B、B 殘留的舊筆清掉；之前不改順序、靠重排時順著換站紀錄推回來
+  const pinned = { date: '2026-08-13', picks: [{ poiId: 'x' }, { poiId: 'a', priority: 'want' }, { poiId: 'b', priority: 'maybe' }, { poiId: 'y' }], pinned: { at: 'T0', sequence: [{ poiId: 'x' }, { poiId: 'a', dwellMin: 50 }, { poiId: 'y' }, { poiId: 'b', off: true }] } };
+  const p = dayOf(tripOf(pinned));
+  assert.deepEqual(p.pinned.sequence, [{ poiId: 'x' }, { poiId: 'b' }, { poiId: 'y' }], 'B 在 A 的原位置；A 記的停留不沿用');
+  assert.deepEqual(p.picks.map((x) => [x.poiId, x.priority]), [['x', undefined], ['b', 'want'], ['y', undefined]]);
+  assert.equal(p.pinned.at, 'T0');
+  assert.deepEqual(pinned.pinned.sequence.map((e) => e.poiId), ['x', 'a', 'y', 'b'], '不改傳入的');
+  // 候選池來的 B：一樣在原位置
+  const q = chooseOptionTrip({ trip: tripOf(pinned), pois: {}, date: '2026-08-13', fromPoiId: 'a', toPoi: { id: 'c' }, baseline: { days: [] }, planArgs: smallArgs }).trip.days[0];
+  assert.deepEqual(q.pinned.sequence.map((e) => e.poiId), ['x', 'c', 'y', 'b']);
+});
+
+test('dayChoices：這天畫面上可以出的「或 B」。沒釘住的日子＝plan.choices 原樣；釘住順序的日子只留選了沒事的（engine/choices.js choicesFor：每一個真的選下去排那一天一次）——選了會害別的站排不進的 B 不出；choiceOf 從這一份找', () => {
+  // 8/13 釘住：甲（咖啡廳，停 40 分）→ 丁（街區，12:00–13:00 才開）。候選池的乙要坐 300 分：頂掉甲的話丁就排不進
+  const street = { ...cafe('丁'), category: 'street', cafeLike: false, recovery: false, dwellMin: 30, hours: Object.fromEntries(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((d) => [d, [['12:00', '13:00']]])) };
+  const long = { ...cafe('乙'), dwellMin: 300 };
+  const short = { ...cafe('乙'), dwellMin: 40 };
+  const stateOf = (b, pin) => {
+    const all = { 甲: cafe('甲'), 乙: b, 丁: street };
+    const trip = smallTrip();
+    trip.days[1] = { ...trip.days[1], picks: [{ poiId: '甲', priority: 'want' }, { poiId: '丁', priority: 'want' }], ...(pin ? { pinned: { at: 'T0', sequence: [{ poiId: '甲' }, { poiId: '丁' }] } } : {}) };
+    const args = { ...smallArgs, restPool: Object.values(all) };
+    const r = planTrip({ trip, pois: all, ...args });
+    return { trip, pois: all, rules, settings, country, kb, legFn: flat, brief: null, field: { visited: {} }, plans: Object.fromEntries(r.days.map((d) => [d.date, d])) };
+  };
+  const date = '2026-08-13';
+  const free = stateOf(long, false);
+  assert.ok(Array.isArray(free.plans[date].plan.choices) && !free.plans[date].plan.pinned);
+  assert.equal(dayChoices(free, date), free.plans[date].plan.choices, '沒釘住：原樣、同一個陣列（選了本來就整天重排）');
+  const bad = stateOf(long, true);
+  assert.equal(bad.plans[date].plan.pinned, true);
+  assert.deepEqual(bad.plans[date].plan.choices.map((c) => c.options), [['甲', '乙']]);
+  assert.deepEqual(dayChoices(bad, date), [], '釘住：選了乙，丁（13:00 關）會排不進——這個「或 乙」不出');
+  assert.equal(choiceOf(dayChoices(bad, date), '甲'), null);
+  const good = stateOf(short, true);
+  const list = dayChoices(good, date);
+  assert.deepEqual(list.map((c) => c.options), [['甲', '乙']], '停留差不多的乙：選了沒事，照出');
+  assert.equal(choiceOf(list, '甲'), list[0]);
+  assert.equal(choiceOf(list, '丁'), null);
+  // 出現的選了就是原位置換掉：乙在甲的位置、丁還在後面、甲順延到主題日 8/14
+  const out = chooseOptionTrip({ trip: good.trip, pois: good.pois, date, fromPoiId: '甲', toPoi: list[0].altPoi, baseline: { days: Object.values(good.plans) }, planArgs: { ...smallArgs, restPool: Object.values(good.pois) } });
+  assert.deepEqual(out.trip.days[1].pinned.sequence.map((e) => e.poiId), ['乙', '丁']);
+  assert.equal(out.toDate, '2026-08-14');
+  const re = planTrip({ trip: out.trip, pois: good.pois, ...smallArgs, restPool: Object.values(good.pois) });
+  assert.deepEqual(ids(re.days[1].plan.sequence), ['乙', '丁']);
+  assert.deepEqual(re.days[1].plan.dropped, []);
+  assert.deepEqual([dayChoices(good, '2026-01-01'), dayChoices({}, date), choiceOf(null, 'x'), choiceOf(undefined, 'x')], [[], [], null, null]);
 });
 
 // 順延的小世界（跟 test/engine/choices.test 同款）：8/12 普通、8/13 出發日、8/14 咖啡廳主題日、8/15 普通、8/16 離境日

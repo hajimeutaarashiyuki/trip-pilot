@@ -5,7 +5,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { installDom } from './_dom.js';
-import { loadWorld, makeTrip, idsOf, WORLD, JP, kb, THU, FRI, SAT, SUN, A, B, C, D, E, F, Z, late, lunch, dinner, bar, small, big, izakaya, dinner2, cafe, noodle, stand, bakery, ORDER1 } from './_world.js';
+import { loadWorld, makeTrip, idsOf, WORLD, JP, kb, THU, FRI, SAT, SUN, A, B, C, D, E, F, G, Z, late, lunch, dinner, bar, small, big, izakaya, dinner2, cafe, noodle, stand, bakery, ORDER1 } from './_world.js';
 import { TEXT } from '../../src/ui/text.js';
 
 const dom = installDom();   // 要在 app.js 載入之前：它一載入就讀 localStorage
@@ -40,6 +40,23 @@ function openFirstCorridor(date) {
   return block.querySelector('.corridor-list') ?? assert.fail('走廊清單沒展開');
 }
 const corridorItem = (date, name) => openFirstCorridor(date).querySelectorAll('.corridor-item').find((n) => n.querySelector('strong')?.textContent === name) ?? assert.fail(`走廊清單沒有「${name}」`);
+/**
+ * 升級排不下那一塊畫了哪些選項（照畫面的先後）：[{ group: 哪一組的小標, name: 第一行的店名（含「（要插的這家）」）, side: [右邊的重點…], notes: [後果、會多出來的黃字], intro, node }]。
+ * 11-17 起選項分「少待一點」「這站不去」兩組，每個選項三行（店名＋重點／後果／簡介）。
+ */
+function askRows(ask) {
+  const rows = []; let group = null;
+  for (const c of ask.children) {
+    if (typeof c === 'string') continue;
+    if (c.classList.contains('ask-group')) { group = c.textContent; continue; }
+    if (c.tag !== 'button' || !c.classList.contains('opt')) continue;
+    const side = c.querySelector('.opt-side');
+    rows.push({ group, name: c.querySelector('.opt-name').textContent, side: side.children.map((x) => (typeof x === 'string' ? x : x.textContent)), notes: c.querySelectorAll('.opt-note').map((n) => n.textContent), intro: c.querySelector('.opt-intro')?.textContent ?? null, node: c });
+  }
+  return rows;
+}
+/** 選項裡某一組的某一家（找不到就讓測試紅）。 */
+const askRow = (ask, group, name) => askRows(ask).find((r) => r.group === group && r.name === name) ?? assert.fail(`「${group}」裡沒有「${name}」：${askRows(ask).map((r) => `${r.group}／${r.name}`).join('｜')}`);
 const KEYS = /undefined|\[object|NaN|null|breakfast|hotel|later|pinned|shorten|drop|onway|filler|engine|chosen|picked/;
 
 test('走廊清單每家多一行簡介；升級成站排得下：插進那一段、原本的站一站不少先後不變、那天釘住、頂端復原列講插在誰跟誰之間；復原回到原樣；改動存進 localStorage', async () => {
@@ -84,14 +101,29 @@ test('升級成站排不下：那一家底下展開一組選項（為什麼排�
   assert.deepEqual(undoBar(), []);
   assert.ok(ask(), '選項畫在那一家底下，清單還開著');
   assert.equal(ask().querySelector('.warn-line').textContent, '插進 大店 之後排不下：午餐店 15:20 到的時候不在營業時間內（11:30–14:30）（差 110 分）');
-  const options = () => ask().querySelectorAll('.alt').map((b) => b.querySelector('strong').textContent);
-  assert.deepEqual(options().slice(0, 2), ['大店 只待 130 分（原本 240 分）', '不去 午餐店'], '排得下的在前');
-  assert.ok(options().includes('街區A 少待 30 分（60→30）'));
-  assert.ok(dom.text(ask()).includes('下面這幾個選了還不夠，要再調一項：'));
-  const drop = ask().querySelectorAll('.alt').find((b) => b.querySelector('strong').textContent === '不去 午餐店');
-  assert.match(drop.textContent, /^不去 午餐店 · 排得下，後面最多順延 \d+ 分/);
-  assert.deepEqual(drop.querySelectorAll('.intro').map((n) => n.textContent), ['會多一句：今天沒排午餐', '午餐店的簡介'], '後果與那一站的簡介');
-  assert.deepEqual(ask().querySelectorAll('.alt')[0].querySelectorAll('.intro').map((n) => n.textContent), [], '插的這家少待：它的簡介就在上面那一列，不重複');
+  // 選項分兩組、各一行小標（11-17）：「少待一點」（要插的這家排第一個）與「這站不去」
+  assert.deepEqual(ask().querySelectorAll('.ask-group').map((n) => n.textContent), ['少待一點', '這站不去']);
+  const rows = askRows(ask());
+  assert.equal(rows.length, ask().querySelectorAll('.alt').length, '每個選項一顆鍵，都在其中一組');
+  const groupOrder = rows.map((r) => (r.group === '少待一點' ? 0 : 1));
+  assert.deepEqual(groupOrder, [...groupOrder].sort(), '先少待、再不去');
+  // 要插的這家自己少待：名字後面標出來、右邊寫幾分變幾分、後果一行、不重複附簡介（它的簡介就在上面那一列）
+  assert.deepEqual({ ...rows[0], node: null }, { group: '少待一點', name: '大店（要插的這家）', side: ['240 → 130 分'], notes: [rows[0].notes[0]], intro: null, node: null });
+  assert.match(rows[0].notes[0], /^排得下，後面最多順延 \d+ 分/);
+  assert.equal(rows[0].node.querySelector('strong').textContent, '大店', '粗體只有店名');
+  // 後面某一站少待：還不夠的也在同一組，後果那一行寫還差幾分
+  const shortA = askRow(ask(), '少待一點', '街區A');
+  assert.deepEqual([shortA.side, shortA.notes, shortA.intro], [['60 → 30 分'], ['還差 80 分，要再調一項'], '街區A的簡介']);
+  assert.ok(!dom.text(ask()).includes('下面這幾個選了還不夠'), '那一句不畫了');
+  // 不去：右邊是店型小標；後果一行、會多出來的黃字另起一行、再來是那一站的簡介
+  const drop = askRow(ask(), '這站不去', '午餐店');
+  assert.deepEqual(drop.side, ['吃的']);
+  assert.equal(drop.node.querySelector('.opt-side').children[0].className, 'cat', '店型用既有的小標樣式');
+  assert.match(drop.notes[0], /^排得下，後面最多順延 \d+ 分/);
+  assert.deepEqual(drop.notes.slice(1), ['會多一句：今天沒排午餐']);
+  assert.equal(drop.node.querySelectorAll('.opt-note')[1].className, 'opt-note adds', '會多出來的黃字是另外一行（warn 色的樣式）');
+  assert.equal(drop.intro, '午餐店的簡介');
+  assert.deepEqual(drop.node.children.map((n) => n.className), ['opt-top', 'opt-note', 'opt-note adds', 'opt-intro'], '三行的先後：店名與重點、後果（＋黃字）、簡介');
   assert.deepEqual(labels(ask()).at(-1), '算了，不插');
   // 算了，不插
   press('算了，不插', ask());
@@ -112,7 +144,7 @@ test('升級成站排不下：那一家底下展開一組選項（為什麼排�
   // 選「不去某站」＝一般的不去了（記進 removed、不算落選）
   press('升級成站', corridorItem(THU, big.name_zh));
   await settle();
-  ask().querySelectorAll('.alt').find((b) => b.querySelector('strong').textContent === '不去 午餐店').click();
+  askRow(ask(), '這站不去', '午餐店').node.click();
   await settle();
   assert.deepEqual(idsOf(plan(THU)), [big.id, ...ORDER1.filter((id) => id !== lunch.id)]);
   assert.equal(plan(THU).sequence[0].dwellMin, 240, '大店照它自己的停留');
@@ -152,20 +184,20 @@ test('插在走廊清單掛的那一段（不是第一段）：晚餐店→街�
 test('三輪：選了還排不下就換成下一輪的選項並講還差多少；第三輪只剩選了就排得下的；套用後每個調整都在、其餘先後不變', async () => {
   load();
   const ask = () => corridorItem(THU, big.name_zh).querySelector('.insert-ask');
-  const pick = async (label) => { (ask().querySelectorAll('.alt').find((b) => b.querySelector('strong').textContent === label) ?? assert.fail(`沒有「${label}」`)).click(); await settle(); };
+  const pick = async (group, name) => { askRow(ask(), group, name).node.click(); await settle(); };
   press('升級成站', corridorItem(THU, big.name_zh));
   await settle();
-  await pick('街區A 少待 30 分（60→30）');
+  await pick('少待一點', '街區A');
   assert.deepEqual(idsOf(plan(THU)), ORDER1, '還沒套');
   assert.match(ask().textContent, /已選：街區A 少待 30 分（60→30）/);
   assert.match(ask().querySelector('.warn-line').textContent, /^還是排不下：午餐店 \d\d:\d\d 到的時候不在營業時間內（11:30–14:30）（還差 80 分）$/);
   assert.ok(ask().textContent.includes('再選一項（第 2 輪，最多 3 輪）：'));
-  await pick('街區C 少待 30 分（60→30）');
+  await pick('少待一點', '街區C');
   assert.match(ask().textContent, /已選：街區A 少待 30 分（60→30）、街區C 少待 30 分（60→30）/);
   assert.ok(ask().textContent.includes('最後一輪，只列選了就排得下的：'));
   assert.ok(ask().querySelectorAll('.alt').length >= 1);
   assert.ok(ask().querySelectorAll('.alt').every((b) => b.textContent.includes('排得下') && !b.textContent.includes('要再調一項')), '最後一輪不列選了還不夠的');
-  await pick('大店 只待 190 分（原本 240 分）');
+  await pick('少待一點', '大店（要插的這家）');
   assert.deepEqual(idsOf(plan(THU)), [big.id, ...ORDER1]);
   assert.deepEqual(plan(THU).sequence.slice(0, 3).map((s) => [s.poi.id, s.dwellMin]), [[big.id, 190], [A.id, 30], [C.id, 30]]);
   assert.match(undoBar()[0], /^已把 大店 排成第一站（街區A 之前），後面順延 \d+ 分(?:（用掉留白 \d+ 分）)?；街區A 少待 30 分（60→30）；街區C 少待 30 分（60→30）；大店 只待 190 分（原本 240 分）$/);
@@ -191,8 +223,9 @@ test('釘住的日子：日期下面一行小字＋「讓引擎重排這天」�
   press('換一家', cardOf(THU, C.name_zh));
   const list = cardOf(THU, C.name_zh).querySelector('.swap-list');
   assert.ok(!list.textContent.includes('換一家'), '不是哪一餐：清單最上面不寫那一句');
-  assert.ok(list.querySelectorAll('.alt').length >= 1);
-  app.swapStop(THU, C.id, Z);   // 清單只畫前六家（別天的街區排在前面），這裡直接換成沒勾過的那一家
+  // 別天行程裡的店不列（11-17；原話 #195 的推導）：FRI／SAT／SUN 勾的街區 D–I 都不在清單上，只剩沒排過的那一家——之前畫出來的前六家全是別天勾的，選了同一家就兩天都有
+  assert.deepEqual(list.querySelectorAll('.alt').map((b) => b.querySelector('strong').textContent), [Z.name_zh]);
+  list.querySelectorAll('.alt')[0].click();
   assert.deepEqual(idsOf(plan(THU)), ORDER1.map((id) => (id === C.id ? Z.id : id)), '原位置換掉');
   assert.equal(plan(THU).pinned, true);
   // 讓引擎重排這天
@@ -283,7 +316,7 @@ test('改天去：後面每個合格的日子都掛「或 X」；按了那天的
   assert.ok(!idsOf(plan(SUN)).includes(bakery.id), '原本那家換掉了');
   const sunCard = cardOf(SUN, noodle.name_zh);
   assert.ok(!sunCard.textContent.includes(TEXT.breakfast.inserted), '他指定的早餐不寫「引擎先挑的」');
-  assert.deepEqual(cardKeys(sunCard), ['換一家', '改天去', '吃飯店早餐', '地圖']);
+  assert.deepEqual(cardKeys(sunCard), ['換一家', '吃飯店早餐', '地圖'], 'SUN 是旅程最後一天：不出「改天去」（11-17）');
   assert.deepEqual(undoBar(), ['已把 麵店 排成 8/16（日） 的早餐']);
   assert.deepEqual(dayNode(FRI).querySelectorAll('.day-note').map((n) => n.textContent), ['早餐這天不排（麵店 改到 8/16（日） 去）改回來']);
   assert.deepEqual(idsOf(plan(SAT)), satBefore, '別天沒動');
@@ -498,7 +531,8 @@ test('換一家清單不列別天引擎排的站（選了它那一天就得另�
   assert.equal(list.children[0].textContent, '午餐換一家');
   const names = list.querySelectorAll('.alt').map((b) => b.querySelector('strong').textContent);
   for (const p of [noodle, stand, bakery]) assert.ok(!names.includes(p.name_zh), `${p.name_zh} 是別天引擎排的早餐，不列（它能當午餐、也順路）：${names.join('、')}`);
-  if (!names.length) assert.equal(list.children[1].textContent, '附近沒有能當午餐、順路又開著的店', '餐段的清單沒有候選：不寫「同類型」');
+  assert.deepEqual(names, [], '這個小世界裡能當午餐、順路的店只有那三家早餐店');
+  assert.equal(list.children[1].textContent, '附近沒有能當午餐、順路又開著的店（別天已經排了的店不列）', '餐段的清單沒有候選：不寫「同類型」；候選都排在別天時多半句（11-17）');
 });
 
 test('吃飯店早餐按在他自己勾的站上：復原列與日期下面那行小字都講是哪一站（之前那一站無聲不見）；改回來放回原位', async () => {
@@ -525,6 +559,240 @@ test('吃飯店早餐按在他自己勾的站上：復原列與日期下面那�
   await settle();
   assert.deepEqual(idsOf(plan(FRI)), before);
   assert.deepEqual(dayNode(FRI).querySelectorAll('.day-note'), []);
+});
+
+test('換一家選了當天勾了但排不進的那一家（11-17）：這一站換成它、它自己那筆勾選留著，同一家不會在同一天出現兩次（之前兩筆勾選都排進去）；別天勾了但排不進的不列', () => {
+  // SAT 勾三家咖啡廳（不是主題日，同類一天最多 2 家）：有一家排不進。FRI 也勾一家咖啡廳。帶 item：引擎不會自己把它們插進別天
+  const mkCafe = (id) => ({ ...cafe, id, name_zh: id, highlight: `${id}的簡介`, curated: true, item: '咖啡豆' });
+  const cafes = ['咖啡一', '咖啡二', '咖啡三'].map(mkCafe);
+  const friCafe = mkCafe('咖啡四');
+  const trip = makeTrip();
+  trip.days.find((d) => d.date === SAT).picks = [F, G, ...cafes].map((p) => ({ poiId: p.id, priority: 'want' }));
+  trip.days.find((d) => d.date === FRI).picks.push({ poiId: friCafe.id, priority: 'want' });
+  dom.storage.clear();
+  loadWorld(state, trip);
+  for (const p of [...cafes, friCafe]) { state.pois[p.id] = p; state.pool.push({ poi: p }); }
+  app.replanAll();
+  assert.equal(plan(SAT).dropped.length, 1, `SAT 排不進的：${plan(SAT).dropped.map((x) => x.poi.id).join('、')}`);
+  const out = plan(SAT).dropped[0].poi.id;
+  assert.ok(cafes.some((p) => p.id === out));
+  const [a, b] = cafes.filter((p) => p.id !== out);
+  // 排進去的咖啡廳按「換一家」：清單列得到當天排不進的那一家
+  press('換一家', cardOf(SAT, a.name_zh));
+  const row = cardOf(SAT, a.name_zh).querySelector('.swap-list').querySelectorAll('.alt').find((n) => n.querySelector('strong').textContent === out) ?? assert.fail(`清單裡沒有 ${out}`);
+  row.click();
+  assert.deepEqual(idsOf(plan(SAT)).filter((id) => cafes.some((p) => p.id === id)).sort(), [b.id, out].sort(), '那一站換成它：兩家咖啡廳各出現一次');
+  assert.deepEqual(tripDay(SAT).picks.map((p) => p.poiId).filter((id) => id === out), [out], '勾選只有一筆（之前 A 的那筆被改成它、它原本那筆還在，同一家排兩次）');
+  assert.ok(!tripDay(SAT).picks.some((p) => p.poiId === a.id), 'A 的那筆拿掉了');
+  assert.deepEqual(plan(SAT).dropped, []);
+  assert.deepEqual(undoBar(), [`已把 8/15（六） 的 ${a.name_zh} 換成 ${out}`]);
+  press('復原');
+  assert.deepEqual(plan(SAT).dropped.map((x) => x.poi.id), [out]);
+  assert.deepEqual(tripDay(SAT).picks.map((p) => p.poiId), [F.id, G.id, ...cafes.map((p) => p.id)]);
+  // 別天（FRI）那家咖啡廳的清單：SAT 排進去的與排不進的都不列（要挪過來，SAT 那一列有「排到別天」）
+  press('換一家', cardOf(FRI, friCafe.name_zh));
+  const names = cardOf(FRI, friCafe.name_zh).querySelector('.swap-list').querySelectorAll('.alt').map((n) => n.querySelector('strong').textContent);
+  for (const p of cafes) assert.ok(!names.includes(p.name_zh), `${p.name_zh}${p.id === out ? '（SAT 勾了排不進）' : '（SAT 排進去的）'}不列：${names.join('、')}`);
+});
+
+test('選項上的小標與店名（畫面；11-17）：引擎排的站多一個小標「引擎排的」；同一塊裡短店名撞名的兩家都寫全名；鍵上的字不露鍵值', () => {
+  load();
+  openFirstCorridor(THU);   // 走廊清單開著（記在 state.corridorOpen），重畫後還開著
+  const res = { shiftMaxMin: 0, openSlotUsedMin: 0, openSlotUsedBeforeMin: 0 };
+  const twin = { ...A, id: '街區A別館', name_zh: '街區A（別館）', highlight: '別館的簡介' };   // 括號拿掉之後短名跟街區A 一樣
+  const stop = (poi, extra = {}) => ({ poi, dwellMin: 60, startMin: 600, insertedBy: null, ...extra });
+  const opt = (kind, poi, fromMin, toMin) => ({ kind, poiId: poi.id, poi, fromMin, toMin, fits: true, shortMin: 0, result: res });
+  state.insertAsk = { date: THU, legIndex: 0, poiId: big.id, chosen: [], trial: { round: 1, sequence: [stop(big), stop(A, { insertedBy: 'engine', priority: 'filler' }), stop(twin), stop(lunch)], index: 0, conflicts: [{ msg: '午餐店 排不進' }], blocked: { shortMin: 10 }, options: [opt('shorten', A, 60, 30), opt('drop', A, 60, 0), opt('drop', twin, 60, 0), opt('drop', lunch, 60, 0)] } };
+  app.render();
+  const ask = corridorItem(THU, big.name_zh).querySelector('.insert-ask') ?? assert.fail('選項沒畫出來');
+  assert.deepEqual(askRows(ask).map((r) => [r.group, r.name, r.side, r.intro]), [
+    ['少待一點', '街區A', ['60 → 30 分', '引擎排的'], '街區A的簡介'],
+    ['這站不去', '街區A', ['街區', '引擎排的'], '街區A的簡介'],
+    ['這站不去', '街區A（別館）', ['街區'], '別館的簡介'],
+    ['這站不去', '午餐店', ['吃的'], '午餐店的簡介'],
+  ]);
+  assert.deepEqual(askRow(ask, '這站不去', '街區A').node.querySelector('.opt-side').children.map((n) => n.className), ['cat', 'cat'], '兩個都是既有的小標樣式');
+  assert.doesNotMatch(dom.text(ask), KEYS);
+  // 選項四個以下簡介留兩行；五個以上那一塊多一個 many（樣式把簡介收成一行，390×844 才進得了一個螢幕）
+  assert.equal(ask.className, 'insert-ask');
+  state.insertAsk.trial.options.push(opt('drop', C, 60, 0));
+  app.render();
+  const five = corridorItem(THU, big.name_zh).querySelector('.insert-ask');
+  assert.equal(five.querySelectorAll('.opt').length, 5);
+  assert.equal(five.className, 'insert-ask many');
+  state.insertAsk = null;
+});
+
+// ── 11-17 補的（原話 #196、#197 的畫面收尾）──
+
+/** 他自己勾了一家只在早上開、只當早餐的店（FRI 09:05 排在第一站，算那天的早餐）；回那家店。over 可以改那家店的欄位（例：只有星期六開）。 */
+function loadWithPickedBreakfast(date = FRI, over = {}) {
+  const morning = { ...noodle, id: '晨間食堂', name_zh: '晨間食堂', highlight: '晨間食堂的簡介', meals: { breakfast: '定食到十點半' }, hours: Object.fromEntries(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((k) => [k, [['07:00', '10:30']]])), ...over };
+  const trip = makeTrip();
+  const day = trip.days.find((d) => d.date === date);
+  day.picks = [{ poiId: morning.id, priority: 'want' }, ...day.picks];
+  dom.storage.clear();
+  loadWorld(state, trip);
+  state.pois[morning.id] = morning;
+  state.pool.push({ poi: morning });
+  app.replanAll();
+  assert.equal(plan(date).meals.breakfast, morning.id);
+  return morning;
+}
+/** 候選頁上某一家店那一列尾巴的字（「已排 8/14（五）」「沒排進」…）。 */
+function poolMark(name) {
+  state.route = '#/pool';
+  app.render();
+  const row = dom.root.querySelectorAll('li').find((n) => n.querySelector('strong')?.textContent === name) ?? assert.fail(`候選頁沒有「${name}」`);
+  state.route = '#/plan';
+  return row.children.at(-1).textContent.trim();
+}
+
+test('候選頁：被「吃飯店早餐／改天去」拿掉的勾選站講實情（之前寫「沒排進」）；改回來就是已排；引擎排的早餐不是他勾的，照舊', async () => {
+  const morning = loadWithPickedBreakfast(FRI);
+  assert.equal(poolMark(morning.name_zh), '已排 8/14（五）');
+  app.render();
+  press('吃飯店早餐', cardOf(FRI, morning.name_zh));
+  await settle();
+  assert.equal(poolMark(morning.name_zh), '8/14（五） 早餐在飯店吃，這天不去');
+  app.render();
+  press('改回來', dayNode(FRI));
+  await settle();
+  assert.equal(poolMark(morning.name_zh), '已排 8/14（五）');
+  app.render();
+  press('改天去', cardOf(FRI, morning.name_zh));
+  await settle();
+  assert.equal(poolMark(morning.name_zh), '8/14（五） 不排早餐，改天去');
+  // 後來在別天按了「或 X」排進去：就是已排那一天
+  app.render();
+  const offerDay = [SAT, SUN].find((d) => dayNode(d).querySelectorAll('.choice').some((n) => n.textContent.includes(morning.name_zh)));
+  if (offerDay) {
+    press(morning.name_zh, dayNode(offerDay));
+    await settle();
+    assert.match(poolMark(morning.name_zh), /^已排 8\/1[56]（.）$/);
+  }
+  // 引擎排的早餐（麵店不是他勾的）說成吃飯店：候選頁照舊寫沒排進（它本來就只是候選）
+  load();
+  press('吃飯店早餐', cardOf(FRI, noodle.name_zh));
+  await settle();
+  assert.equal(poolMark(noodle.name_zh), '沒排進');
+  assert.doesNotMatch(dom.text(), KEYS);
+});
+
+test('旅程最後一天的早餐卡不出「改天去」（後面沒有日子可以去），「吃飯店早餐」照出；規劃頁與現場頁都是；前面幾天照舊兩顆都有', () => {
+  load();
+  assert.equal(state.trip.days.at(-1).date, SUN, '小世界的最後一天是 SUN');
+  assert.deepEqual(cardKeys(cardOf(SUN, bakery.name_zh)), ['換一家', '吃飯店早餐', '地圖']);
+  assert.deepEqual(cardKeys(cardOf(FRI, noodle.name_zh)), ['換一家', '改天去', '吃飯店早餐', '地圖']);
+  assert.deepEqual(cardKeys(cardOf(SAT, stand.name_zh)), ['換一家', '改天去', '吃飯店早餐', '地圖']);
+  // 卡上那一句也不叫他按卡上沒有的鍵：最後一天不提「改天去」，前面的日子照舊
+  const sunText = cardOf(SUN, bakery.name_zh).textContent;
+  assert.ok(sunText.includes(TEXT.breakfast.insertedLast) && !sunText.includes('改天去'), sunText);
+  assert.ok(cardOf(SAT, stand.name_zh).textContent.includes(TEXT.breakfast.inserted));
+  assert.ok(TEXT.breakfast.inserted.includes('改天去') && !TEXT.breakfast.insertedLast.includes('改天去') && TEXT.breakfast.insertedNow.includes('改天去') && !TEXT.breakfast.insertedNowLast.includes('改天去'));
+  state.route = '#/now';
+  app.setField({ date: SUN, index: 0, simulate: true });
+  const next = () => dom.root.querySelector('.next');
+  assert.equal(next().querySelector('h2').textContent, bakery.name_zh);
+  assert.deepEqual(labels(next().children.at(-1)), ['Google Maps 路線', '吃飯店早餐']);
+  assert.ok(next().textContent.includes(TEXT.breakfast.insertedNowLast) && !next().textContent.includes('改天去'), next().textContent);
+  app.setField({ date: SAT, index: 0, simulate: true });
+  assert.deepEqual(labels(next().children.at(-1)), ['Google Maps 路線', '吃飯店早餐', '改天去']);
+  assert.ok(next().textContent.includes(TEXT.breakfast.insertedNow));
+});
+
+test('按了「改天去」「吃飯店早餐」之後，後面目前沒有排得進這家的日子：復原列那一句後面多半句（之前一句話都沒有）；後面排得進的照舊不多話', async () => {
+  // 他勾的早餐店只有星期六開：SAT 按了改天去，後面只剩 SUN、那天它沒開
+  const satOnly = { hours: { sat: [['07:00', '10:30']] } };
+  const morning = loadWithPickedBreakfast(SAT, satOnly);
+  press('改天去', cardOf(SAT, morning.name_zh));
+  await settle();
+  assert.equal(tripDay(SAT).breakfast.mode, 'later');
+  assert.deepEqual(undoBar(), ['8/15（六） 不排早餐，晨間食堂 改天去；目前後面沒有排得進這家的日子']);
+  assert.deepEqual(dayNode(SUN).querySelectorAll('.choice').filter((n) => n.textContent.includes(morning.name_zh)), [], 'SUN 真的沒有掛「或 晨間食堂」');
+  assert.deepEqual(dayNode(SUN).querySelectorAll('.day-note').filter((n) => n.textContent.includes(morning.name_zh)), []);
+  press('復原');
+  assert.equal(plan(SAT).meals.breakfast, morning.id);
+  // 吃飯店早餐也一樣：那家之後不會被推薦到，講一聲
+  press('吃飯店早餐', cardOf(SAT, morning.name_zh));
+  await settle();
+  assert.deepEqual(undoBar(), ['8/15（六） 的早餐改成在飯店吃，晨間食堂 這天不去；目前後面沒有排得進這家的日子']);
+  press('復原');
+  // 現場頁按的也是同一句
+  state.route = '#/now';
+  app.setField({ date: SAT, index: 0, simulate: true });
+  press('改天去', dom.root.querySelector('.next'));
+  await settle();
+  assert.deepEqual(undoBar(), ['8/15（六） 不排早餐，晨間食堂 改天去；目前後面沒有排得進這家的日子']);
+  // 旅程最後一天吃飯店早餐：後面本來就沒有日子，不接那半句（11-17 畫面審查：「目前後面沒有排得進…」在最後一天是廢話，「目前」還讀得像之後可能會有）
+  load();
+  press('吃飯店早餐', cardOf(SUN, bakery.name_zh));
+  await settle();
+  assert.deepEqual(undoBar(), ['8/16（日） 的早餐改成在飯店吃']);
+  press('復原');
+  // 原定那家是引擎排的（那一句裡沒有店名）、後面有日子卻都排不進：把店名寫出來。FRI 的早餐換成只有星期五開的店，再按吃飯店早餐
+  load();
+  const friOnly = { ...noodle, id: '週五食堂', name_zh: '週五食堂', highlight: '週五食堂的簡介', meals: { breakfast: '週五限定的定食' }, hours: { fri: [['07:00', '10:30']] } };
+  state.pois[friOnly.id] = friOnly;
+  state.pool = state.pool.filter((c) => ![noodle.id, stand.id, bakery.id].includes(c.poi.id));   // 別的早餐店拿掉：引擎在 FRI 只挑得到它
+  state.pool.push({ poi: friOnly });
+  for (const id of [noodle.id, stand.id, bakery.id]) delete state.pois[id];
+  app.replanAll();
+  assert.equal(plan(FRI).meals.breakfast, friOnly.id, '引擎排的早餐是只有星期五開的那一家');
+  assert.equal(plan(FRI).sequence.find((s) => s.poi.id === friOnly.id).insertedBy, 'engine');
+  press('吃飯店早餐', cardOf(FRI, friOnly.name_zh));
+  await settle();
+  assert.deepEqual(undoBar(), ['8/14（五） 的早餐改成在飯店吃；原定的 週五食堂 目前後面沒有排得進的日子']);
+  // 後面排得進的：不多那半句（FRI 的麵店，SAT／SUN 都掛得上）
+  load();
+  press('改天去', cardOf(FRI, noodle.name_zh));
+  await settle();
+  assert.deepEqual(undoBar(), ['8/14（五） 不排早餐，麵店 改天去']);
+  press('復原');
+  press('吃飯店早餐', cardOf(FRI, noodle.name_zh));
+  await settle();
+  assert.deepEqual(undoBar(), ['8/14（五） 的早餐改成在飯店吃']);
+  // 那天本來就沒排到早餐、他只是說在飯店吃（沒有哪一家可問）：不多話
+  const hint = dayNode(THU).querySelectorAll('li').find((n) => n.textContent.startsWith('今天沒排早餐')) ?? assert.fail('THU 沒有「今天沒排早餐」');
+  press('吃飯店早餐', hint);
+  await settle();
+  assert.deepEqual(undoBar(), ['8/13（四） 的早餐改成在飯店吃']);
+  for (const s of [TEXT.breakfast.noLaterDay, TEXT.breakfast.noLaterDayNamed('麵包店')]) assert.doesNotMatch(s, KEYS, s);
+});
+
+test('釘住的日子的「或 B」（11-17）：選了會讓其餘各站排不進的 B 不出現（比照釘住的日子的換一家清單）；出現的選了就是原位置換掉、其餘各站先後不變、A 順延到別天；有一次性復原', async () => {
+  // THU 釘住的順序裡放兩家他勾的咖啡廳（09:05 的咖啡甲、18:35 的咖啡乙）；候選池多兩家沒勾過的咖啡廳：要坐 300 分的與一般的。
+  // 帶 item（代購研究的店）：引擎不會自己把它們插進別天，二選一照樣可以出（engine/choices.js choiceEligible）
+  const mkCafe = (id, over = {}) => ({ ...cafe, id, name_zh: id, highlight: `${id}的簡介`, ...over });
+  const cafeA = mkCafe('咖啡甲'); const cafeB = mkCafe('咖啡乙');
+  const longCafe = mkCafe('久坐咖啡', { curated: true, dwellMin: 300, item: '咖啡豆' });
+  const okCafe = mkCafe('街角咖啡', { curated: true, item: '咖啡豆' });
+  const order = [cafeA.id, C.id, lunch.id, dinner.id, cafeB.id, bar.id];
+  const trip = makeTrip();
+  Object.assign(trip.days.find((d) => d.date === THU), { picks: order.map((poiId) => ({ poiId, priority: 'want' })), pinned: { at: '2026-11-12T00:00:00.000Z', sequence: order.map((poiId) => ({ poiId })) } });
+  dom.storage.clear();
+  loadWorld(state, trip);
+  for (const p of [cafeA, cafeB, longCafe, okCafe]) { state.pois[p.id] = p; state.pool.push({ poi: p }); }
+  app.replanAll();
+  assert.deepEqual(idsOf(plan(THU)), order);
+  assert.equal(plan(THU).pinned, true);
+  // 引擎照樣提了兩個二選一；畫面只出選了沒事的那一個
+  assert.deepEqual(plan(THU).choices.map((c) => c.options), [[cafeA.id, longCafe.id], [cafeB.id, okCafe.id]]);
+  assert.deepEqual(cardOf(THU, cafeA.name_zh).querySelectorAll('.choice'), [], '久坐咖啡頂掉咖啡甲的話午餐店（14:30 關）就排不進：這個「或」不出');
+  const line = cardOf(THU, cafeB.name_zh).querySelector('.choice') ?? assert.fail('咖啡乙的卡上沒有「或 街角咖啡」');
+  assert.ok(line.textContent.startsWith('或街角咖啡'), line.textContent);
+  press(okCafe.name_zh, line);
+  await settle();
+  assert.deepEqual(idsOf(plan(THU)), order.map((id) => (id === cafeB.id ? okCafe.id : id)), '原位置換掉，其餘各站先後不變');
+  assert.equal(plan(THU).pinned, true);
+  assert.deepEqual(plan(THU).dropped, []);
+  assert.deepEqual(tripDay(THU).pinned.sequence.map((e) => e.poiId), order.map((id) => (id === cafeB.id ? okCafe.id : id)), '記著的順序裡 B 就在 A 的原位置');
+  assert.match(undoBar()[0], /^咖啡乙 (已排到 8\/1[456]（.）|先留在候選池（別天排不進）)/);
+  assert.ok(!tripDay(THU).picks.some((p) => p.poiId === cafeB.id), 'A 不在這天的勾選裡了');
+  press('復原');
+  assert.deepEqual(idsOf(plan(THU)), order);
+  assert.deepEqual(tripDay(THU).pinned.sequence.map((e) => e.poiId), order);
+  assert.equal(stored(), null);
 });
 
 test('引擎排的早餐不再是當天的早餐（他在它前面插了一家能當早餐的店）：早餐的小標與鍵移到那一家，原本那張卡回到「不去了」、那一句不再叫他按卡上沒有的鍵；現場頁同理', async () => {
@@ -569,9 +837,9 @@ test('升級排不下的選項多的時候（三個以上），「算了，不�
   assert.deepEqual(labels(head()), ['算了，不插']);
   assert.ok(head().textContent.startsWith('選一個讓它排得下，或算了不插：'));
   // 走到最後一輪（只列選了就排得下的，剩沒幾個）
-  const pick = async (label) => { (ask().querySelectorAll('.alt').find((b) => b.querySelector('strong').textContent === label) ?? assert.fail(`沒有「${label}」`)).click(); await settle(); };
-  await pick('街區A 少待 30 分（60→30）');
-  await pick('街區C 少待 30 分（60→30）');
+  const pick = async (group, name) => { askRow(ask(), group, name).node.click(); await settle(); };
+  await pick('少待一點', '街區A');
+  await pick('少待一點', '街區C');
   const n = ask().querySelectorAll('.alt').length;
   assert.equal(cancels(), n >= 3 ? 2 : 1, `最後一輪 ${n} 個選項`);
   // 提示行那一顆按了一樣是收掉、旅程沒動
@@ -580,4 +848,82 @@ test('升級排不下的選項多的時候（三個以上），「算了，不�
   await settle();
   press('算了，不插', head());
   assert.deepEqual([state.insertAsk, idsOf(plan(THU)), undoBar(), stored()], [null, ORDER1, [], null]);
+});
+
+// ── 沒釘住的日子換一家：選的那家要排進去；排不進、或擠掉了當天別的勾選站，復原列要講實情（11-17 畫面審查）──
+/** SAT 勾四家咖啡廳（不是主題日，同類一天最多 2 家）：咖啡一、咖啡二評過五星先排進去，咖啡三、咖啡四排不進。帶 item：引擎不會自己把它們插進別天。 */
+function loadFourCafes() {
+  const mkCafe = (id, over = {}) => ({ ...cafe, id, name_zh: id, highlight: `${id}的簡介`, curated: true, item: '咖啡豆', ...over });
+  const cafes = [mkCafe('咖啡一', { my: { rating: 5 } }), mkCafe('咖啡二', { my: { rating: 5 } }), mkCafe('咖啡三'), mkCafe('咖啡四')];
+  const trip = makeTrip();
+  trip.days.find((d) => d.date === SAT).picks = [F, G, ...cafes].map((p) => ({ poiId: p.id, priority: 'want' }));
+  dom.storage.clear();
+  loadWorld(state, trip);
+  for (const p of cafes) { state.pois[p.id] = p; state.pool.push({ poi: p }); }
+  app.replanAll();
+  return cafes;
+}
+
+test('沒釘住的日子換一家：選了當天排不進的那一家、當天同類排不進的不只一家——選的那家排進去（之前由分數決定，選的那家還在排不進清單，復原列卻寫換好了）；復原回原樣', async () => {
+  const [c1, c2, c3, c4] = loadFourCafes();
+  const cafeIds = (p) => idsOf(p).filter((id) => /^咖啡/.test(id)).sort();
+  assert.deepEqual(cafeIds(plan(SAT)), [c1.id, c2.id]);
+  assert.deepEqual(plan(SAT).dropped.map((x) => x.poi.id).sort(), [c3.id, c4.id]);
+  assert.ok(!plan(SAT).pinned, 'SAT 沒釘住：換了整天重新搜尋');
+  // 咖啡一的清單列得到當天排不進的兩家；選排在後面的咖啡四——跟咖啡三同分量，光比分數輪不到它
+  press('換一家', cardOf(SAT, c1.name_zh));
+  const names = cardOf(SAT, c1.name_zh).querySelector('.swap-list').querySelectorAll('.alt').map((n) => n.querySelector('strong').textContent);
+  assert.ok(names.includes(c3.id) && names.includes(c4.id), `清單：${names.join('、')}`);
+  cardOf(SAT, c1.name_zh).querySelector('.swap-list').querySelectorAll('.alt').find((n) => n.querySelector('strong').textContent === c4.id).click();
+  assert.deepEqual(cafeIds(plan(SAT)), [c2.id, c4.id], '選的那家排進去了，咖啡二還在');
+  assert.deepEqual(plan(SAT).dropped.map((x) => x.poi.id), [c3.id], '咖啡三照舊排不進；沒有別的站因此掉下去');
+  assert.deepEqual(undoBar(), ['已把 8/15（六） 的 咖啡一 換成 咖啡四']);
+  press('復原');
+  assert.deepEqual(cafeIds(plan(SAT)), [c1.id, c2.id]);
+  assert.deepEqual(plan(SAT).dropped.map((x) => x.poi.id).sort(), [c3.id, c4.id]);
+  // 「或 B」同一條路（engine/choices.js chooseDay 記的是同一種換站紀錄）：直接叫動作選排在後面的那一家
+  app.chooseOption(SAT, c1.id, c4);
+  await settle();
+  assert.ok(idsOf(plan(SAT)).includes(c4.id), `選了 B 就排進這天：${idsOf(plan(SAT)).join('、')}`);
+  assert.ok(!idsOf(plan(SAT)).includes(c1.id));
+  assert.doesNotMatch(undoBar()[0], /今天排不進/, undoBar()[0]);
+});
+
+test('沒釘住的日子換一家，選的那家還是排不進（今天沒開）：復原列講實情「已把 A 拿掉，但 B 今天排不進」，不寫換好了；二選一同理', async () => {
+  load();
+  const closed = { ...Z, id: '週一才開', name_zh: '週一才開（備用）', hours: { mon: [['09:00', '18:00']] } };   // SAT 是週六：今天沒開
+  state.pois[closed.id] = closed;
+  app.swapStop(SAT, F.id, closed);
+  assert.ok(!idsOf(plan(SAT)).includes(closed.id) && !idsOf(plan(SAT)).includes(F.id));
+  assert.deepEqual(plan(SAT).dropped.map((x) => x.poi.id), [closed.id]);
+  assert.deepEqual(undoBar(), ['已把 8/15（六） 的 街區F 拿掉，但 週一才開 今天排不進']);
+  press('復原');
+  assert.ok(idsOf(plan(SAT)).includes(F.id));
+  // 二選一選了 B、B 自己排不進：那一句不把它寫成「擠掉了」
+  app.chooseOption(SAT, F.id, closed);
+  await settle();
+  assert.ok(!idsOf(plan(SAT)).includes(closed.id));
+  assert.match(undoBar()[0], /^街區F (已排到 8\/1[346]（.）|先留在候選池（別天排不進）)；週一才開 今天排不進/, undoBar()[0]);
+  assert.doesNotMatch(undoBar()[0], /擠掉了[^；]*週一才開/, undoBar()[0]);
+});
+
+test('沒釘住的日子換一家擠掉了當天別的勾選站：復原列接「擠掉了 8/15（六） 的 X」（之前只比別天，當天掉進排不進的不講）', () => {
+  // SAT 勾兩個街區與一個小展（待 30 分）都排得進；把小展換成要待 700 分的大展：整天只塞得下它和另外一站，另一站落到排不進
+  // 挖寶型（curated: false）：引擎不會自己把它們插進別天，別天不跟著變
+  const show = { ...Z, id: '小展', name_zh: '小展', category: 'museum', walkFactor: 0, dwellMin: 30, curated: false };
+  const huge = { ...show, id: '大展', name_zh: '大展', dwellMin: 700 };
+  const trip = makeTrip();
+  trip.days.find((d) => d.date === SAT).picks = [F, G, show].map((p) => ({ poiId: p.id, priority: 'want' }));
+  dom.storage.clear();
+  loadWorld(state, trip);
+  for (const p of [show, huge]) { state.pois[p.id] = p; state.pool.push({ poi: p }); }
+  app.replanAll();
+  assert.deepEqual(plan(SAT).dropped, []);
+  app.swapStop(SAT, show.id, huge);
+  assert.ok(idsOf(plan(SAT)).includes(huge.id), `選的那家排進去：${idsOf(plan(SAT)).join('、')}`);
+  const lost = plan(SAT).dropped.map((x) => x.poi.id);
+  assert.ok(lost.length >= 1 && lost.every((id) => [F.id, G.id].includes(id)), `有勾選站因此排不進：${lost.join('、')}`);
+  assert.deepEqual(undoBar(), [`已把 8/15（六） 的 小展 換成 大展；擠掉了 ${lost.map((id) => `8/15（六） 的 ${id}`).join('、')}`]);
+  press('復原');
+  assert.deepEqual(plan(SAT).dropped, []);
 });

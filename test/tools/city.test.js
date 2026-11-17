@@ -1,7 +1,7 @@
 // 城市設定：city.json 一份管一城。缺檔要明確報錯（不退回仙台的值）；bbox 缺就由 center ± bboxKm 推；欄位錯要說哪一欄。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,8 +9,9 @@ import { loadCity, parseCity, bboxAround, inBbox, valhallaUrl, valhallaHint, DEF
 
 const FAKECITY = fileURLToPath(new URL('../fixtures/kb/fakecity/', import.meta.url));
 
-test('loadCity：沒有 city.json 就丟錯說要先建', () => {
+test('loadCity：沒有 city.json 就丟錯說要先建', (t) => {
   const empty = mkdtempSync(path.join(tmpdir(), 'tp-nocity-'));
+  t.after(() => rmSync(empty, { recursive: true, force: true }));   // 成功失敗都收：之前不清，每跑一次系統暫存夾多一個 tp-nocity-*（11-17 量到積了 155 個）
   assert.throws(() => loadCity(empty), /city\.json 不存在：先建/);
 });
 

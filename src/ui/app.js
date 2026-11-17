@@ -4,8 +4,8 @@ import { TEXT } from './text.js';
 import { loadRules } from '../rules/index.js';
 import { BUILTIN } from '../rules/builtin.js';
 import rulesJson from '../rules.json' with { type: 'json' };
-import { planTrip } from '../engine/trip.js';
-import { applySwap } from '../engine/swap.js';
+import { planTrip, breakfastLaterDays } from '../engine/trip.js';
+import { chooseDay } from '../engine/choices.js';
 import { applyInsert, unpinDay as unpinTripDay, repinTrip, INSERT_DROP } from '../engine/insert.js';
 import { setBreakfast, clearBreakfast, takeBreakfastOffer, swapBreakfast, keepBreakfasts } from '../engine/breakfast.js';
 import { makeLegFn } from '../geo/matrix.js';
@@ -24,6 +24,8 @@ import { visitedPatch, visitedDates, shortName } from './corridor.js';
 import { trialArgs, startInsert, chooseInsertOption, insertDoneText } from './insert.js';
 import { chooseOptionTrip, deferStopTrip, deferNotice, displacedPicks } from './choices.js';
 import { otherDayChanges, otherDaysText } from './other-days.js';
+import { planArgsOf } from './plan-args.js';
+import { hasLaterDay } from './meals.js';
 import { emptyBrief, normalizeBrief, briefToMarkdown, briefFileName, looksLikeBrief, isBriefEmpty, themeOptions, briefMdName, briefSubmitMode, canSubmitBrief, briefEndpointFor } from '../data/brief.js';
 import { normalizeMemory, rememberFromBrief } from '../data/brief-memory.js';
 import { personsOf, cityNamesOf } from '../engine/persons.js';
@@ -241,6 +243,9 @@ export function resetTripEdits() {
 
 /**
  * 換一家。釘住順序的日子原位置換掉、其餘各站先後不動（engine/swap.js applySwap 會改寫那天的 pinned）。
+ * 那一天怎麼改走 engine/choices.js chooseDay（11-17）：新的那一家不在當天的勾選裡就是 applySwap（A 的那筆換成 B）；它本來就是當天的勾選（清單會列當天勾了但排不進的店）
+ * 就把 A 的那筆拿掉、留它自己那筆——之前一律 applySwap，A 的那筆被改成 B、B 原本那筆還在，同一家店同一天排兩次
+ * （公務版 8/13 把珈巣多夢換成當天排不進的喫茶 Elbe：序列裡出現兩個 Elbe；11-17 量的，待套用版三包畫出來的候選裡各有 2、4、6 筆是這種）。
  * breakfast: true＝換的是早餐那一站（清單來自 engine/breakfast.js；planner.js toggleSwap 給）：走 swapBreakfast——新的那家標成他指定的早餐、排成第一站；
  * 引擎先挑的早餐也能換，換了就變成他勾的（原話 #196；主控定的落地 D3）。
  * 11-12 起跟「不去了」一樣留一次性的復原（原話 #171、#181 的同一套；之前換一家沒有，換錯了只能再換一次、原本那一家還不一定在清單上）：動手前先快照，
@@ -256,9 +261,18 @@ export function swapStop(date, fromPoiId, toPoi, { breakfast = false } = {}) {
   state.notice = null;
   if (!state.pois[toPoi.id]) state.pois[toPoi.id] = toPoi;
   if (breakfast) state.trip = swapBreakfast(state.trip, date, toPoi.id, state.plans[date]?.plan);
-  else Object.assign(day, applySwap(day, fromPoiId, toPoi));
+  else Object.assign(day, chooseDay(day, fromPoiId, toPoi));
   commitTrip([date]);
-  state.undo = { kind: 'swap', dates: [date], before, text: `${TEXT.undoSwapped(fromName, shortName(toPoi.name_zh ?? toPoi.id), dateLabel(date))}${alsoChanged(plansBefore, [date])}` };
+  // 復原列看重排的結果寫（11-17 畫面審查；之前不看結果一律寫「換成」、只比別天）：
+  // - 選的那一家排進去了才寫「已把 A 換成 B」；重排之後它還是排不進（今天沒開、撞到必去或主行程）就寫「已把 A 拿掉，但 B 今天排不進」。
+  //   沒釘住的日子換了之後整天重新搜尋，引擎會讓他剛選的那一家先排（engine/core.js chosenPullOf），所以排不進是少數。
+  // - 當天別的勾選站因此落到排不進清單（重新搜尋換了一組站）：接「擠掉了 8/13（四） 的 X」，跟二選一同一句（displacedPicks；B 自己不算在裡面）。
+  const toName = shortName(toPoi.name_zh ?? toPoi.id);
+  const placed = (state.plans[date]?.plan?.sequence ?? []).some((s) => s.poi.id === toPoi.id);
+  const lead = placed ? TEXT.undoSwapped(fromName, toName, dateLabel(date)) : TEXT.undoSwapUnplaced(fromName, toName, dateLabel(date));
+  const squeezed = displacedPicks({ before: plansBefore, after: state.plans, dates: [date] }).filter((x) => x.poi.id !== toPoi.id);
+  const squeezedText = squeezed.length ? `；${TEXT.displacedNote(squeezed.map((x) => TEXT.displacedOne(dateLabel(x.date), shortName(x.poi.name_zh ?? x.poi.id))).join('、'))}` : '';
+  state.undo = { kind: 'swap', dates: [date], before, text: `${lead}${squeezedText}${alsoChanged(plansBefore, [date])}` };
   render();
 }
 
@@ -384,15 +398,30 @@ export function breakfastOff(date, mode, nowIndex = null) {
   const name = poiId ? (state.pois[poiId]?.name_zh ?? null) : null;
   // 原定那家是他自己勾的站（按了就從這天的勾選拿掉、記在 breakfast.pick）：吃飯店早餐那一句也把店名寫出來——之前只寫「早餐改成在飯店吃」，那一站無聲不見（11-12 畫面審查）
   const picked = Boolean(poiId) && (state.trip.days.find((d) => d.date === date)?.picks ?? []).some((p) => p?.poiId === poiId);
+  const named = Boolean(name) && (mode === 'later' || picked);   // 那一句裡有沒有寫出店名
   const text = mode === 'later' && name ? L.undoLater(name, dateLabel(date)) : name && picked ? L.undoHotelPicked(name, dateLabel(date)) : L.undoHotel(dateLabel(date));
   afterPaint(() => {
     const before = editsSnapshot();
     const plansBefore = state.plans;
     state.trip = next;
     commitTrip([date]);
-    state.undo = { kind: 'breakfast', dates: [date], before, text: `${text}${alsoChanged(plansBefore, [date])}`, nowIndex };
+    state.undo = { kind: 'breakfast', dates: [date], before, text: `${text}${noLaterDayText(date, name, named)}${alsoChanged(plansBefore, [date])}`, nowIndex };
     state.notice = null;
   });
+}
+
+/**
+ * 按了「改天去」「吃飯店早餐」、重排之後：原定那家在後面目前沒有排得進的日子（engine/trip.js breakfastLaterDays 回空陣列）就回接在復原列後面的半句
+ * 「；目前後面沒有排得進這家的日子」（那一句裡沒寫店名時用「；原定的 X 目前後面沒有排得進的日子」），不然回空字串（原話 #196、#197；11-17）。
+ * 之前這種時候畫面一句話都沒有：他按了「改天去」，以為後面會再推薦，其實哪一天都排不進（11-12 審查：試走版 8/15 的松島星鰻丼）。
+ * 那天本來就沒排到早餐（沒有哪一家可問）、國家層沒有早餐段都是 null，不多話。要在重排之後問：答案看的是這一版每天掛了哪些「或 X」。
+ * 旅程最後一天也不多話（11-17 畫面審查）：後面本來就沒有日子，「目前後面沒有排得進…」是廢話，「目前」還讀得像之後可能會有。
+ */
+function noLaterDayText(date, name, named) {
+  if (!hasLaterDay(state.trip, date)) return '';
+  const days = breakfastLaterDays({ trip: state.trip, days: state.plans, date, pois: state.pois, restPool: Object.values(state.pois), legFn: state.legFn, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, visited: visitedDates(state.field.visited) });
+  if (!Array.isArray(days) || days.length) return '';
+  return named || !name ? TEXT.breakfast.noLaterDay : TEXT.breakfast.noLaterDayNamed(name);
 }
 
 /** 日期下面的「改回來」：那天回到照常排早餐（engine/breakfast.js clearBreakfast：當初拿掉的勾選放回原位，除非那家已經排到別天）。 */
@@ -429,11 +458,6 @@ export function takeBreakfast(date, poiId) {
   });
 }
 
-/** planTrip 的其他參數（順延試排用，跟 replanAll 同一份）。 */
-function planArgsOf() {
-  return { rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, legFn: state.legFn, restPool: Object.values(state.pois), brief: state.brief, options: { visited: visitedDates(state.field.visited) } };
-}
-
 /**
  * 二選一選了 B（原話 #119「我選一間，到了 17 號就會自動排進另一間」；T16）：那天的 picks 把 A 換成 B（換這一站的邏輯，換掉的不算落選）、A 順延到別天
  * （engine/choices.js defer：主題日優先、再其餘 normal 日由早到晚，每天用引擎試排，排得進就定案；全排不進就先留在候選池），兩天現場套過的改案清掉、整趟重排；
@@ -450,13 +474,16 @@ export function chooseOption(date, fromPoiId, toPoi) {
   afterPaint(() => {
     const plansBefore = state.plans;
     const before = JSON.parse(JSON.stringify(snapshotTripEdits(state.trip, packAtNow())));
-    const r = chooseOptionTrip({ trip: state.trip, pois: state.pois, date, fromPoiId, toPoi, baseline: { days: Object.values(plansBefore) }, planArgs: planArgsOf() });
+    const r = chooseOptionTrip({ trip: state.trip, pois: state.pois, date, fromPoiId, toPoi, baseline: { days: Object.values(plansBefore) }, planArgs: planArgsOf(state) });
     state.trip = r.trip;
     clearApplied(date);
     if (r.toDate) clearApplied(r.toDate);
     saveTripEdits();
     replan();
-    state.undo = { kind: 'choose', dates: [date, r.toDate].filter(Boolean), before, name, text: `${deferNotice(r.entry, name, displacedPicks({ before: plansBefore, after: state.plans, dates: [date, r.toDate] }))}${alsoChanged(plansBefore, [date, r.toDate])}` };
+    // 選的那一家（B）重排之後自己排不進：另外講「B 今天排不進」，不寫成「擠掉了 B」（11-17；引擎會讓他剛選的那一家先排，排不進是今天沒開、撞到必去或主行程）
+    const placed = (state.plans[date]?.plan?.sequence ?? []).some((s) => s.poi.id === toPoi.id);
+    const squeezed = displacedPicks({ before: plansBefore, after: state.plans, dates: [date, r.toDate] }).filter((x) => !(x.date === date && x.poi.id === toPoi.id));
+    state.undo = { kind: 'choose', dates: [date, r.toDate].filter(Boolean), before, name, text: `${deferNotice(r.entry, name, squeezed, placed ? null : shortName(toPoi.name_zh ?? toPoi.id))}${alsoChanged(plansBefore, [date, r.toDate])}` };
     state.notice = null;   // 那句改由復原列顯示；afterPaint 看到不是「正在重排…」就不放回本來那句（跟之前被 deferNotice 取代一樣）
   });
 }
@@ -469,7 +496,7 @@ export function deferStop(date, poiId) {
   afterPaint(() => {
     const plansBefore = state.plans;
     const before = JSON.parse(JSON.stringify(snapshotTripEdits(state.trip, packAtNow())));
-    const r = deferStopTrip({ trip: state.trip, pois: state.pois, date, poiId, baseline: { days: Object.values(plansBefore) }, planArgs: planArgsOf() });
+    const r = deferStopTrip({ trip: state.trip, pois: state.pois, date, poiId, baseline: { days: Object.values(plansBefore) }, planArgs: planArgsOf(state) });
     state.trip = r.trip;
     clearApplied(date);
     if (r.toDate) clearApplied(r.toDate);
@@ -519,21 +546,39 @@ export async function applyPackJson(json, { persist = true } = {}) {
   render();
 }
 
+/**
+ * 設定頁「更新」：抓桌機的打包檔。失敗時那一句分三種（11-17）——
+ * (1) 連不上：fetch 自己丟錯＝請求沒拿到任何回應（桌機沒開、不在同一個網路、這台裝置沒有網路），或回應的標頭到了、本文傳到一半斷線（讀本文時丟錯；
+ *     打包檔 2 MB 多，手機經 Tailscale 抓到一半斷是會發生的）。瀏覽器給的字都是英文（Chrome「Failed to fetch」、Safari「Load failed」）：用白話講連不上。
+ *     本文要在這裡讀完（res.text()）：之前讀本文與解析包在 res.json() 裡、落在下面那一段，斷線時那一句還是帶英文（畫面審查在真瀏覽器量到的）。
+ * (2) 回來的不是 JSON（網址打成網頁、打成 App 自己的 /app/）：白話講不是打包檔、檢查網址——解析錯誤的原文（「Unexpected token '<'…」）他看不懂。
+ * (3) 其餘（伺服器回了錯誤狀態、這不是 Trip Pilot 的打包檔、打包檔比 App 新、存不進這台裝置）照舊把原文帶出來（那幾句本來就是白話）。
+ * 哪一種都不動現有的旅程：readPack 丟錯在寫入與換畫面之前。
+ */
 export async function updateFromUrl() {
   const url = state.device.packUrl;
   if (!url) { state.packStatus = TEXT.needUrl; render(); return; }
   state.packStatus = TEXT.updating; render();
+  let res; let body = null;
   try {
-    const res = await fetch(url, { cache: 'no-store' });
+    res = await fetch(url, { cache: 'no-store' });
+    if (res.ok) body = await res.text();
+  } catch { state.packStatus = TEXT.updateOffline(Boolean(state.trip)); render(); return; }
+  try {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    await applyPackJson(await res.json());
+    await applyPackJson(parsePackText(body, TEXT.updateNotJson));
   } catch (err) {
-    state.packStatus = TEXT.updateFailed(err.message); render();
+    state.packStatus = TEXT.updateFailed(err.message, Boolean(state.trip)); render();
   }
 }
 
+/** 打包檔的文字 → 物件；不是 JSON 就丟一句白話（notJson），不讓解析錯誤的英文原文跑到畫面上。 */
+function parsePackText(text, notJson) {
+  try { return JSON.parse(text); } catch { throw new Error(notJson); }
+}
+
 export async function importFile(file) {
-  try { await applyPackJson(JSON.parse(await file.text())); } catch (err) { state.packStatus = TEXT.updateFailed(err.message); render(); }
+  try { await applyPackJson(parsePackText(await file.text(), TEXT.importNotJson)); } catch (err) { state.packStatus = TEXT.updateFailed(err.message, Boolean(state.trip)); render(); }
 }
 
 export function saveDevice(partial) {
@@ -707,7 +752,7 @@ async function fetchWithin(ms, url, init, read = null) {
 
 /** 需求單的入口（設定頁那顆、空白頁「先填需求單」）此刻出不出現：交得出去的環境才出現。 */
 const briefEntryShown = () => canSubmitBrief(briefEnv(state));
-let briefProbing = null;   // 還沒回來的那次探測：submitBrief 在結果未知（briefEndpoint null）時先等它，不然剛開頁面就按「提交」會白跳一次另存對話框
+let briefProbing = null;   // 還沒回來的那次探測：submitBrief 在結果未知（briefEndpoint null）或上次連不上時先等它（等完不另外重探），不然剛開頁面就按「提交」會白跳一次另存對話框
 
 /**
  * 探測同源的提交端點（進 App 一次、每次進需求單頁一次），結果記在 state.briefEndpoint。頁面是桌機伺服器供應的（網址在 …/app/ 底下）才問，
@@ -823,12 +868,16 @@ export async function submitBrief() {
     const name = briefMdName(state.brief, todayStr());
     const fileName = `${name}.brief.md`;
     state.briefCopyText = null;
-    // 探測還沒回來（剛開頁面就按）：等它，最多 BRIEF_PROBE_MS。只有桌機伺服器供應的頁面會等——別處的探測不發請求、當下就有答案，(b) 的對話框前面仍然沒有 await
-    if (state.briefEndpoint === null && briefProbing) await briefProbing;
-    // 上次是連不上（伺服器沒開、逾時），不是它明講不收：先用短逾時重探一次，探到就走伺服器——之前連不上一次之後這次開頁就不再試，伺服器恢復了再按仍直接跳另存、
-    // 也不講為什麼（上一批審查的第 1 條）。還是連不上就把原因帶進狀態句。伺服器明講不收的（404／405、不收、不認這個來源）照舊不再問
-    if (state.briefEndpoint === false && state.briefUnreachable) {
-      await probeBriefEndpoint(BRIEF_TIMING.reprobeMs);
+    // 端點在不在還不知道（剛開頁面就按）、或上次是連不上（伺服器沒開、逾時；不是它明講不收）：先要一個新的答案再決定走哪條路。
+    // 有一次探測還在跑就等那一次（最多 probeMs），沒有才用短逾時重探一次（reprobeMs）——之前連不上一次之後這次開頁就不再試，伺服器恢復了再按仍直接跳另存、也不講為什麼（上一批審查的第 1 條）。
+    // 等完那一次就是答案，不緊接著再探一次（11-17）：之前剛開頁面就按會先等完開頁那次探測（4 秒）再重探（1.5 秒），最壞 5.5 秒，
+    // 超過瀏覽器留著那一下手勢的時間（Chrome 約 5 秒），另存對話框開不起來、退成下載；現在最壞就是一個 probeMs
+    // （11-17 真瀏覽器量：探測掛著、一開頁就按，另存對話框從按後 5.5 秒被叫、手勢已過期，變成 4.0 秒、手勢還在）。
+    // 上次已經是連不上、這次還在跑的那一次也只等到 reprobeMs：跟另外重探一次等得一樣久，只是不多發一筆（不設上限的話這種情況會從 1.5 秒變成最多 4 秒）。
+    // 還是連不上就把原因帶進狀態句。伺服器明講不收的（404／405、不收、不認這個來源）照舊不再問；只有桌機伺服器供應的頁面會等——別處的探測不發請求、當下就有答案，(b) 的對話框前面仍然沒有 await
+    if (state.briefEndpoint === null || (state.briefEndpoint === false && state.briefUnreachable)) {
+      if (briefProbing) await (state.briefEndpoint === null ? briefProbing : Promise.race([briefProbing, new Promise((resolve) => { setTimeout(resolve, BRIEF_TIMING.reprobeMs); })]));
+      else if (state.briefEndpoint === false) await probeBriefEndpoint(BRIEF_TIMING.reprobeMs);
       if (state.briefEndpoint !== true && state.briefUnreachable) failed = L.submitErrors.offline;
     }
     if (briefSubmitMode(briefEnv(state)) === 'server') {

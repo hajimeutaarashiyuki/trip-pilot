@@ -2,7 +2,7 @@
 // geocode 純函式（假 lookup、city.json 的 bbox）→ zones-init 草案 → 查不到的站區心頂替 → kb-check → buildPack → 手機端 readPack → 引擎排一天。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { readFileSync, existsSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -31,7 +31,7 @@ const HITS = {
   南町カフェ: { lat: 34.989, lng: 135.004 },
 };
 
-test('假城市：查座標（假 lookup）→ 聚類出區 → 歸區率 100% → 打包得出來 → 引擎排得出一天', async () => {
+test('假城市：查座標（假 lookup）→ 聚類出區 → 歸區率 100% → 打包得出來 → 引擎排得出一天', async (t) => {
   const city = loadCity(DIR);
   const data = JSON.parse(readFileSync(path.join(DIR, 'data.json'), 'utf8'));
   const pois = loadPois(data);
@@ -95,7 +95,9 @@ test('假城市：查座標（假 lookup）→ 聚類出區 → 歸區率 100% �
   assert.ok(read.pois.every((p) => p.zoneId && Number.isFinite(p.lat)));
 
   // 6. 引擎排一天（plan-report 走的同一條路；沒有 walk.json 就退直線估）
-  const file = path.join(mkdtempSync(path.join(tmpdir(), 'tp-fakecity-')), 'pack.json');
+  const tmp = mkdtempSync(path.join(tmpdir(), 'tp-fakecity-'));
+  t.after(() => rmSync(tmp, { recursive: true, force: true }));   // 成功失敗都收：之前不清，每跑一次系統暫存夾多一個 tp-fakecity-*（11-17 量到積了 155 個）
+  const file = path.join(tmp, 'pack.json');
   writeFileSync(file, JSON.stringify(pack), 'utf8');
   const r = await planPackFile(file);
   assert.equal(r.result.days.length, 1);

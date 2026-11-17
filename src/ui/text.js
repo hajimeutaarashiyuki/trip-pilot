@@ -34,6 +34,10 @@ export const TEXT = {
   noSwapMeal: (meal) => `附近沒有能當${meal}、順路又開著的店`,
   // 釘住順序的日子每一家都先試排過（engine/choices.js pinnedSwapCheck），有候選卻全被試排濾掉時多半句
   noSwapPinnedTail: '（照你調過的順序，換了會害別的站排不進的不列）',
+  // 清單是空的、而且有候選是因為排在別天才沒列（11-17 起別天行程裡的店不列）：講一聲，不然「附近沒有…的店」不是實情
+  noSwapElsewhereTail: '（別天已經排了的店不列）',
+  // 兩個原因都有（釘住的日子：別天排了的不列、剩下的又全被試排濾掉）：併成一個括號（之前兩個括號連著接，讀起來很長）
+  noSwapBothTail: '（別天已經排了的店不列；照你調過的順序，換了會害別的站排不進的也不列）',
   swapNote: (d) => (d > 0 ? `多繞 ${d} 分` : '順路'),
   // 換一家清單最上面一句講在換哪一餐（原話 #195）；候選有那一餐的說明就多一行，不分店型
   swapTitle: (meal) => `${meal}換一家`,
@@ -57,6 +61,10 @@ export const TEXT = {
   undoRemoved: (name, day) => `已把 ${name} 從 ${day} 拿掉`,
   // 換一家也有一次性的復原（11-12 畫面審查；原話 #171、#181 同一套）
   undoSwapped: (from, to, day) => `已把 ${day} 的 ${from} 換成 ${to}`,
+  // 換了之後重排，選的那一家還是排不進（今天沒開、撞到當天別的限制）：講實情，不寫「換成」（11-17 畫面審查：之前不看結果一律寫換好了）
+  undoSwapUnplaced: (from, to, day) => `已把 ${day} 的 ${from} 拿掉，但 ${to} 今天排不進`,
+  // 二選一選的那一家自己排不進：接在「A 已排到 8/17」後面（不混進「擠掉了…」——那是被它擠掉的別站）
+  chosenUnplaced: (name) => `${name} 今天排不進`,
   undo: '復原',
   undoClose: '關閉',
   // 動到的那天以外，別天的行程也跟著變了（ui/other-days.js；接在復原列那一句後面）：他只動一天、別天卻變了要講（11-12 畫面審查）
@@ -84,7 +92,8 @@ export const TEXT = {
     last: (x, a) => `已把 ${x} 接在 ${a} 之後`,
     only: (x) => `已把 ${x} 排進這天`,
     // early：原本的站最多提早幾分（選了「不去某站」時後面是提早；11-12 畫面審查：之前只看有沒有站變晚，後面提早 64 分也寫「時刻不變」）
-    shift: (n, early = 0) => (n > 0 ? `後面順延 ${n} 分` : early > 0 ? `後面最多提早 ${early} 分` : '其餘各站的時刻不變'),
+    // 有站變晚、也有站提早時兩個都寫（11-17 畫面審查；跟選項上那一句 fits 同一種寫法——之前選項寫「最多順延 30 分、提早 13 分」，套用後這一句只剩順延，三包 38 次都是）
+    shift: (n, early = 0) => (n > 0 && early > 0 ? `後面最多順延 ${n} 分、提早 ${early} 分` : n > 0 ? `後面順延 ${n} 分` : early > 0 ? `後面最多提早 ${early} 分` : '其餘各站的時刻不變'),
     slack: (m) => `（用掉留白 ${m} 分）`,
     shrunk: (name, to) => `${name} 縮短成 ${to} 分`,
     revived: (name) => `原本排不進的 ${name} 也排進來了`,
@@ -97,13 +106,20 @@ export const TEXT = {
     pickNone: '單選一項不夠：先選一項，下一輪再調，或算了不插：',
     pickMore: (round, max) => `再選一項（第 ${round} 輪，最多 ${max} 輪）：`,
     pickLast: '最後一輪，只列選了就排得下的：',
-    moreHead: '下面這幾個選了還不夠，要再調一項：',
+    // 選項分兩組（11-17；原話 #194「要壓縮哪個行程或是砍掉」）：每組一行小標；每個選項第一行是店名＋右邊的重點（少待寫幾分變幾分、不去寫店型，引擎排的站多一個小標）
+    groupShorten: '少待一點',
+    groupDrop: '這站不去',
+    mine: '（要插的這家）',
+    engineTag: '引擎排的',
+    dwellChange: (from, to) => `${from} → ${to} 分`,
     dead: '這一段插不進這家',
     deadLater: '調到這裡還是排不下，這一段插不進這家',
     shortenNew: (name, from, to) => `${name} 只待 ${to} 分（原本 ${from} 分）`,
     shorten: (name, from, to) => `${name} 少待 ${from - to} 分（${from}→${to}）`,
     drop: (name) => `不去 ${name}`,
-    fits: (shift, slack, early = 0) => ['排得下', shift > 0 ? `後面最多順延 ${shift} 分` : early > 0 ? `後面最多提早 ${early} 分` : '其餘各站的時刻不變', slack > 0 ? `用掉留白 ${slack} 分` : ''].filter(Boolean).join('，'),
+    // 有站變晚、也有站提早（選了「不去」中間某一站）兩個都寫（11-17；之前只寫順延，例：寫順延 31 分、實際另有站提早 34 分）。
+    // 寫短的那一種：「後面有的站最多順延 30 分、有的最多提早 13 分」在 390px 寬的選項鍵上會折成兩行（實量每顆多 21px）
+    fits: (shift, slack, early = 0) => ['排得下', shift > 0 && early > 0 ? `後面最多順延 ${shift} 分、提早 ${early} 分` : shift > 0 ? `後面最多順延 ${shift} 分` : early > 0 ? `後面最多提早 ${early} 分` : '其餘各站的時刻不變', slack > 0 ? `用掉留白 ${slack} 分` : ''].filter(Boolean).join('，'),
     needMore: (n) => (n != null ? `還差 ${n} 分，要再調一項` : '還排不下，要再調一項'),
     adds: (msgs) => `會多一句：${msgs}`,
     revives: (names) => `原本排不進的 ${names} 會排進來`,
@@ -118,6 +134,9 @@ export const TEXT = {
     tag: '早餐',
     inserted: '引擎先挑的早餐，不合意就按『換一家』；也可以改天去、或吃飯店早餐',
     insertedNow: '引擎先挑的早餐；不去就按『吃飯店早餐』或『改天去』',
+    // 旅程最後一天的早餐卡沒有「改天去」（後面沒有日子可以去；11-17）：那一句也不提它
+    insertedLast: '引擎先挑的早餐，不合意就按『換一家』；也可以吃飯店早餐',
+    insertedNowLast: '引擎先挑的早餐；不去就按『吃飯店早餐』',
     later: '改天去',
     hotel: '吃飯店早餐',
     back: '改回來',
@@ -134,6 +153,13 @@ export const TEXT = {
     undoHotelPicked: (name, day) => `${day} 的早餐改成在飯店吃，${name} 這天不去`,
     undoLater: (name, day) => `${day} 不排早餐，${name} 改天去`,
     undoTaken: (name, day) => `已把 ${name} 排成 ${day} 的早餐`,
+    // 按了「改天去」「吃飯店早餐」之後，後面目前沒有排得進這家的日子（engine/trip.js breakfastLaterDays 回空陣列）：接在復原列那一句後面（11-17；原話 #196、#197——
+    // 之前這種時候畫面一句話都沒有，他會以為後面會再推薦）。那一句裡已經有店名就用前一句；沒有店名（原定那家是引擎排的、他按吃飯店早餐）用後一句把店名寫出來
+    noLaterDay: '；目前後面沒有排得進這家的日子',
+    noLaterDayNamed: (name) => `；原定的 ${name} 目前後面沒有排得進的日子`,
+    // 候選頁：被「吃飯店早餐／改天去」拿掉的勾選站那一列的尾巴（之前寫「沒排進」；11-17）
+    poolHotel: (day) => `${day} 早餐在飯店吃，這天不去`,
+    poolLater: (day) => `${day} 不排早餐，改天去`,
   },
   // 二選一與順延（T16；原話 #119、#138）：站卡「或 B」、排不進清單「排到別天」、順延到的那天「從 8/15 順延」、候選頁「順延中」
   orChoice: '或',
@@ -219,7 +245,14 @@ export const TEXT = {
   update: '更新',
   updating: '更新中…',
   updated: (name, at) => `更新好了：${name}（${fmtAt(at)}）`,
-  updateFailed: (msg) => `更新失敗：${msg}。沒網路的話，這台裝置裡原本的旅程還在。`,
+  // 更新失敗分兩種（11-17）：連不上（fetch 自己丟錯——桌機沒開、不在同一個網路、這台裝置沒有網路）用白話講，不帶瀏覽器的英文（之前是「更新失敗：Failed to fetch。…」）；
+  // 其他的照舊帶原文（HTTP 狀態碼、「這不是 Trip Pilot 的打包檔」、「打包檔版本 N 比 App 新，先更新 App」…）。hasTrip＝這台裝置現在有旅程：有才接「原本的旅程還在」
+  // ——之前一律接「沒網路的話，…」，版本不合、網址打錯時那半句讀起來不通
+  updateOffline: (hasTrip = false) => `更新失敗：連不上桌機，或這台裝置沒有網路。${hasTrip ? '這台裝置裡原本的旅程還在。' : ''}`,
+  updateFailed: (msg, hasTrip = false) => `更新失敗：${msg}。${hasTrip ? '這台裝置裡原本的旅程還在。' : ''}`,
+  // 回來的東西不是 JSON（網址打成網頁、打成 App 自己的 /app/；選到別種檔案）：接在「更新失敗：」後面的那半句，不帶解析錯誤的英文原文（11-17 畫面審查）
+  updateNotJson: '這個網址回來的不是打包檔，檢查網址有沒有打錯',
+  importNotJson: '這個檔案不是打包檔',
   needUrl: '先填桌機的打包檔網址',
   importFile: '從檔案載入',
   noPack: '這台裝置還沒有旅程',

@@ -50,7 +50,6 @@
   .btn.quiet.on { border-color: var(--accent); color: var(--accent); }
   .btn.alt { display: block; width: 100%; text-align: left; margin-top: 6px; border-color: var(--line); color: var(--fg); background: var(--bg-elevated); white-space: normal; line-height: 1.5; }
   .btn.alt .intro { display: block; font-size: 14px; color: var(--muted); margin-top: 2px; }   /* 換一家清單每家下面一行簡介，整段不截（原話 #177）；button 裡只能放 span，用 block 換行 */
-  .btn.alt .intro.adds { color: var(--warn); }   /* 安插的選項：選了會多出來的黃字（今天沒排晚餐那種） */
   .btn.huge { width: 100%; font-size: 20px; padding: 16px; margin: 12px 0; }
   .btn.wide { display: block; width: 100%; }
   .btn.star { padding: 10px 8px; }
@@ -112,9 +111,24 @@
   .corridor-item .intro { flex: 1 1 100%; }   /* 每家一行簡介，整段不截（原話 #193） */
   .corridor-item .actions { flex: 1 1 100%; margin-top: 4px; }
   .corridor-item .actions .btn { padding: 4px 10px; font-size: 14px; }
-  /* 升級成站排不下時，那一家底下的那組選項（原話 #194）：一句為什麼、每個選項一顆鍵（沿用換一家清單的 .btn.alt）、最後「算了，不插」 */
+  /* 升級成站排不下時，那一家底下的那組選項（原話 #194）：一句為什麼、提示句，選項分「少待一點」「這站不去」兩組各一行小標（.ask-group），最後「算了，不插」。
+     每個選項一整列可以按（.btn.alt.opt，至少 44px 高），三行：店名＋靠右的重點（.opt-top：少待寫幾分變幾分、不去寫店型小標，引擎排的多一個小標）、
+     後果（.opt-note；會多出來的黃字 .adds 另起一行、warn 色）、那一站的簡介（.opt-intro，最多兩行、超過截斷；完整的在那一站自己的卡上）。
+     選項五個以上（.many，planner.js 加）簡介收成一行。11-17 在 390×844 量七天包 28 組（中位數／最高／超過一個螢幕 844px 的組數）：改之前 1,122／2,009／17 組；
+     鍵內距 8px、鍵距 6px：簡介兩行 936／1,591／15、一行 810／1,381／8；鍵內距 6px、鍵距 4px：兩行 872／1,477／15、一行 746／1,267／4；不放簡介 672／1,151／2（原話 #193 要簡介，不採）。
+     取緊的那一種、選項少時留兩行（746／1,267／4）：四個以下的兩行也看得完，五個以上收成一行才進得了一個螢幕 */
   .insert-ask { flex: 1 1 100%; min-width: 0; margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--line); }
   .insert-ask .warn-line { font-weight: 400; }
+  .insert-ask .ask-group { margin: 8px 0 0; color: var(--muted); font-weight: 600; }
+  .btn.alt.opt { min-height: 44px; padding: 6px 12px; margin-top: 4px; }
+  .opt .opt-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .opt .opt-name { min-width: 0; overflow-wrap: anywhere; }
+  .opt .opt-mine { font-size: 14px; color: var(--muted); }
+  .opt .opt-side { flex: none; display: inline-flex; align-items: center; gap: 6px; font-size: 14px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .opt .opt-note { display: block; font-size: 14px; }
+  .opt .opt-note.adds { color: var(--warn); }
+  .opt .opt-intro { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; font-size: 14px; color: var(--muted); }
+  .insert-ask.many .opt-intro { -webkit-line-clamp: 1; line-clamp: 1; }
   .btn.text { border: 0; padding: 6px 8px; margin-left: -8px; border-radius: 8px; font-size: 14px; color: var(--accent); text-align: left; background: transparent; }   /* 現場頁單手按：文字鍵也要有 30px 左右的高度（10-16 實測 0 padding 只有 21px）；負邊距讓文字跟卡上其他行對齊 */
   .corridor-now { margin: 2px 0; }
   .warn-list { margin: 6px 0 0; padding-left: 18px; color: var(--warn); font-size: 14px; }

@@ -12,8 +12,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createPackServer, sanitizeBriefName, historyStamp, parseArgs } from '../../tools/serve-packs.mjs';
 import { briefMdName } from '../../src/data/brief.js';
+import { listenSafe } from '../_listen.js';
 
-const TOOLS = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../tools');
+const TOOLS =path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../tools');
 const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 1, 2, 3, 0xff]);
 const MD = { 'Content-Type': 'text/markdown; charset=utf-8' };
 const BRIEF_V1 = '# 行前需求單（Trip Brief）\n\n| 欄位 | 填 |\n|---|---|\n| 城市（主據點第一個） | 仙台 |\n\n- 要去的：\n  - 作並溫泉\n';
@@ -41,13 +42,14 @@ async function start(t, { acceptBriefs = true, briefDir, appDir, ...rest } = {})
   assert.ok(dirs.trips.startsWith(tmpdir()), '測試的需求單資料夾一定在暫存區，不是專案的 trips/');
   const logs = [];
   const server = createPackServer({ dir: dirs.packs, appDir: appDir === undefined ? dirs.dist : appDir, briefDir: briefDir === undefined ? dirs.trips : briefDir, acceptBriefs, log: (line) => logs.push(line), ...rest });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  // 埠由系統挑，挑到 fetch 禁用的就重挑（test/_listen.js）：這個檔有一條用 fetch 送大檔，拿到禁用的埠會隨機紅（跟 brief-submit 那一條同一個洞；11-17 審查）
+  const port = await listenSafe(server);
   t.after(async () => {
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
     await rm(root, { recursive: true, force: true });
   });
-  return { root, dirs, logs, port: server.address().port };
+  return { root, dirs, logs, port };
 }
 
 /** 原封送一個請求（路徑不整理）。body 給 Buffer 或字串；回 { status, headers, body, text, json() }。 */
@@ -437,9 +439,8 @@ test('頁面的資料夾還沒建（發布副本還沒放）：/app/ 與底下�
   t.after(() => rm(root, { recursive: true, force: true }));
   const missing = path.join(dirs.packs, 'app');   // packs/app：還不存在
   const server = createPackServer({ dir: dirs.packs, appDir: missing, briefDir: dirs.trips });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = await listenSafe(server);
   t.after(() => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }));
-  const { port } = server.address();
   for (const target of ['/app/', '/app/index.html', '/app/sw.js', '/trip-pilot/app/']) assert.equal((await raw(port, 'GET', target)).status, 404, target);
   assert.equal((await raw(port, 'GET', '/app')).status, 302);
   assert.ok(!(await raw(port, 'GET', '/app/')).text.includes('Trip Pilot'), '沒有拿 dist 的頁面頂替');

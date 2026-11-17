@@ -14,6 +14,7 @@ import { state, submitBrief, probeBriefEndpoint, setBrief, clearBrief, render, r
 import { briefEnv } from '../../src/ui/brief.js';
 import { briefToMarkdown, normalizeBrief, canSubmitBrief, briefSubmitMode, emptyBrief } from '../../src/data/brief.js';
 import { TEXT } from '../../src/ui/text.js';
+import { listenSafe, FETCH_BAD_PORTS } from '../_listen.js';
 
 const L = TEXT.brief;
 const FILE = '2026-08-仙台.brief.md';
@@ -118,12 +119,12 @@ async function startServer(t, options = {}) {
   await mkdir(trips);
   await writeFile(path.join(root, 'packs', 'pack.json'), '{}');
   const server = createPackServer({ dir: path.join(root, 'packs'), briefDir: trips, ...options });
-  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
-  const port = server.address().port;
+  const port = await listenSafe(server);
   const close = async () => { server.closeAllConnections(); await new Promise((resolve) => server.close(resolve)); };
   t.after(async () => { await close(); await rm(root, { recursive: true, force: true }); });
   return { trips, port, close, base: `http://127.0.0.1:${port}` };
 }
+// listenSafe／FETCH_BAD_PORTS 搬到 test/_listen.js（test/tools/serve-packs.test.js 也用同一份）：系統挑到 fetch 禁用的埠就關掉重挑
 async function tree(dir, prefix = '') {
   const out = [];
   for (const e of await readdir(dir, { withFileTypes: true })) {
@@ -235,7 +236,7 @@ test('探測：頁面不在 …/app/ 底下（GitHub Pages）不發請求、算�
   assert.equal(await probeBriefEndpoint(), false, '伺服器關著');
 
   const other = http.createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end('<html>'); });
-  await new Promise((resolve) => other.listen(0, '127.0.0.1', resolve));
+  await listenSafe(other);
   t.after(() => new Promise((resolve) => { other.closeAllConnections(); other.close(resolve); }));
   openPage(`http://127.0.0.1:${other.address().port}/app/`);
   assert.equal(await probeBriefEndpoint(), false, '回 200 但不是這支伺服器（沒有 X-Trip-Pilot-Brief）');
@@ -300,7 +301,8 @@ test('伺服器連不上一次之後又開了：同一頁再按「提交」先�
   await mkdir(trips);
   const open = async (port = 0) => {
     const server = createPackServer({ dir: path.join(root, 'packs'), briefDir: trips });
-    await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
+    if (port) await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
+    else await listenSafe(server);
     return server;
   };
   const shut = (server) => { server.closeAllConnections(); return new Promise((resolve) => server.close(resolve)); };
@@ -350,7 +352,7 @@ test('送出的時限涵蓋讀回應的本文：標頭到了、本文卡住不�
     res.write('{"ok":true,"file":"trips/');   // 半截 JSON，之後不再送、也不結束
     hung.push(res);
   });
-  await new Promise((resolve) => stalled.listen(0, '127.0.0.1', resolve));
+  await listenSafe(stalled);
   t.after(() => new Promise((resolve) => { stalled.closeAllConnections(); stalled.close(resolve); }));
   const saved = { ...BRIEF_TIMING };
   t.after(() => Object.assign(BRIEF_TIMING, saved));
@@ -370,7 +372,7 @@ test('送出的時限涵蓋讀回應的本文：標頭到了、本文卡住不�
   assert.deepEqual([state.briefEndpoint, state.briefUnreachable], [false, true]);
   // 探測：伺服器收了連線卻不回（經 tailscale、桌機睡著）——時限到就算連不上
   const silent = http.createServer(() => {});
-  await new Promise((resolve) => silent.listen(0, '127.0.0.1', resolve));
+  await listenSafe(silent);
   t.after(() => new Promise((resolve) => { silent.closeAllConnections(); silent.close(resolve); }));
   reset();
   openPage(`http://127.0.0.1:${silent.address().port}/app/#/brief`);
@@ -381,6 +383,71 @@ test('送出的時限涵蓋讀回應的本文：標頭到了、本文卡住不�
   const t1 = Date.now();
   await submitBrief();
   assert.ok(Date.now() - t1 < 3000, '再按「提交」的重探用短逾時，不會久等');
+});
+
+test('探測還在跑就按「提交」：等的是同一次探測，等完不另外重探——剛開頁面就按（結果還不知道）與上次連不上、剛回到這一頁又在探，都只有那一筆 HEAD；狀態句照樣講原因、改走存檔', async (t) => {
+  // 收了連線卻不回的伺服器（經 tailscale、桌機沒開）：探測會等滿時限。時限調短：探測 400 ms、重探 300 ms
+  const silent = http.createServer(() => {});
+  await listenSafe(silent);
+  t.after(() => new Promise((resolve) => { silent.closeAllConnections(); silent.close(resolve); }));
+  const saved = { ...BRIEF_TIMING };
+  t.after(() => Object.assign(BRIEF_TIMING, saved));
+  Object.assign(BRIEF_TIMING, { probeMs: 400, reprobeMs: 300, postMs: 300 });
+  const url = `http://127.0.0.1:${silent.address().port}/app/#/brief`;
+  // (1) 剛開頁面：探測剛發出去、結果還不知道就按
+  reset();
+  openPage(url);
+  let probing = probeBriefEndpoint();
+  assert.equal(state.briefEndpoint, null, '還沒回來');
+  assert.deepEqual(page.calls, ['HEAD /brief']);
+  let t0 = Date.now();
+  let r = await submitBrief();
+  let took = Date.now() - t0;
+  assert.deepEqual(page.calls, ['HEAD /brief'], '等的就是開頁那一次，沒有緊接著再探一次（之前等完 4 秒再重探 1.5 秒，最壞 5.5 秒，另存對話框要的那一下手勢早就過期）');
+  assert.equal(await probing, false);
+  assert.deepEqual(r, { via: 'download', file: FILE, pickerFailed: false });
+  assert.equal(state.briefStatus, `沒交到桌機（桌機的伺服器沒回應），改成存檔。已存成 ${FILE}；請放在 trip-pilot 的 trips 資料夾，再跟 Claude 說一聲`);
+  assert.deepEqual([state.briefEndpoint, state.briefUnreachable], [false, true]);
+  assert.ok(took >= 300 && took < 650, `只等一個探測時限（400 ms）、不是探測＋重探（700 ms）：實際 ${took} ms`);
+  // (2) 上次連不上（結果還記著），他離開又回到需求單頁、新的一次探測還在跑就按：等這一次，不另外發一筆短的；
+  //     而且只等到重探的那個短時限（300 ms）——這次探測自己的時限調成 1500 ms，等滿的話會比以前另外重探一次還久
+  Object.assign(BRIEF_TIMING, { probeMs: 1500, reprobeMs: 300 });
+  page.calls = [];
+  page.downloads = [];
+  probing = probeBriefEndpoint();
+  assert.deepEqual([state.briefEndpoint, state.briefUnreachable, page.calls], [false, true, ['HEAD /brief']]);
+  const picker = fakePicker();
+  t0 = Date.now();
+  r = await submitBrief();
+  took = Date.now() - t0;
+  assert.deepEqual(page.calls, ['HEAD /brief'], '還在跑的那一次就是這次的重探');
+  assert.deepEqual(r, { via: 'picker', file: FILE });
+  assert.equal(picker.opened, 1);
+  assert.equal(state.briefStatus, `沒交到桌機（桌機的伺服器沒回應），改成存檔。已存成 ${FILE}；請放在 trip-pilot 的 trips 資料夾，再跟 Claude 說一聲`);
+  assert.ok(took >= 200 && took < 1000, `等到短時限 300 ms 就走存檔，不等滿這次探測的 1500 ms：實際 ${took} ms`);
+  assert.equal(await probing, false, '那一次探測自己照樣跑完（之後的狀態照它的結果）');
+  assert.deepEqual([state.briefEndpoint, state.briefUnreachable], [false, true]);
+  Object.assign(BRIEF_TIMING, { probeMs: 400, reprobeMs: 300 });
+  // (3) 沒有探測在跑、上次是連不上：照舊用短逾時重探一次（300 ms）
+  page.calls = [];
+  t0 = Date.now();
+  await submitBrief();
+  took = Date.now() - t0;
+  assert.deepEqual(page.calls, ['HEAD /brief']);
+  assert.ok(took >= 200 && took < 550, `重探用短逾時 300 ms：實際 ${took} ms`);
+});
+
+test('listenSafe（這個檔自己的小工具）：系統挑到 fetch 禁用的埠就關掉重挑，回一個連得上的', async (t) => {
+  const server = http.createServer((req, res) => res.end('ok'));
+  t.after(() => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }));
+  const seen = [];
+  const port = await listenSafe(server, (p) => { seen.push(p); return seen.length < 3; });   // 前兩個當成禁用的
+  assert.equal(seen.length, 3);
+  assert.equal(port, seen[2]);
+  assert.equal(server.address().port, port, '最後聽的就是回的那個埠');
+  assert.equal(await (await realFetch(`http://127.0.0.1:${port}/`)).text(), 'ok');
+  for (const p of [1719, 5060, 6000, 6667, 10080]) assert.ok(FETCH_BAD_PORTS.has(p), String(p));
+  assert.ok(!FETCH_BAD_PORTS.has(8080));
 });
 
 test('(b) 另存對話框（沒有端點）：建議檔名 <名字>.brief.md、id 讓瀏覽器記住資料夾、類型 Markdown；寫進去的就是需求單文字；按取消不算錯也不留字；開不起來或寫不進去改下載', async () => {

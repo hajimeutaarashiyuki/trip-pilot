@@ -4,10 +4,10 @@
 // 吃飯店早餐／改天去／改回來／按了「或 X」／早餐換一家，都是回新 trip 的純函式。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planTrip } from '../../src/engine/trip.js';
+import { planTrip, breakfastLaterDays } from '../../src/engine/trip.js';
 import {
   breakfastChoiceOf, servesBreakfast, breakfastStop, isPlacedBreakfast, breakfastOfPlan, breakfastKind, alignBreakfast, tryBreakfastFirst, breakfastOptions, assignBreakfasts,
-  breakfastOffers, breakfastSwapCandidates, setBreakfast, clearBreakfast, swapBreakfast, takeBreakfastOffer, rememberedBreakfasts, blockedBreakfasts, breakfastKeepOf, keepBreakfasts, BREAKFAST_PRIORITY,
+  breakfastOffers, breakfastFitDays, breakfastSwapCandidates, setBreakfast, clearBreakfast, swapBreakfast, takeBreakfastOffer, rememberedBreakfasts, blockedBreakfasts, breakfastKeepOf, keepBreakfasts, BREAKFAST_PRIORITY,
 } from '../../src/engine/breakfast.js';
 import { isChoiceStop } from '../../src/engine/choices.js';
 import { engineMayInsert } from '../../src/engine/trip.js';
@@ -462,6 +462,100 @@ test('原定的早餐是他勾的站：setBreakfast 把那筆勾選拿掉記著�
   const elsewhere = { ...t1, days: t1.days.map((d) => (d.date === FRI ? { ...d, picks: [...d.picks, { poiId: noodle.id, priority: 'want' }] } : d)) };
   assert.deepEqual(clearBreakfast(elsewhere, THU).days[0].picks, dayPicks);
   assert.equal(clearBreakfast(elsewhere, THU).days[0].breakfast, undefined);
+});
+
+test('這家早餐後面有哪幾天排得進（breakfastLaterDays；11-17）：改天去與吃飯店早餐兩種紀錄都能問、還沒按也能問；最後一天後面沒有日子；要搭車的那家哪天都排不進；沒有哪一家可問回 null', () => {
+  // 原話 #196「…不是不去了可能是改天去或是我吃飯店早餐」、#197「…後續的其中一天在不影響原定行程的前提下 可以再推薦我一次」：
+  // 按了「改天去」之後後面一天都排不進時，畫面要講得出來；旅程最後一天的早餐卡不出「改天去」
+  const ask = (trip, r, date, extra = {}) => breakfastLaterDays({ trip, days: r.days, date, pois: Object.fromEntries(WORLD.map((p) => [p.id, p])), restPool: pool3, legFn: legs3, rules, settings, country: JP, kb, ...extra });
+  const r0 = plan3(threeDays);
+  const b = r0.days.map((d) => d.plan.meals.breakfast);
+  // 還沒按（那家現在是那天的早餐）：拿現在排好的每一天試
+  assert.deepEqual(ask(threeDays, r0, THU), [FRI, SAT], '不給 poiId 就問那天現在的早餐');
+  assert.deepEqual(ask(threeDays, r0, THU, { poiId: b[0] }), [FRI, SAT]);
+  assert.deepEqual(ask(threeDays, r0, FRI), [SAT]);
+  assert.deepEqual(ask(threeDays, r0, SAT), [], '旅程最後一天：後面沒有日子——早餐卡不出「改天去」');
+  // 改天去：就是引擎掛「或 X」的那幾天
+  const later = setBreakfast(threeDays, THU, 'later', b[0], AT);
+  const rl = plan3(later);
+  assert.deepEqual(ask(later, rl, THU), rl.days.filter((d) => d.plan.breakfastOffers.some((o) => o.poiId === b[0])).map((d) => d.date));
+  assert.deepEqual(ask(later, rl, THU), [FRI, SAT]);
+  // 吃飯店早餐：引擎只在第一個合格的日子推薦一次，但問「後面有哪幾天排得進」照樣每個排得進的日子都列
+  const hotel = setBreakfast(threeDays, THU, 'hotel', b[0], AT);
+  const rh = plan3(hotel);
+  assert.deepEqual(rh.days.map((d) => d.plan.breakfastOffers.length), [0, 1, 0]);
+  assert.deepEqual(ask(hotel, rh, THU), [FRI, SAT]);
+  // 按了「或 X」排走之後：就是排到的那一天
+  const taken = takeBreakfastOffer(later, SAT, b[0], rl.days[2].plan, AT);
+  assert.deepEqual(ask(taken, plan3(taken), THU), [SAT]);
+  // 紀錄上寫著已經排到別天（movedTo）、那天的序列裡卻沒有它（排成第一站會害別的站排不進、落在排不進清單）：照紀錄回那一天，不再當成還等著推薦
+  const movedAway = { ...later, days: later.days.map((d) => (d.date === THU ? { ...d, breakfast: { ...d.breakfast, movedTo: FRI } } : d)) };
+  assert.deepEqual(ask(movedAway, rl, THU), [FRI]);
+  // breakfastFitDays 直接用：只回 fromDate 之後的日子（當天與前面的不算），帶換掉誰；最後一天之後沒有日子
+  const prepared = r0.days.map((d) => ({ date: d.date, day: d.day, plan: d.plan, home, visited: [], pinned: false }));
+  const fitArgs = { poi: pool3.find((p) => p.id === b[0]), days: prepared, legFn: legs3, rules, settings, country: JP, kb };
+  assert.deepEqual(breakfastFitDays({ ...fitArgs, fromDate: FRI }).map((f) => [f.date, f.replaces]), [[SAT, b[2]]]);
+  assert.deepEqual(breakfastFitDays({ ...fitArgs, fromDate: THU }).map((f) => f.date), [FRI, SAT]);
+  assert.deepEqual(breakfastFitDays({ ...fitArgs, fromDate: SAT }), []);
+  assert.deepEqual(breakfastFitDays({ ...fitArgs, fromDate: THU, country: BASE_COUNTRY }), [], '國家層沒有早餐段');
+  // 那天本來就沒排到早餐、他只是說在飯店吃：沒有哪一家可問
+  const none = setBreakfast(threeDays, THU, 'hotel', null, AT);
+  assert.equal(ask(none, plan3(none), THU), null);
+  assert.equal(ask(threeDays, r0, '2026-01-01'), null, '沒有那一天');
+  // 國家層沒有早餐段：沒有早餐這回事
+  const plain = run(threeDays, pool3, { country: BASE_COUNTRY, legFn: legs3 });
+  assert.equal(breakfastLaterDays({ trip: threeDays, days: plain.days, date: THU, poiId: noodle.id, pois: {}, restPool: pool3, legFn: legs3, rules, settings, country: BASE_COUNTRY, kb }), null);
+});
+
+test('breakfastLaterDays 的兩支（11-17 審查的變異測試：這兩支拿掉沒有測試會紅）：那家已經被他勾進後面某一天（紀錄上沒有 movedTo）就回那一天；按了「改天去」照抄引擎掛推薦的日子——引擎驗過不掛的日子不列', () => {
+  const poisOf = Object.fromEntries(WORLD.map((p) => [p.id, p]));
+  // (一) 他把記著要改天去的那家自己勾進 FRI（一般的勾選，不是按「或 X」，所以 THU 的紀錄沒有 movedTo）：回 FRI。
+  //      不看這一支的話，它已經不在推薦的名單裡（任何一天勾過的不推薦），答案會變成「後面沒有日子」
+  const b = plan3(threeDays).days.map((d) => d.plan.meals.breakfast);
+  const later = setBreakfast(threeDays, THU, 'later', b[0], AT);
+  const picked = { ...later, days: later.days.map((d) => (d.date === FRI ? { ...d, picks: [...d.picks, { poiId: b[0], priority: 'want' }] } : d)) };
+  const rp = plan3(picked);
+  assert.ok(ids(rp.days[1].plan).includes(b[0]), `FRI 排進去了：${ids(rp.days[1].plan).join('、')}`);
+  assert.equal(picked.days[0].breakfast.movedTo, undefined);
+  assert.ok(rp.days.every((d) => d.plan.breakfastOffers.length === 0), '已經勾進別天：不再掛推薦');
+  assert.deepEqual(breakfastLaterDays({ trip: picked, days: rp.days, date: THU, pois: poisOf, restPool: pool3, legFn: legs3, rules, settings, country: JP, kb }), [FRI]);
+  // (二) 改天去：答案就是引擎掛了「或 X」的日子。SAT 的早餐是他勾的站自己落在早餐時段——引擎掛推薦之前會真的少勾那一站重排一次，其餘各站先後會變就不掛；
+  //      這裡直接給排好的三天：FRI 掛了、SAT 沒掛（拿 SAT 現在的序列直接試是排得進的，但引擎驗過不掛）。答案只有 FRI
+  const seqOf = (list) => { let t = 9 * 60; return list.map((s) => { const startMin = t + 5; t = startMin + s.dwellMin; return { poi: s.poi, dwellMin: s.dwellMin, priority: 'want', optional: false, insertedBy: null, isAnchor: false, designated: false, fixedWindow: null, gap: null, arriveMin: startMin, startMin, endMin: t, waitMin: 0 }; }); };
+  const dayOf = (date) => ({ date, type: 'normal', window: { startMin: 540, endMin: 1350 }, windowRaw: { startMin: 540, endMin: 1440 }, regionZones: ['town'], designated: [], party: 1, breakfast: null });
+  const planOf = (list, offers = []) => ({ sequence: seqOf(list), dropped: [], complete: true, breakfastOffers: offers, meals: {} });
+  const trip = tripOf([{ date: THU, picks: dayPicks, breakfast: { mode: 'later', poiId: noodle.id, at: AT } }, { date: FRI, picks: want(A.id, B.id) }, { date: SAT, picks: want(stand.id, A.id, B.id) }]);
+  const days = [
+    { date: THU, day: { ...dayOf(THU), breakfast: { mode: 'later', poiId: noodle.id, movedTo: null } }, plan: planOf([{ poi: A, dwellMin: 60 }]) },
+    { date: FRI, day: dayOf(FRI), plan: planOf([{ poi: bakery, dwellMin: 20 }, { poi: A, dwellMin: 60 }, { poi: B, dwellMin: 60 }], [{ poiId: noodle.id, fromDate: THU, mode: 'later', replaces: bakery.id, detourMin: 0, shiftMin: 0 }]) },
+    { date: SAT, day: dayOf(SAT), plan: planOf([{ poi: stand, dwellMin: 20 }, { poi: A, dwellMin: 60 }, { poi: B, dwellMin: 60 }]) },
+  ];
+  const args = { trip, days, pois: poisOf, restPool: pool3, legFn: flat, rules, settings, country: JP, kb };
+  assert.deepEqual(breakfastFitDays({ poi: noodle, fromDate: THU, days: days.slice(1).map((d) => ({ ...d, home, visited: [], pinned: false })), legFn: flat, rules, settings, country: JP, kb }).map((f) => f.date), [FRI, SAT], '對照：拿現在的序列直接試，兩天都排得進');
+  assert.deepEqual(breakfastLaterDays({ ...args, date: THU }), [FRI], '改天去：照抄引擎掛的日子，SAT 不列');
+  // 同一份排法、紀錄換成「吃飯店早餐」：引擎只掛第一個合格的日子，所以後面的日子拿現在的行程再試——SAT 會列（這一支的差別）
+  const hotelTrip = { ...trip, days: trip.days.map((d) => (d.date === THU ? { ...d, breakfast: { ...d.breakfast, mode: 'hotel' } } : d)) };
+  const hotelDays = days.map((d) => (d.date === FRI ? { ...d, plan: { ...d.plan, breakfastOffers: d.plan.breakfastOffers.map((o) => ({ ...o, mode: 'hotel' })) } } : d));
+  assert.deepEqual(breakfastLaterDays({ ...args, trip: hotelTrip, days: hotelDays, date: THU }), [FRI, SAT]);
+});
+
+test('後面一天都排不進的那一家（要搭車才到得了：先吃再上車，哪天都當不了第一站）：還沒按就問得出來、按了「改天去」之後引擎沒有一天掛推薦，breakfastLaterDays 都是空的', () => {
+  // 試走版 8/15 的松島星鰻丼就是這種：他勾的站自己落在早餐時段，按了「改天去」之後後面沒有任何一句話（11-12 審查）
+  const far = eat('外地丼', { dwellMin: 40 });
+  const rideLegs = makeLeg({}, { 'home|外地丼': 20, '外地丼|街區A': 20, '外地丼|街區C': 20, '外地丼|街區B': 20, '外地丼|午餐店': 20, '外地丼|晚餐店': 20 });
+  const trip = tripOf([{ date: THU, picks: [...want(far.id), ...dayPicks] }, { date: FRI, picks: want(C.id, lunch.id, dinner.id) }, { date: SAT, type: 'departure', departAirportMin: 18 * 60, picks: want(B.id) }]);
+  const pois = Object.fromEntries([...WORLD, far].map((p) => [p.id, p]));
+  const plan = (t) => planTrip({ trip: t, pois, rules, settings, country: JP, kb, legFn: rideLegs, restPool: [stand, bakery] });
+  const ask = (t, r) => breakfastLaterDays({ trip: t, days: r.days, date: THU, pois, restPool: [stand, bakery], legFn: rideLegs, rules, settings, country: JP, kb });
+  const r0 = plan(trip);
+  assert.equal(r0.days[0].plan.meals.breakfast, far.id, '他勾的站自己落在早餐時段，就是那天的早餐');
+  assert.deepEqual(ask(trip, r0), [], '還沒按：後面兩天它都當不了第一站');
+  const t1 = setBreakfast(trip, THU, 'later', far.id, AT);
+  const r1 = plan(t1);
+  assert.ok(r1.days.every((d) => d.plan.breakfastOffers.length === 0), '引擎後面沒有一天掛得出「或 外地丼」');
+  assert.deepEqual(ask(t1, r1), [], '畫面拿這個空陣列在復原列多講半句');
+  // 同一個世界裡走得到的那家照樣問得到日子（對照）
+  assert.deepEqual(breakfastLaterDays({ trip, days: r0.days, date: FRI, pois, restPool: [stand, bakery], legFn: rideLegs, rules, settings, country: JP, kb }), [SAT]);
 });
 
 test('早餐換一家（swapBreakfast）：引擎排的換了就變成他指定的（picks 多一筆 breakfast: true）、照樣排在第一站、其餘各站先後不變、別天的早餐不跟著變；他指定的再換一次是換那一筆', () => {

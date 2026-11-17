@@ -8,10 +8,10 @@ import { planTrip } from '../../src/engine/trip.js';
 import { insertTrial, applyInsert, unpinDay, pinnedOf, pinEntriesOf, pinnedEngineIds, repinFromPlan, repinTrip, planPinnedDay, insertDwellMin, dwellFloorMin, isLockedStop, slotOpenOf, corridorPickIds, insertDroppedEngine, INSERT_MAX_ROUNDS, INSERT_POLICY, CORRIDOR_PICK, INSERT_DROP, PINNED_ORDER_HINT } from '../../src/engine/insert.js';
 import { rawWindowDay, evaluateSequence } from '../../src/engine/sequence.js';
 import { applySwap, swapCandidates } from '../../src/engine/swap.js';
-import { defer, pinnedSwapCheck } from '../../src/engine/choices.js';
+import { defer, pinnedSwapCheck, pinnedChoiceCheck, choicesFor, chooseDay } from '../../src/engine/choices.js';
 import { placeStop } from '../../src/engine/schedule.js';
 import { setBreakfast, clearBreakfast, takeBreakfastOffer, swapBreakfast, breakfastSwapCandidates, breakfastOfPlan, isPlacedBreakfast, tryBreakfastAt, breakfastStop } from '../../src/engine/breakfast.js';
-import { chooseOptionTrip } from '../../src/ui/choices.js';
+import { chooseOptionTrip, swapPick } from '../../src/ui/choices.js';
 import { loadRules } from '../../src/rules/index.js';
 import { BUILTIN } from '../../src/rules/builtin.js';
 import rulesJson from '../../src/rules.json' with { type: 'json' };
@@ -498,6 +498,85 @@ test('釘住之後二選一選了 B：B 在 A 的原位置、其餘先後不變�
   // repinFromPlan：那天沒釘住、或 plan 不是釘住排的就回原 trip
   assert.equal(repinFromPlan(trip, SAT, r.days[1].plan), trip);
   assert.equal(repinFromPlan(trip, FRI, { sequence: [] }), trip);
+});
+
+test('釘住的日子上二選一的「或 B」先試算（pinnedChoiceCheck、choicesFor；11-17）：選了會害別的站不見或排不進的不出；放行的選下去就是原位置換掉、其餘不動；沒釘住的日子不試', () => {
+  const ca = cafe('咖啡甲'); const cx = cafe('咖啡戊'); const slow = cafe('坐很久的咖啡', { dwellMin: 300 });
+  const world = [A, lunch, dinner, ca, cx, slow];
+  const planArgs = { rules, settings, country: COUNTRY, kb, legFn, restPool: [slow] };
+  // 釘住：咖啡甲 09:05 → 午餐 11:30（14:30 關）→ A → 晚餐。候選池只有「坐很久的咖啡」（停 300 分）：引擎照樣出「咖啡甲 或 坐很久的咖啡」
+  const order = [ca.id, lunch.id, A.id, dinner.id];
+  const trip = tripOf([{ date: THU, picks: want(...order), pinned: pinOf(...order) }, { date: FRI, picks: [] }, { date: SAT, picks: [] }, { date: SUN, picks: [] }]);
+  const base = planTrip({ trip, pois: poisOf(world), ...planArgs });
+  const d = base.days[0];
+  assert.deepEqual(ids(d.plan), order);
+  const risky = d.plan.choices.find((c) => c.poiId === ca.id);
+  assert.equal(risky?.options[1], slow.id, '引擎出的二選一沒有試算過');
+  // 沒試算就選下去：午餐會超過關門、落到排不進清單（這就是要擋的事）
+  const blind = chooseOptionTrip({ trip, pois: poisOf(world), date: THU, fromPoiId: ca.id, toPoi: slow, baseline: base, planArgs });
+  const blindPlan = planTrip({ trip: blind.trip, pois: poisOf(world), ...planArgs }).days[0].plan;
+  assert.deepEqual(blindPlan.dropped.map((x) => x.poi.id), [lunch.id]);
+  // 試算：坐很久的不出、停 50 分的可以出
+  const check = pinnedChoiceCheck({ trip, date: THU, plan: d.plan, pois: poisOf(world), planArgs });
+  assert.equal(check(risky), false, '選了午餐會排不進');
+  const fine = { date: THU, poiId: ca.id, slot: 0, options: [ca.id, cx.id], source: 'pool', detourMin: 5, altPoi: cx };
+  assert.equal(check(fine), true);
+  assert.equal(check({ ...fine, altPoi: undefined }), true, '沒帶 altPoi 就拿 options[1] 去 pois 找');
+  assert.equal(check(null), false);
+  assert.equal(check({ ...fine, poiId: '不在序列裡' }), false);
+  assert.deepEqual(choicesFor({ trip, date: THU, plan: d.plan, pois: poisOf(world), planArgs }), [], '畫面拿這一份：釘住的日子只留選了沒事的');
+  const ok = planTrip({ trip, pois: poisOf(world), ...planArgs, restPool: [cx] }).days[0];
+  assert.deepEqual(choicesFor({ trip, date: THU, plan: ok.plan, pois: poisOf(world), planArgs: { ...planArgs, restPool: [cx] } }).map((c) => c.options), [[ca.id, cx.id]]);
+  // 放行的選下去：原位置換掉、其餘不動（畫面照 chooseDay 改那一天、再把 A 順延）
+  const chosenDay = chooseDay(dayOf(trip, THU), ca.id, cx, AT);
+  assert.deepEqual(chosenDay.pinned.sequence.map((e) => e.poiId), [cx.id, lunch.id, A.id, dinner.id]);
+  assert.deepEqual(chosenDay.swapped, [{ from: ca.id, to: cx.id, at: AT }]);
+  assert.deepEqual(ids(run({ ...trip, days: [chosenDay, ...trip.days.slice(1)] }, world).days[0].plan), [cx.id, lunch.id, A.id, dinner.id]);
+  // 沒釘住的日子：永遠 true（選了本來就整天重排）、choicesFor 原樣回
+  const freeTrip = tripOf([{ date: THU, picks: want(...order) }]);
+  const fd = planTrip({ trip: freeTrip, pois: poisOf(world), ...planArgs }).days[0];
+  assert.equal(pinnedChoiceCheck({ trip: freeTrip, date: THU, plan: fd.plan, pois: poisOf(world), planArgs })(risky), true);
+  assert.equal(choicesFor({ trip: freeTrip, date: THU, plan: fd.plan, pois: poisOf(world), planArgs }), fd.plan.choices);
+});
+
+test('chooseDay（二選一選了 B，那一天怎麼改）：候選池來的 B＝換一家；B 本來就是今天排不進的勾選站＝A 那筆拿掉、B 留著、優先度取高的，釘住的日子把順序裡 A 的那一筆原位置換成 B；跟畫面的 swapPick 改出來的 picks 相同', () => {
+  const ca = cafe('咖啡甲'); const cb = cafe('咖啡乙'); const cd = cafe('咖啡丁'); const cx = cafe('咖啡戊');
+  const world = [A, lunch, dinner, ca, cb, cd, cx];
+  const planArgs = { rules, settings, country: COUNTRY, kb, legFn, restPool: [] };
+  // 釘住：午餐 → 咖啡甲 → 咖啡乙 → 晚餐；咖啡丁也勾了（maybe 改成 want 以外的優先度看取高的）、因為咖啡廳一天 2 家排不進
+  const picks = [...want(lunch.id, ca.id, cb.id, dinner.id), { poiId: cd.id, priority: 'must' }];
+  const trip = tripOf([{ date: THU, picks, pinned: pinOf(lunch.id, ca.id, cb.id, dinner.id) }, { date: FRI, picks: [] }, { date: SAT, picks: [] }, { date: SUN, picks: [] }]);
+  const base = planTrip({ trip, pois: poisOf(world), ...planArgs });
+  const d = base.days[0];
+  assert.deepEqual(ids(d.plan), [lunch.id, ca.id, cb.id, dinner.id]);
+  assert.deepEqual(d.plan.dropped.map((x) => x.poi.id), [cd.id]);
+  // 今天排不進的那家（咖啡丁）頂掉咖啡甲
+  const day = chooseDay(dayOf(trip, THU), ca.id, cd, AT);
+  assert.deepEqual(day.picks, [...want(lunch.id, cb.id, dinner.id), { poiId: cd.id, priority: 'must' }], 'A 那筆拿掉、B 自己那筆留著，優先度取兩者之間高的');
+  assert.deepEqual(day.swapped, [{ from: ca.id, to: cd.id, at: AT }]);
+  assert.deepEqual(day.pinned.sequence.map((e) => e.poiId), [lunch.id, cd.id, cb.id, dinner.id], '釘住的順序裡 A 的那一筆原位置換成 B');
+  assert.deepEqual(dayOf(trip, THU).pinned.sequence.map((e) => e.poiId), [lunch.id, ca.id, cb.id, dinner.id], '不改傳入的');
+  assert.deepEqual(ids(run({ ...trip, days: [day, ...trip.days.slice(1)] }, world).days[0].plan), [lunch.id, cd.id, cb.id, dinner.id]);
+  // 試算放行（B 原本排不進、選了排進來是本意，不算多掉進排不進）
+  assert.equal(pinnedChoiceCheck({ trip, date: THU, plan: d.plan, pois: poisOf(world), planArgs })({ poiId: ca.id, options: [ca.id, cd.id], source: 'dropped', altPoi: cd }), true);
+  // 優先度：A 是 want、B 是 maybe → 升成 want；B 的停留照它自己的
+  const low = chooseDay({ picks: [{ poiId: ca.id, priority: 'want', dwellMin: 90 }, { poiId: cd.id, priority: 'maybe', dwellMin: 20 }] }, ca.id, cd, AT);
+  assert.deepEqual(low.picks, [{ poiId: cd.id, priority: 'want', dwellMin: 20 }]);
+  assert.equal('pinned' in low, false, '沒釘住的日子不多 pinned 這個鍵');
+  // 順序裡殘留的 B 舊筆先清掉；A 不在順序裡就不動 pinned
+  assert.deepEqual(chooseDay({ picks: want(ca.id, cd.id), pinned: pinOf(cd.id, lunch.id, ca.id) }, ca.id, cd, AT).pinned.sequence.map((e) => e.poiId), [lunch.id, cd.id]);
+  assert.deepEqual(chooseDay({ picks: want(ca.id, cd.id), pinned: pinOf(lunch.id) }, ca.id, cd, AT).pinned, pinOf(lunch.id));
+  // 候選池來的 B：就是換一家（applySwap）；兩種來源改出來的 picks 都跟畫面現在的 swapPick 一樣
+  const pool = chooseDay(dayOf(trip, THU), ca.id, cx, AT);
+  assert.deepEqual(pool.picks, applySwap(dayOf(trip, THU), ca.id, cx).picks);
+  assert.deepEqual(pool.pinned.sequence.map((e) => e.poiId), [lunch.id, cx.id, cb.id, dinner.id]);
+  for (const to of [cd, cx]) {
+    const ui = swapPick(dayOf(trip, THU), ca.id, to);
+    const en = chooseDay(dayOf(trip, THU), ca.id, to, AT);
+    assert.deepEqual(en.picks, ui.picks, `${to.id}：picks 相同`);
+    assert.deepEqual(en.swapped.map(({ from, to: t }) => [from, t]), ui.swapped.map(({ from, to: t }) => [from, t]), `${to.id}：swapped 相同`);
+    assert.deepEqual(ids(run({ ...trip, days: [en, ...trip.days.slice(1)] }, world).days[0].plan), ids(run({ ...trip, days: [ui, ...trip.days.slice(1)] }, world).days[0].plan), `${to.id}：排出來相同`);
+  }
 });
 
 test('順序以外的勾選站（釘住時就排不進的、順延進來的）：排得下、分數有變好、不多用留白才自己排進來；不然留在排不進清單並講原因；試算先講會不會跟著排進來（revived）', () => {

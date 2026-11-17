@@ -22,11 +22,19 @@ const LAST_ROLLOVER_MIN = 4 * 60;
 /** 末班分日別的三個鍵：平日、週六、週日與假日（日本時刻表的 平日／土曜／日祝）。 */
 export const SERVICE_DAYS = Object.freeze(['weekday', 'saturday', 'holiday']);
 
-/** "HH:MM" → 當天 00:00 起算的分鐘（04:00 以前的算隔天）；不是這個格式回 null。 */
-function lastHmToMin(hm) {
+/** 末班時刻的小時最大寫到 27（"27:59"＝隔天 03:59）：過了午夜的班次可以寫 00:00–03:59，也可以寫 24:00–27:59；28:00 以後就是早上 04:00 以後、算當天，不是這種寫法。 */
+const LAST_MAX_HOUR = (1440 + LAST_ROLLOVER_MIN) / 60 - 1;
+/**
+ * 末班時刻 "HH:MM" → 當天 00:00 起算的分鐘（04:00 以前的算隔天；"24:12" 與 "00:12" 都是 1452）；不是一個合法的時刻回 null。
+ * 合法＝一或兩位數的小時、兩位數的分鐘，小時 0–27、分鐘 0–59（11-17：之前只看格式，"25:99" 會被算成 26:39——寫錯的時刻靜靜變成一班不存在的末班車）。
+ * 回 null 的那一條引擎當沒資料、不判（lastDepartMin）；tools/kb-check.mjs 用同一個函式把寫壞的列出來。
+ */
+export function lastHmToMin(hm) {
   const m = typeof hm === 'string' ? hm.match(/^(\d{1,2}):(\d{2})$/) : null;
   if (!m) return null;
-  const min = Number(m[1]) * 60 + Number(m[2]);
+  const h = Number(m[1]); const mm = Number(m[2]);
+  if (h > LAST_MAX_HOUR || mm > 59) return null;
+  const min = h * 60 + mm;
   return min < LAST_ROLLOVER_MIN ? min + 1440 : min;
 }
 

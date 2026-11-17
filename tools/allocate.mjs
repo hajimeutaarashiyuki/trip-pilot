@@ -74,7 +74,7 @@ export function formatAllocation({ pack, result }) {
     const c = d.counts;
     lines.push(`${c.total} 站：骨架 ${c.skeleton}、② ${c[2] ?? 0}、③ ${c[3] ?? 0}、④ ${c[4] ?? 0}、其餘 ${c.rest ?? 0}`);
     for (const p of d.picks) {
-      const tail = [p.slot ? { lunch: '午餐', dinner: '晚餐', night: '夜間站' }[p.slot] : null, p.errand ? '順路購買' : null, p.fixedWindow ? '固定時段' : null, p.why, p.movedFrom ? `從 ${p.movedFrom} 搬來` : null].filter(Boolean).join('，');
+      const tail = [p.slot ? { breakfast: '早餐', lunch: '午餐', dinner: '晚餐', night: '夜間站' }[p.slot] : null, p.errand ? '順路購買' : null, p.fixedWindow ? '固定時段' : null, p.why, p.movedFrom ? `從 ${p.movedFrom} 搬來` : null].filter(Boolean).join('，');
       lines.push(`- ${LEVEL_NAMES[p.level] ?? p.level}　${p.name}　[${cat(p.category)}]　${PRIORITY[p.priority] ?? p.priority}${p.travelMin != null ? `　← 離主行程 ${p.travelMin} 分` : ''}${tail ? `　（${tail}）` : ''}`);
     }
   }

@@ -231,3 +231,32 @@ test('當地夜間站查末班帶那天的日別（末班分日別）：同一�
   assert.equal(pickOf(verified, 'barsea')?.slot, 'night');
   assert.deepEqual(verified.report.verify.dropped, []);
 });
+
+test('回不了住宿的分配站逐站收回（11-17）：同一個外地的區有三家以上分配站都晚於末班時一趟全部收回，不靠單日引擎的提示（提示同一區只掛最晚離開的那一站）；同一區有骨架的站更晚離開、也回不了時，前面的分配站照舊不收', () => {
+  // 海邊午後祭 15:00–16:30 固定時段（骨架、趕得上 16:50 的末班）；海邊五家 16:35 才開的夕市各 20 分——排在祭之後的每一家都晚於末班
+  const eventsea = { ...POIS.templesea, id: 'eventsea', name_zh: '海邊午後祭', dwellMin: 90 };
+  const evening = (i) => ({ ...POIS.templesea, id: `s${i}`, name_zh: `海邊夕市${i}`, name_local: `s${i}`, category: 'street', hours: hours('16:35', '22:00'), dwellMin: 20, walkFactor: 0.5 });
+  const pois = { eventsea, ...Object.fromEntries([1, 2, 3, 4, 5].map((i) => [`s${i}`, evening(i)])) };
+  const day = (endMin) => ({ date: '2026-08-15', type: 'normal', dayTrip: true, anchor: { poiId: 'eventsea' }, picks: [{ poiId: 'eventsea', priority: 'must', fixedWindow: { startMin: 15 * 60, endMin, arriveEarlyMin: 0, afterMin: 0 } }] });
+  const last = { sea: '16:50', town: '23:00' };
+  const dry = alloc({ days: [day(16 * 60 + 30)], pois, last });
+  assert.ok(dry.days[0].picks.length >= 4, `沒驗證時分得進三家以上（${dry.days[0].picks.map((p) => p.poiId).join('、')}）`);
+  const r = alloc({ days: [day(16 * 60 + 30)], pois, last, verify: true });
+  assert.deepEqual(r.days[0].picks.map((p) => p.poiId), ['eventsea'], '晚於末班的分配站一家都不留（之前一趟只收一家，驗證三趟用完還留著回不了住宿的站）');
+  assert.deepEqual(r.report.verify.dropped, [], '不是驗證趟數用完才丟的');
+  assert.ok(r.report.verify.runs <= 2, `一趟就全部收回，再驗一趟（${r.report.verify.runs} 趟）`);
+  for (const i of [1, 2, 3, 4, 5]) assert.match(reasonOf(r, `s${i}`) ?? '', /回住宿趕不上 16:50 的末班車，海邊發車/, `海邊夕市${i} 的留池理由講得出是哪一班`);
+  // 骨架的花火自己就晚於末班（19:00–20:30 固定時段、海邊 17:30 的末班）：人本來就待到那時候，排在它前面、也待過末班的分配站不收
+  // （兩家傍晚的市集 16:40–18:25 開、各 40 分：第二家 17:30–18:10 晚於末班；11-17 提示改成同一區只講一次要的就是這個效果——5514647 會把它們當成趕不上收回）
+  const hanabi = { ...POIS.templesea, id: 'hanabi', name_zh: '海邊花火', name_local: 'hanabi', category: 'event', dwellMin: 90 };
+  const dusk = (i) => ({ ...POIS.templesea, id: `e${i}`, name_zh: `海邊夕市${i}`, name_local: `e${i}`, category: 'street', hours: hours('16:40', '18:25'), dwellMin: 40, walkFactor: 0.5 });
+  const hanabiDay = { date: '2026-08-15', type: 'normal', dayTrip: true, anchor: { poiId: 'hanabi' }, picks: [{ poiId: 'hanabi', priority: 'must', fixedWindow: { startMin: 19 * 60, endMin: 20 * 60 + 30, arriveEarlyMin: 30, afterMin: 0 } }] };
+  const lateAnchor = alloc({ days: [hanabiDay], pois: { hanabi, e1: dusk(1), e2: dusk(2) }, last: { sea: '17:30', town: '23:00' }, verify: true });
+  assert.deepEqual(lateAnchor.days[0].picks.map((p) => p.poiId).sort(), ['e1', 'e2', 'hanabi'], '第二家夕市也晚於 17:30 的末班，但花火更晚散：不收');
+  assert.deepEqual([reasonOf(lateAnchor, 'e1'), reasonOf(lateAnchor, 'e2')], [null, null]);
+  // 花火之後才去的分配站（20:40 才開的夜市）比花火更晚離開：它才是讓他更晚回不去的那一站，照收
+  const night = { ...POIS.templesea, id: 'nightsea', name_zh: '海邊夜市', name_local: 'nightsea', category: 'street', hours: hours('20:40', '23:00'), dwellMin: 20, walkFactor: 0.5 };
+  const withNight = alloc({ days: [hanabiDay], pois: { hanabi, nightsea: night }, last: { sea: '17:30', town: '23:00' }, verify: true });
+  assert.deepEqual(withNight.days[0].picks.map((p) => p.poiId), ['hanabi'], '夜市比花火晚離開：收回');
+  assert.match(reasonOf(withNight, 'nightsea') ?? '', /海邊夜市 待到 \d\d:\d\d，回住宿趕不上 17:30 的末班車，海邊發車/);
+});

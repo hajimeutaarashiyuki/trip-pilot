@@ -8,6 +8,7 @@ import { planDay } from '../../src/engine/core.js';
 import { loadRules } from '../../src/rules/index.js';
 import { BUILTIN } from '../../src/rules/builtin.js';
 import { makeLegFn } from '../../src/geo/matrix.js';
+import { lastTrainMisses, lastTrainHints } from '../../src/rules/_slots.js';
 import rulesJson from '../../src/rules.json' with { type: 'json' };
 import { POIS, HOME, ZONES, LINKS, COUNTRY } from '../fixtures/alloc-world.js';
 
@@ -277,4 +278,34 @@ test('順路站不能害他勾的站趕不上末班車：插一家店把後面�
   const loose = run('14:30');
   assert.ok(loose.plan.sequence.some((s) => s.poi.id === 'onwayshop' && s.insertedBy === 'engine'), `末班夠晚：照插（${seqOf(loose).join('、')}）`);
   assert.deepEqual(lastTrainOf(loose), []);
+});
+
+test('回不了住宿的提示同一區只講一次（11-17）：主行程散場晚於末班、同一區前面的站也待過末班時，只有最晚離開的那一站掛提示；判定本身（lastTrainMisses）不變', () => {
+  // 海邊的日歸湯 17:40 才開（泡 40 分）、花火 19:00–20:30 固定時段；海邊 17:30 的末班——兩站怎麼排都晚於末班。
+  // 之前兩站各掛一句；他整晚都在海邊，回不回得去看的是最後離開的那一站（11-12 審查：主行程本身晚於末班時，同區前面的站也各掛一句，分配器還會把它們收回）
+  const onsen = { ...POIS.templesea, id: 'onsensea', name_zh: '海邊日歸湯', category: 'onsen', walkFactor: 0, recovery: true, hours: hours('17:40', '21:00'), dwellMin: 40 };
+  const eventsea = { ...POIS.templesea, id: 'eventsea', name_zh: '海邊花火', category: 'event', dwellMin: 90 };
+  const day = { date: '2026-08-15', type: 'normal', dayTrip: true, anchor: { poiId: 'eventsea' }, picks: [{ poiId: 'eventsea', priority: 'must', fixedWindow: { startMin: 19 * 60, endMin: 20 * 60 + 30, arriveEarlyMin: 30, afterMin: 0 } }, { poiId: 'onsensea', priority: 'want' }] };
+  const w = world({ sea: '17:30' });
+  const d = planTrip({ trip: { id: 'lt', party: 1, homeBases: [{ poi: HOME }], days: [day] }, pois: { eventsea, onsensea: onsen }, rules, settings, country: COUNTRY, kb: w.kb, legFn: w.legFn, restPool: [] }).days[0];
+  assert.deepEqual(d.plan.sequence.map((s) => s.poi.id), ['onsensea', 'eventsea'], '兩站都照排');
+  assert.deepEqual(lastTrainMisses({ sequence: d.plan.sequence, day: d.day, home: HOME, legFn: w.legFn }).map((m) => [m.stop.poi.id, m.kind]), [['onsensea', 'home'], ['eventsea', 'home']], '判定不變：兩站都晚於末班');
+  assert.deepEqual(lastTrainOf(d).map((x) => [x.poiId, x.kind, x.msg]), [['eventsea', 'home', '海邊花火 待到 20:30，回住宿趕不上 17:30 的末班車，海邊發車']], '提示只掛在最晚離開的那一站');
+  // 直接問提示：同一區兩站只留最晚離開的；兩個外地的區各講各的；引擎插的站不算
+  const stop = (id, zoneId, startMin, endMin, over = {}) => ({ poi: { id, name_zh: id, zoneId }, startMin, endMin, arriveMin: startMin, dwellMin: endMin - startMin, ...over });
+  const dayCtx = { away: { sea: { homeMin: 35, last: { leaveByMin: 1045, departMin: 1050, fromZoneId: 'sea' } }, far: { homeMin: 65, last: { leaveByMin: 1000, departMin: 1005, fromZoneId: 'far' } } }, lastLegs: null, homeZoneId: 'town' };
+  const seq = [stop('遠方甲', 'far', 960, 1020), stop('海邊甲', 'sea', 1060, 1100), stop('海邊乙', 'sea', 1110, 1230), stop('海邊丙', 'sea', 1235, 1240, { insertedBy: 'engine' })];
+  assert.deepEqual(lastTrainHints({ sequence: seq, day: dayCtx }).map((x) => x.poiId), ['遠方甲', '海邊乙'], '每個外地的區一句、掛在他勾的站裡最晚離開的那一站；引擎插的站不算（規則會擋它）');
+  assert.equal(lastTrainMisses({ sequence: seq, day: dayCtx }).length, 4);
+  // 只有一站趕不上：照舊就是那一站
+  assert.deepEqual(lastTrainHints({ sequence: seq.slice(1, 2), day: dayCtx }).map((x) => x.poiId), ['海邊甲']);
+  // 去程趕不上的那一種（leg）不併：同一區一站去程趕不上、一站回不了住宿，兩句都在
+  const legDay = { away: dayCtx.away, lastLegs: { 'town|sea': { leaveByMin: 1000, departMin: 1005, fromZoneId: 'town' } }, homeZoneId: 'town' };
+  const rideLeg = () => ({ walkMin: 5, rideMin: 30, climbMin: 0, mode: 'ride' });
+  const both = lastTrainHints({ sequence: [stop('海邊甲', 'sea', 1060, 1100), stop('海邊乙', 'sea', 1110, 1230)], day: legDay, home: { id: 'home', zoneId: 'town' }, legFn: (a, b) => (a.zoneId === b.zoneId ? { walkMin: 5, rideMin: 0, climbMin: 0, mode: 'walk' } : rideLeg()) });
+  assert.deepEqual(both.map((x) => [x.poiId, x.kind]), [['海邊甲', 'leg'], ['海邊乙', 'home']], '第一站是去程那一班趕不上（判法先看去程），第二站是回不了住宿');
+  // 併的只有「回不了住宿」那一種：同一區較早的站回不了住宿、中途回過市區再出來的那一站是去程趕不上（而且更晚離開）——兩句都留
+  const laterLeg = { away: dayCtx.away, lastLegs: { 'town|sea': { leaveByMin: 1100, departMin: 1105, fromZoneId: 'town' } }, homeZoneId: 'town' };
+  const roundTrip = lastTrainHints({ sequence: [stop('海邊甲', 'sea', 1060, 1100), stop('市區', 'town', 1140, 1160), stop('海邊乙', 'sea', 1200, 1230)], day: laterLeg, home: { id: 'home', zoneId: 'town' }, legFn: (a, b) => (a.zoneId === b.zoneId ? { walkMin: 5, rideMin: 0, climbMin: 0, mode: 'walk' } : rideLeg()) });
+  assert.deepEqual(roundTrip.map((x) => [x.poiId, x.kind]), [['海邊甲', 'home'], ['海邊乙', 'leg']]);
 });

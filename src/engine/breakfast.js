@@ -412,44 +412,74 @@ const ASSIGN_MAX_NODES = 50000;
 export function breakfastOffers({ entries = [], days = [], legFn, rules, settings = {}, country = null, kb = null, giveWay = BREAKFAST_POLICY.giveWay }) {
   const out = new Map();
   if (!breakfastSlotOf(country, settings)) return out;
-  const maxShift = settings.breakfastOfferShiftMaxMin ?? 10;
+  const ctx = { legFn, rules, settings, country, kb, giveWay };
   const sorted = [...days].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
-  const ids = (list) => list.map((s) => s.poi.id).join('|');
   for (const e of entries) {
     if (!e?.poi || !BREAKFAST_OFF_MODES.includes(e.mode)) continue;
     for (const d of sorted) {
-      if (!(d.date > e.fromDate) || !d.plan?.sequence || (d.visited ?? []).includes(e.poi.id)) continue;
-      const seq = d.plan.sequence;
-      const a = mealAssignments({ sequence: seq, day: d.day, settings, country });
-      if (!('breakfast' in a.meals) || a.notNeeded.breakfast) continue;
-      const cur = a.stops.breakfast ?? null;
-      if (cur && (cur.priority === 'must' || cur.designated || cur.isAnchor || cur.fixedWindow || samePlace(cur.poi, e.poi))) continue;
-      const others = cur ? seq.filter((s) => s !== cur) : seq;
-      const offered = breakfastStop(e.poi, settings, { poiId: e.poi.id, priority: 'want' });
-      let r;
-      if (d.pinned) {
-        // 釘住順序的日子（engine/insert.js）：那天不重新搜尋，按了就是原位置換掉（沒早餐就排在第一站）——照那個樣子試
-        r = tryBreakfastAt({ sequence: others, index: cur ? seq.indexOf(cur) : 0, stop: offered, day: d.day, home: d.home, legFn, rules, settings, country, kb, complete: d.plan.complete !== false });
-      } else {
-        let base = others; let complete = d.plan.complete !== false;
-        if (cur && !isPlacedBreakfast(cur) && typeof d.replanWithout === 'function') {
-          const again = d.replanWithout(cur.poi.id);
-          const before = new Set((d.plan.dropped ?? []).map((x) => x.poi.id));
-          if (!again?.sequence || ids(again.sequence) !== ids(others) || (again.dropped ?? []).some((x) => !before.has(x.poi.id))) continue;
-          base = again.sequence; complete = again.complete !== false;
-        }
-        r = tryBreakfastFirst({ sequence: base, stop: offered, day: d.day, home: d.home, legFn, rules, settings, country, kb, complete, giveWay });
-      }
-      if (!r.ok || r.displaced.length) continue;
-      const now = new Map(seq.map((s) => [s.poi.id, s.startMin]));
-      // 引擎填的站不算在「最多晚幾分」裡（釘住的日子除外——那裡它就是順序裡的一站）：填站是拿來填空檔的，早餐排進來它就往後挪、短一點（tryBreakfastFirst 的 giveWay），
-      // 不是他原定的行程。不排除的話，早上被填站填滿的日子（第一站很晚才開、引擎填了早上的空檔）永遠掛不出推薦——11-12 太晚出門也觸發填站之後才會遇到
-      const elastic = (s) => !d.pinned && s.insertedBy === 'engine' && s.priority === 'filler';
-      const shiftMin = r.trial.slice(1).reduce((m, s) => (elastic(s) ? m : Math.max(m, s.startMin - (now.get(s.poi.id) ?? s.startMin))), 0);
-      if (shiftMin > maxShift) continue;
-      out.set(d.date, [...(out.get(d.date) ?? []), { poiId: e.poi.id, fromDate: e.fromDate, mode: e.mode, replaces: cur ? cur.poi.id : null, detourMin: r.detourMin, shiftMin }]);
+      if (!(d.date > e.fromDate)) continue;
+      const fit = breakfastFitOn(e.poi, d, ctx);
+      if (!fit) continue;
+      out.set(d.date, [...(out.get(d.date) ?? []), { poiId: e.poi.id, fromDate: e.fromDate, mode: e.mode, replaces: fit.replaces, detourMin: fit.detourMin, shiftMin: fit.shiftMin }]);
       if (e.mode === 'hotel') break;
     }
+  }
+  return out;
+}
+
+/**
+ * 把 poi 排成 d 那天的早餐合不合格（breakfastOffers 與 breakfastFitDays 共用的那一步；條件就是 breakfastOffers 註解裡「合格」那一條）：
+ * 合格回 { replaces, detourMin, shiftMin }，不合格回 null。d＝breakfastOffers 的 days 的一筆（{ date, day, plan, home, visited, replanWithout?, pinned? }）。
+ */
+function breakfastFitOn(poi, d, { legFn, rules, settings = {}, country = null, kb = null, giveWay = BREAKFAST_POLICY.giveWay }) {
+  if (!d.plan?.sequence || (d.visited ?? []).includes(poi.id)) return null;
+  const maxShift = settings.breakfastOfferShiftMaxMin ?? 10;
+  const ids = (list) => list.map((s) => s.poi.id).join('|');
+  const seq = d.plan.sequence;
+  const a = mealAssignments({ sequence: seq, day: d.day, settings, country });
+  if (!('breakfast' in a.meals) || a.notNeeded.breakfast) return null;
+  const cur = a.stops.breakfast ?? null;
+  if (cur && (cur.priority === 'must' || cur.designated || cur.isAnchor || cur.fixedWindow || samePlace(cur.poi, poi))) return null;
+  const others = cur ? seq.filter((s) => s !== cur) : seq;
+  const offered = breakfastStop(poi, settings, { poiId: poi.id, priority: 'want' });
+  let r;
+  if (d.pinned) {
+    // 釘住順序的日子（engine/insert.js）：那天不重新搜尋，按了就是原位置換掉（沒早餐就排在第一站）——照那個樣子試
+    r = tryBreakfastAt({ sequence: others, index: cur ? seq.indexOf(cur) : 0, stop: offered, day: d.day, home: d.home, legFn, rules, settings, country, kb, complete: d.plan.complete !== false });
+  } else {
+    let base = others; let complete = d.plan.complete !== false;
+    if (cur && !isPlacedBreakfast(cur) && typeof d.replanWithout === 'function') {
+      const again = d.replanWithout(cur.poi.id);
+      const before = new Set((d.plan.dropped ?? []).map((x) => x.poi.id));
+      if (!again?.sequence || ids(again.sequence) !== ids(others) || (again.dropped ?? []).some((x) => !before.has(x.poi.id))) return null;
+      base = again.sequence; complete = again.complete !== false;
+    }
+    r = tryBreakfastFirst({ sequence: base, stop: offered, day: d.day, home: d.home, legFn, rules, settings, country, kb, complete, giveWay });
+  }
+  if (!r.ok || r.displaced.length) return null;
+  const now = new Map(seq.map((s) => [s.poi.id, s.startMin]));
+  // 引擎填的站不算在「最多晚幾分」裡（釘住的日子除外——那裡它就是順序裡的一站）：填站是拿來填空檔的，早餐排進來它就往後挪、短一點（tryBreakfastFirst 的 giveWay），
+  // 不是他原定的行程。不排除的話，早上被填站填滿的日子（第一站很晚才開、引擎填了早上的空檔）永遠掛不出推薦——11-12 太晚出門也觸發填站之後才會遇到
+  const elastic = (s) => !d.pinned && s.insertedBy === 'engine' && s.priority === 'filler';
+  const shiftMin = r.trial.slice(1).reduce((m, s) => (elastic(s) ? m : Math.max(m, s.startMin - (now.get(s.poi.id) ?? s.startMin))), 0);
+  if (shiftMin > maxShift) return null;
+  return { replaces: cur ? cur.poi.id : null, detourMin: r.detourMin, shiftMin };
+}
+
+/**
+ * 一家店在 fromDate 之後的哪幾天排得成早餐（11-17）：breakfastFitDays({ poi, fromDate, days, legFn, rules, settings, country, kb, giveWay }) →
+ * [{ date, replaces, detourMin, shiftMin }]（照日期）。每一天的合格條件跟 breakfastOffers 是同一個函式（breakfastFitOn），差別只有：不分紀錄是哪一種、每個合格的日子都列
+ * （「吃飯店早餐」的推薦只掛在第一個合格的日子，這裡不停）。days 的形狀同 breakfastOffers；沒有 replanWithout 的日子（呼叫端不在 planTrip 裡）拿現在的序列試——
+ * 那天的早餐是他勾的站自己落在早餐時段時，這個答案比引擎掛推薦時寬一點（引擎會真的少勾那一站重排一次再驗）。畫面用 engine/trip.js breakfastLaterDays，不用直接叫這個。
+ */
+export function breakfastFitDays({ poi, fromDate, days = [], legFn, rules, settings = {}, country = null, kb = null, giveWay = BREAKFAST_POLICY.giveWay }) {
+  if (!poi?.id || !breakfastSlotOf(country, settings)) return [];
+  const ctx = { legFn, rules, settings, country, kb, giveWay };
+  const out = [];
+  for (const d of [...days].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0))) {
+    if (!(d.date > fromDate)) continue;
+    const fit = breakfastFitOn(poi, d, ctx);
+    if (fit) out.push({ date: d.date, ...fit });
   }
   return out;
 }

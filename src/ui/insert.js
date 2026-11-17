@@ -6,7 +6,7 @@
 // 試算與套進旅程檔在 engine/insert.js（insertTrial、applyInsert）；寫回 state 在 app.js（upgradeCorridor、pickInsertOption）；畫在 planner.js（insertAskNode）。
 import { insertTrial, INSERT_MAX_ROUNDS } from '../engine/insert.js';
 import { resolveHome } from '../engine/trip.js';
-import { TEXT, introOf } from './text.js';
+import { TEXT, CATEGORY, introOf } from './text.js';
 import { shortName } from './corridor.js';
 
 const L = TEXT.insert;
@@ -56,9 +56,9 @@ export function chooseInsertOption(args, ask, option) {
  * 這一版試算已經套了哪些調整（engine 的 result.adjust）→ 一句一句的字：「X 只待 190 分（原本 240 分）」「Y 少待 30 分（60→30）」「不去 Z」。
  * 同一站先少待、後來改成不去，engine 只留後面那一個。nameOf(poi id) → 店名（不去的那一站已經不在序列裡，要從知識庫查）。
  */
-export function adjustLabels(result, nameOf = (id) => id) {
+export function adjustLabels(result, nameOf = (id) => id, plan = null) {
   const r = result?.result ?? result;
-  const short = (id) => shortName(nameOf(id));
+  const short = dayNamer(r, plan, nameOf);
   return (r?.adjust ?? []).map((adj) => (adj.kind === 'drop' ? L.drop(short(adj.poiId)) : adj.poiId === r.poiId ? L.shortenNew(short(adj.poiId), adj.fromMin, adj.toMin) : L.shorten(short(adj.poiId), adj.fromMin, adj.toMin)));
 }
 
@@ -81,7 +81,8 @@ export function earlyMaxMin(result, plan = null) {
 }
 
 /**
- * 選項的後果：排得下的寫順延幾分（沒有站變晚而有站提早就寫最多提早幾分）、用掉幾分留白；還排不下的寫還差幾分（不是差幾分鐘的事——同類家數、一天站數——就只說還排不下）。
+ * 選項的後果：排得下的寫順延幾分（沒有站變晚而有站提早就寫最多提早幾分；有站變晚、也有站提早就兩個都寫——選了「不去」中間某一站時，它前面的被新插的那家推晚、後面的提早）、
+ * 用掉幾分留白；還排不下的寫還差幾分（不是差幾分鐘的事——同類家數、一天站數——就只說還排不下）。
  * plan＝試算用的那一份 plan（算提早幾分用；沒給就只看有沒有站變晚）。
  */
 export function optionNote(o, plan = null) {
@@ -105,14 +106,52 @@ export function optionAdds(o, nameOf = (id) => id) {
 }
 
 /**
+ * 同一塊選項裡哪幾家店的短店名會撞名（Set of poi id）：兩家不同的店短名一樣、或一家的短名是另一家的開頭——括號裡的註記拿掉之後分不出來
+ * （七天包 8/15：引擎排的「瑞鳳殿（伊達政宗靈屋）」與主行程「瑞鳳殿 盂蘭盆特別御開帳」短名是「瑞鳳殿」與「瑞鳳殿 盂蘭盆特別御開帳」；
+ * 「松本清 仙台Clis Road店」與它的「（matsukiyoLAB型態店）」那一筆短名完全一樣）。撞名的兩家在選項上都寫全名。同一家店的兩個選項（少待與不去）不算。
+ */
+function clashingNames(pois) {
+  const list = [...new Map(pois.filter((p) => p?.id).map((p) => [p.id, nameOfPoi(p)])).entries()];
+  const out = new Set();
+  for (const [a, x] of list) for (const [b, y] of list) if (a !== b && x && y && (x === y || y.startsWith(x))) { out.add(a); out.add(b); }
+  return out;
+}
+
+/**
+ * 這天的站裡短店名會撞名的店（Set of poi id）：畫面上那一版（plan，試算用的那一份）與這一版試算的序列（result）裡的每一站一起比（clashingNames）。
+ * 選項那一列、「已選：…」那一行、套用後的復原列都用這一份（11-17 畫面審查：之前只有選項那一列看撞名、而且只比列出來的選項——
+ * 七天包 8/15 同時有引擎排的「瑞鳳殿（伊達政宗靈屋）」與主行程「瑞鳳殿 盂蘭盆特別御開帳」，第二輪寫「已選：瑞鳳殿 少待 15 分」、套用後寫「不去 瑞鳳殿」，分不出是哪一個）。
+ * 選了「不去」的那一站已經不在試算的序列裡，所以要連畫面上那一版一起看；沒給 plan 就只比試算的序列。
+ */
+function dayClash(result, plan = null) {
+  const r = result?.result ?? result;
+  return clashingNames([...(plan?.sequence ?? []), ...(r?.sequence ?? [])].map((s) => s?.poi));
+}
+
+/** (poi id) → 寫在句子裡的店名：短名（括號裡的研究註記拿掉），這天撞名的用全名（dayClash）。nameOf(poi id) → 全名。 */
+function dayNamer(result, plan, nameOf) {
+  const clash = dayClash(result, plan);
+  return (id) => (clash.has(id) ? nameOf(id) : shortName(nameOf(id)));
+}
+
+/**
  * 那一家底下那組選項要畫的東西（ask＝{ trial, chosen }）：
- * { round, last, chosen: [已經套了的調整的字], why, prompt, fits: [列], more: [列], moreHead, dead }
+ * { round, last, chosen: [已經套了的調整的字], why, prompt, groups: [{ key, head, rows }], fits: [列], more: [列], dead }
  * - round：問他的第幾輪（askRound）；last：最後一輪（INSERT_MAX_ROUNDS，主控定三輪）。
  * - chosen：前幾輪選下來、現在已經套著的調整（adjustLabels；第一輪是空的）。
  * - why：第一輪「插進 X 之後排不下：…（差 N 分）」、之後「還是排不下：…（還差 N 分）」。卡住的每一句（engine conflicts）都印、重複的只印一次——
  *   一站同時撞「超過關門」與「今天已經 8 站」時，決定要不要少去一站的是後面那一句。
- * - fits：選了就排得下的；more：選了還不夠、要再問一輪的（最後一輪不列——不能再問了）。列＝{ option, label, note, adds, intro }；
- *   intro 是那一站的簡介（原話 #193），「插的這家少待」不重複附（它的簡介就在上面那一列）。
+ * - fits：選了就排得下的；more：選了還不夠、要再問一輪的（最後一輪不列——不能再問了）。
+ * - groups：畫面照這個畫（11-17；主控定的版面，原話 #194「要壓縮哪個行程或是砍掉」的兩類）——「少待一點」（key 'shorten'：要插的這家自己少待放第一個，再來是後面某一站少待）
+ *   與「這站不去」（key 'drop'）；組內照引擎給的先後（排得下的在前），某一組沒有選項就沒有那一組。之前是「排得下的／選了還不夠的」兩段、每顆鍵一整行粗體把動作與後果混在一起，
+ *   390×844 上 28 組選項的高度中位數 1,122px、17 組超過一個螢幕（11-17 用當天重打的待套用版七天包重量，跟 11-12 量的相同）。
+ * - 列＝{ option, label, name, mine, side, cat, engine, note, adds, intro }：
+ *   name＝第一行粗體的店名（短名；同一塊裡撞名的用全名，clashingNames）；mine＝這是要插的這家（名字後面標「（要插的這家）」）；
+ *   side＝右邊的重點，少待的寫「90 → 80 分」、不去的是 null；cat＝不去的那一站的店型（畫成小標）、少待的是 null；
+ *   engine＝這一站是引擎排進來的（多一個小標「引擎排的」——他要挑犧牲誰的時候，這是依據）；
+ *   note＝後果（optionNote）；adds＝選了會多出來的黃字與會跟著排進來的站（optionAdds，另起一行）；
+ *   intro＝那一站的簡介（原話 #193；畫面收成兩行，完整的在那一站自己的卡上），要插的這家不重複附（它的簡介就在上面那一列）；
+ *   label＝一句話講這個選項（「Y 少待 20 分（60→40）」「不去 Z」；已選那一行用同一種寫法）。
  * - dead：一個能選的都沒有＝這一段插不進這家，畫面只剩「算了，不插」。
  * - prompt：第一輪沒有任何一個選了就排得下的選項時寫「單選一項不夠：先選一項，下一輪再調…」（每顆鍵都寫「還差 N 分，要再調一項」，上面不能還寫「選一個讓它排得下」）。
  * plan（選填）＝試算用的那一份 plan：選項的後果要寫「後面最多提早幾分」時拿它比（optionNote）。
@@ -125,12 +164,29 @@ export function askView(ask, nameOf = (id) => id, plan = null) {
   const short = trial.blocked?.shortMin;
   const x = nameOfPoi(trial.sequence?.[trial.index]?.poi);
   const why = round > 1 ? `${L.still(msgs)}${short != null ? L.stillShort(short) : ''}` : `${L.why(x, msgs)}${short != null ? L.short(short) : ''}`;
-  const row = (o) => ({ option: o, label: optionLabel(o), note: optionNote(o, plan), adds: optionAdds(o, nameOf), intro: o.kind === 'shorten-new' ? null : introOf(o.poi) });
-  const fits = (trial.options ?? []).filter((o) => o.fits).map(row);
-  const more = last ? [] : (trial.options ?? []).filter((o) => !o.fits).map(row);
-  const dead = !fits.length && !more.length;
+  const shown = (trial.options ?? []).filter((o) => o.fits || !last);   // 照引擎給的先後；最後一輪只留選了就排得下的
+  // 撞名：這一塊列出來的選項彼此比，再加上這天的每一站（dayClash）——另一個同名的站不在選項裡、但在這天的行程裡，照樣要寫全名
+  const clash = new Set([...clashingNames(shown.map((o) => o.poi)), ...dayClash(trial, plan)]);
+  const engineIds = new Set((trial.sequence ?? []).filter((s) => s?.insertedBy === 'engine' && s.poi?.id).map((s) => s.poi.id));
+  const row = (o) => {
+    const drop = o.kind === 'drop';
+    const mine = o.kind === 'shorten-new';
+    return {
+      option: o, label: optionLabel(o),
+      name: clash.has(o.poi?.id) ? (o.poi.name_zh ?? o.poi.id) : nameOfPoi(o.poi), mine,
+      side: drop ? null : L.dwellChange(o.fromMin, o.toMin), cat: drop ? (CATEGORY[o.poi?.category] ?? null) : null, engine: engineIds.has(o.poiId),
+      note: optionNote(o, plan), adds: optionAdds(o, nameOf), intro: mine ? null : introOf(o.poi),
+    };
+  };
+  const rows = shown.map(row);
+  const fits = rows.filter((r) => r.option.fits);
+  const more = rows.filter((r) => !r.option.fits);
+  const shorten = [...rows.filter((r) => r.mine), ...rows.filter((r) => !r.mine && r.option.kind !== 'drop')];
+  const drops = rows.filter((r) => r.option.kind === 'drop');
+  const groups = [{ key: 'shorten', head: L.groupShorten, rows: shorten }, { key: 'drop', head: L.groupDrop, rows: drops }].filter((g) => g.rows.length);
+  const dead = !rows.length;
   const prompt = dead ? (round > 1 ? L.deadLater : L.dead) : last ? L.pickLast : round > 1 ? L.pickMore(round, INSERT_MAX_ROUNDS) : fits.length ? L.pick : L.pickNone;
-  return { round, last, chosen: adjustLabels(trial, nameOf), why, prompt, fits, more, moreHead: fits.length && more.length ? L.moreHead : null, dead };
+  return { round, last, chosen: adjustLabels(trial, nameOf, plan), why, prompt, groups, fits, more, dead };
 }
 
 /**
@@ -141,15 +197,18 @@ export function askView(ask, nameOf = (id) => id, plan = null) {
  */
 export function insertDoneText(result, nameOf = (id) => id, plan = null) {
   const r = result?.result ?? result;
-  const x = nameOfPoi(r.sequence?.[r.index]?.poi);
-  const a = r.between?.prev ? nameOfPoi(r.between.prev) : null;
-  const b = r.between?.next ? nameOfPoi(r.between.next) : null;
+  // 店名：短名，這天撞名的用全名（dayClash；跟選項那一列、「已選」那一行同一套）。插的那家、前後兩站拿 POI 自己的名字，其餘（調整、縮短、排進來的）拿 nameOf 查
+  const clash = dayClash(r, plan);
+  const ofPoi = (poi) => (poi?.id && clash.has(poi.id) ? (poi.name_zh ?? poi.id) : nameOfPoi(poi));
+  const short = (id) => (clash.has(id) ? nameOf(id) : shortName(nameOf(id)));
+  const x = ofPoi(r.sequence?.[r.index]?.poi);
+  const a = r.between?.prev ? ofPoi(r.between.prev) : null;
+  const b = r.between?.next ? ofPoi(r.between.next) : null;
   const where = a && b ? L.between(x, a, b) : b ? L.first(x, b) : a ? L.last(x, a) : L.only(x);
-  const short = (id) => shortName(nameOf(id));
   const slack = Math.max(0, (r.openSlotUsedMin ?? 0) - (r.openSlotUsedBeforeMin ?? 0));
   return [
     `${where}，${L.shift(r.shiftMaxMin ?? 0, earlyMaxMin(r, plan))}${slack > 0 ? L.slack(slack) : ''}`,
-    ...adjustLabels(r, nameOf),
+    ...adjustLabels(r, nameOf, plan),
     ...(r.shrunk ?? []).map((s) => L.shrunk(short(s.poiId), s.toMin)),
     ...(r.revived ?? []).map((id) => L.revived(short(id))),
   ].join('；');
