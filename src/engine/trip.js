@@ -2,7 +2,7 @@
 // 這裡負責把 Trip／Day 的資料翻成 planDay 要的 day 上下文：時窗、早起日、晚出門、一日遊、主題、主行程、指定站、當日區域。
 import { planDay } from './core.js';
 import { hmToMin, openIntervals, overlapMin } from './time.js';
-import { haversineM } from '../geo/matrix.js';
+import { haversineM, serviceDayOf } from '../geo/matrix.js';   // serviceDayOf：那天跑哪一種時刻表（末班分日別；11-06 第二批）
 import { distToSegmentM } from '../geo/corridor.js';
 import { evaluateSequence, retimeSequence } from './sequence.js';
 import { SHOPPING_CATEGORIES, researchSaysSkip, notAStop } from '../rules/_helpers.js';   // 只借購物類店型清單篩順路站，不是規則邏輯（規則在 rules/shopping-day.js）；後兩個是研究註記的讀法（engineMayInsert 用，分配器同一套）
@@ -10,17 +10,29 @@ import { CATEGORIES, classifyCategory } from '../data/schema.js';   // 主題日
 import { proposeChoices, swappedAwayFrom } from './choices.js';   // 二選一（T16）：七天排完才對每天的序列算，不進分數與時刻；choices.js 的 defer 反過來用 planTrip 試排（模組互相引用只在呼叫時用到，沒問題）
 import { personsOf, presentOn, mergeAdjustments, personAvoids, personAvoidWarnings, cityNamesOf } from './persons.js';   // 同行者（T19）：每天在場的人、合併後的調整（取最鬆，原話 #144）、不想去的店型
 import { nightWalkCapMin, taxRefundBufferMin } from '../data/country.js';   // 國家層（T20）：離境日免稅緩衝、夜間步行風險對時窗尾端的上限（誰讀哪個鍵都記在 data/country.js）
-import { dayTripNightHints } from '../rules/_slots.js';   // 一日遊晚回城還排了市區夜間站的提示（原話 #190；11-06）：跟 person-avoid 同一種後處理，算法在規則那邊的共用尺
+import { dayTripNightHints, lastTrainHints, lastTrainMisses, planMealsOf, mealAssignments, breakfastSlotOf, breakfastHints } from '../rules/_slots.js';   // 一日遊晚回城還排了市區夜間站、他勾的站趕不上末班車的提示（原話 #190；11-06）：跟 person-avoid 同一種後處理，算法在規則那邊的共用尺；planMealsOf：每天哪一站是哪一餐（原話 #195）；早餐段與「今天沒排早餐」的提示（原話 #196）
+import { breakfastChoiceOf, servesBreakfast, breakfastStop, isPlacedBreakfast, retimeWithBreakfast, tryBreakfastFirst, breakfastOptions, assignBreakfasts, breakfastOffers, rememberedBreakfasts, blockedBreakfasts, breakfastKeepOf, BREAKFAST_POLICY } from './breakfast.js';   // 早餐（原話 #196、#197）：引擎替他挑店安插成第一站、推薦他沒去到的那家；breakfast.js 不 import 這一檔（引擎插站的門 engineMayInsert 由這裡傳進去）
+import { samePlace } from './swap.js';   // 同一個地點在知識庫寫成兩筆（仙台朝市／仙台朝市商店街）：判「這家當過早餐沒」要當同一家
+import { pinnedOf, pinnedEngineIds, corridorPickIds, insertDroppedEngine, planPinnedDay, pickStopOf, CORRIDOR_PICK, INSERT_DROP } from './insert.js';   // 釘住順序的日子（原話 #192、#194：升級成站＝安插，之後那天照他調過的順序排）：不跑搜尋，照旅程檔 days[].pinned 組序列；insert.js 不 import 這一檔
 
 /**
  * 引擎插站的觸發：照他勾的排完後出現這些規則的警告才跑第二趟。
  * walk-run：DESIGN §1.3「走路連跑要破 150 才由引擎插恢復站」→ restCandidates（只拿恢復站，priority 'rest'）；
- * wait-at-door：等開門空檔填站，任何站都可以（原話 #161）→ fillCandidates（那段空檔內有開、離空檔最近的任何站型，priority 'filler'，綁在空檔內）。
+ * wait-at-door：等開門空檔填站，任何站都可以（原話 #161）→ fillCandidates（那段空檔內有開、離空檔最近的任何站型，priority 'filler'，綁在空檔內）；
+ * late-departure：太晚出門——第一站很晚才開，早上的空檔也用填站填（同一個 fillCandidates；11-12 起這條單獨出現也會跑第二趟，見 FILL_TRIGGERS）。
  * 恢復站、填站、順路站一天合計最多插 settings.restInsertMaxPerDay 家（core.js maxOptional 以 optional 數上限）。
  */
 export const REST_TRIGGER_RULES = new Set(['walk-run', 'wait-at-door', 'late-departure']);
 /** 觸發規則 → 它插的站的種類；拒絕過哪一種就不再插那一種、那條警告降成提示 */
 const TRIGGER_KIND = Object.freeze({ 'walk-run': 'rest', 'wait-at-door': 'filler', 'late-departure': 'filler' });
+/**
+ * 哪幾條警告會讓第二趟加填站（extraCandidates）：等開門、太晚出門。太晚出門 10-12 立規則時就寫了「它的警告也觸發填站（早上空檔）」（a76d306 的提交訊息；
+ * fillCandidates 也認這條警告、算得出「時窗起點→第一站開門」那段空檔），但 extraCandidates 的開關一直只看等開門——第一趟只有「今天 11:16 才出門」、沒有任何一站等開門的日子，
+ * 第二趟根本不跑，早上整段空著。11-12 審查在公務版 8/13 撞到（咖啡廳不再算午餐之後，第一趟的最佳解變成 11:16 才出門），這裡補上。
+ */
+const FILL_TRIGGERS = Object.freeze(['wait-at-door', 'late-departure']);
+/** 他勾的站趕不上末班車時，把末班車當牆最多再試排幾次（每次把因此少掉的站免除再排；planTrip 內文）。預設：三次——一天裡真的趕不上的站很少超過兩家，每多試一次多跑一趟單日搜尋。 */
+const LAST_TRAIN_RETRY_MAX = 3;
 
 /**
  * 一天的時窗：預設 settings.dayWindow；晚出門日（旅程第 lateStartFromDay 天起、非一日遊、只有 normal 日）起點改 lateStartHM；早起日由 day.earlyDay 自帶出門時刻；
@@ -77,16 +89,19 @@ export function regionZonesOf({ home, candidates, anchorPoi }) {
  * 這天「外地」的區（11-06；原話 #190）：當日區域裡、從那一區回住宿照 legFn 的判斷要搭車的區——拿區中心（kb.zones 的座標）當假站探路，
  * 走路超過 settings.walkVsRideMaxWalkMin 又有搭車連結才算搭車（geo/matrix.js rideLink，跟站對站的判斷同一份）；走得回住宿的區（一番町、國分町）不算。
  * 回 { [區 id]: { homeMin: 回據點的搭車＋走路分鐘, last?: { leaveByMin, departMin, fromZoneId }（回程那條路的末班；知識庫沒查到就沒有這個鍵） } }，一區都沒有回 null。
- * 讀它的：rules/last-train.js（待到太晚回不了住宿）、rules/_slots.js returnToTownMin（一日遊幾點回到市區 → night-slot、day-trip-night、晚回城的提示）。
+ * 讀它的：rules/_slots.js missedLastTrain（待到太晚回不了住宿 → 規則 last-train 與他勾的站的提示）、returnToTownMin（一日遊幾點回到市區 → night-slot、day-trip-night、晚回城的提示）。
  * 站的區不在表裡＝市區。legFn 沒有 rideLink（自訂的 legFn、示範資料）或據點沒有區就沒有這張表。
+ * date、country：那一天的日期與國家層——末班分日別時（zones.json 的 last 寫 { weekday, saturday, holiday }）用那天的那一班（geo/matrix.js serviceDayOf：週六、週日與其餘；
+ * 落在國家層的特殊時刻表期間或那一種沒寫，取最早的）；不給日期一律取最早的一班。
  */
-export function awayOf({ zones = [], home = null, legFn = null, kb = null }) {
+export function awayOf({ zones = [], home = null, legFn = null, kb = null, date = null, country = null }) {
   if (typeof legFn?.rideLink !== 'function' || !home?.zoneId) return null;
+  const serviceDay = serviceDayOf(date, country);
   const out = {};
   for (const z of zones) {
     if (!z || z === home.zoneId) continue;
     const center = kb?.zones?.[z];
-    const link = legFn.rideLink({ id: `__zone:${z}`, zoneId: z, lat: center?.lat, lng: center?.lng }, home);
+    const link = legFn.rideLink({ id: `__zone:${z}`, zoneId: z, lat: center?.lat, lng: center?.lng }, home, serviceDay);
     if (!link) continue;
     out[z] = { homeMin: (link.rideMin ?? 0) + (link.walkMin ?? 0), ...(link.last ? { last: link.last } : {}) };
   }
@@ -95,15 +110,16 @@ export function awayOf({ zones = [], home = null, legFn = null, kb = null }) {
 
 /**
  * 當日區域裡區對區搭車的末班（11-06；原話 #190）：{ "<起區>|<訖區>": { leaveByMin, departMin, fromZoneId } }，只列知識庫有末班資料的方向（zones.json 連結的 last）；一筆都沒有回 null。
- * rules/last-train.js 在一段移動真的搭車（leg.rideMin > 0）時查這張表：引擎核心把 leg 規範化成固定欄位，規則看不到 leg 上的末班，所以整理在 day 上。
- * legFn 沒有 linkBetween（自訂的 legFn、示範資料）就沒有這張表。
+ * rules/_slots.js missedLastTrain 在一段移動真的搭車（leg.rideMin > 0）時查這張表：引擎核心把 leg 規範化成固定欄位，規則看不到 leg 上的末班，所以整理在 day 上。
+ * legFn 沒有 linkBetween（自訂的 legFn、示範資料）就沒有這張表。date、country 同 awayOf（末班分日別時用那天的那一班）。
  */
-export function lastLegsOf({ zones = [], legFn = null }) {
+export function lastLegsOf({ zones = [], legFn = null, date = null, country = null }) {
   if (typeof legFn?.linkBetween !== 'function') return null;
+  const serviceDay = serviceDayOf(date, country);
   const out = {};
   for (const a of zones) for (const b of zones) {
     if (!a || !b || a === b) continue;
-    const last = legFn.linkBetween(a, b)?.last;
+    const last = legFn.linkBetween(a, b, serviceDay)?.last;
     if (last) out[`${a}|${b}`] = last;
   }
   return Object.keys(out).length ? out : null;
@@ -147,9 +163,41 @@ export function lastLegsOf({ zones = [], legFn = null }) {
  * - 外地與末班車（11-06；原話 #190）：每天的 day 多兩張表，都選填（沒有就 null）——
  *   away { [區 id]: { homeMin, last? } }：當日區域裡「從那一區回住宿要搭車」的區（awayOf）；規則 last-train（待到太晚回不了住宿）、night-slot 與 day-trip-night（一日遊幾點回到市區）讀；
  *   lastLegs { "<起區>|<訖區>": { leaveByMin, departMin, fromZoneId } }：當日區域裡區對區搭車的末班（lastLegsOf）；規則 last-train（這一段搭車趕不趕得上）讀。
- *   末班資料來自知識庫 zones.json 連結的 last（geo/matrix.js）；legFn 不是 makeLegFn 做的（示範資料、測試自訂的）就兩張都沒有，那幾條規則照平常算。
+ *   末班資料來自知識庫 zones.json 連結的 last（geo/matrix.js）；分日別的（{ weekday, saturday, holiday }）照那天的日別取——day.serviceDay（geo/matrix.js serviceDayOf：
+ *   'weekday'｜'saturday'｜'holiday'｜'special' 特殊時刻表期間，取最早的一班）。legFn 不是 makeLegFn 做的（示範資料、測試自訂的）就兩張都沒有，那幾條規則照平常算。
+ *   末班車只擋引擎自己插的站；他勾的站趕不上照排、那站多一條提示 last-train（hint、不罰；rules/_slots.js lastTrainHints）——排出來有他勾的站趕不上時，先把末班車當牆再排
+ *   （day.lastTrainWall { except }，只在這幾趟試排裡有、不留在回傳的 day 上），有「每一站都留著、趕得上的都趕上」的順序就用那個，真的趕不上的才照排掛提示（planTrip 內文）。
  *   一日遊回到市區已晚於 settings.dayTripNightReturnByHM、後面還排了他勾的市區夜間站：照排，那站多一條提示 day-trip-night（hint、不罰；rules/_slots.js dayTripNightHints）；
- *   引擎自己插的由規則 day-trip-night 擋。現場套過改案的那天（ui/applied.js）不會重掛這條提示。
+ *   引擎自己插的由規則 day-trip-night 擋。現場套過改案的那天（ui/applied.js）重算後這兩種提示都會重掛。
+ * - 三餐（11-06 第二批；原話 #195）：每天的 plan 多一樣 meals { breakfast, lunch, dinner }，各是那一餐配到的站的 poi id 或 null（國家層沒有那一段、這天不需要、缺都是 null）——
+ *   rules/_slots.js planMealsOf（mealAssignments：那家店能當那一餐、落在放寬後的時窗、每站最多算一餐；跟規則 meal-slots 同一把尺）。照排好的序列算，不進分數與時刻。
+ *   現場套過改案的那天序列換了，要拿新序列重算（ui/applied.js；不重算會沿用引擎那一版）。
+ * - 早餐（11-06 第二批；原話 #196「還有預設上每天都要有早餐的安排 但我也有可能在飯店吃早餐」、#197；engine/breakfast.js）：國家層 country.mealSlots 有 breakfast 才有這回事，沒有這個鍵時下面每一樣都不動作。
+ *   · 要早餐的日子（早餐段跟原時窗有重疊、沒被固定時段蓋住、他沒說不排）而他勾的站裡沒有一站算早餐：每天都排完之後，引擎從 restPool 挑一家安插成第一站
+ *     （stop.insertedBy 'engine'、priority 'breakfast'、optional——不佔每天 8 站與引擎插站的名額；另帶 detourMin）。原本的每一站都留著、先後不變，只是時刻順延；
+ *     會害別的站撞硬規則就不排，那天 plan.warnings 多一條提示 { ruleId: 'breakfast-slot', code: 'hint', hint: true, msg: '今天沒排早餐' }（不是黃字、沒有 poiId）。
+ *     整趟一家店只當一天的早餐（engine/breakfast.js assignBreakfasts）。能當早餐的店（知識庫 meals.breakfast）不再被拿去當恢復站、填站、順路站。
+ *   · trip.days[].breakfast = { mode: 'hotel'｜'later', poiId, at, pick?, pickIndex?, movedTo? }：他說這天不排（吃飯店早餐／改天去；setBreakfast 寫的）——那天不排早餐、不提示；
+ *     每天的 day 上下文多一樣 breakfast { mode, poiId, movedTo }（照常排的日子是 null）。poiId 那家別天引擎不拿（留給推薦）。
+ *   · trip.days[].picks[].breakfast = true：他指定這一筆當那天的早餐（swapBreakfast／takeBreakfastOffer 寫的）——不進搜尋，排完之後安插成第一站（stop.breakfast true、priority 照那筆勾選、optional）；
+ *     排成第一站會害別的站排不進就落到 plan.dropped（理由寫那一句），引擎另挑。這天不要早餐時當一般的站排。
+ *   · 每天的 plan 多一樣 breakfastOffers [{ poiId, fromDate, mode, replaces, detourMin, shiftMin }]（沒有就空陣列）：他記著沒去到的那家可以排在這天（原話 #197），他按了才換。
+ *   · 哪一站是這天的早餐一律看 plan.meals.breakfast（引擎排的、他指定的、他勾的站自己落在早餐時段的都算；engine/breakfast.js breakfastOfPlan、breakfastKind）。
+ *   · removed 帶 insertedBy 'engine'、priority 'breakfast'（有人照一般的站對引擎排的早餐按了「不去了」）：那天引擎不再排早餐。
+ *   · trip.days[].engineBreakfast = '<poi id>'（選填；打包檔沒有，畫面每次重排完記回來——engine/breakfast.js keepBreakfasts）：上一版引擎替這天挑的早餐。
+ *     那一家在那天還排得進、沒被佔走就沿用，排不進的那天才重挑（assignBreakfasts 的 keep）：他只動了某一天，別天的早餐不跟著換店（11-12 畫面審查）。
+ * - 釘住順序的日子（11-06 第二批；原話 #192「順路站 升級成站時 不應該把原本的行程刪掉 應該是安插進來」、#194；engine/insert.js）：
+ *   trip.days[].pinned = { at, sequence: [{ poiId, dwellMin?, insertedBy?, priority? }] }（走廊清單「升級成站」安插之後 applyInsert 寫的）——那天不跑搜尋、
+ *   不插恢復站／填站／順路站／坐下來的地方、引擎不另排早餐：照 pinned 的順序組序列（引擎插過的站照記著的放回去）、整條重定時刻、重算，收工線用原時窗（留白可以被用掉）；
+ *   撞硬規則的站移到排不進清單、picks 裡有而順序裡沒有的（順延進來的）試每個位置插（planPinnedDay）。那天的 plan 多 pinned: true 與 openSlotUsedMin（用掉幾分留白），
+ *   stats.nodes 是 0；day 上下文多 pinned: true（day.window 仍是扣過留白的收工——要重算這條序列的拿 engine/sequence.js rawWindowDay(day)）。
+ *   三餐、提示、走廊清單、二選一、早餐的推薦這些後處理照掛。pinned 裡記著的引擎站，別天的引擎不再插同一家。「讓引擎重排這天」＝engine/insert.js unpinDay。
+ *   pinned.sequence 的每一筆另可帶 slotOpenMin（那一站記的時候排在當天第二段以後的營業時間；之後提早到、前一段待不完時等到那一段開門）與 off: true（記著但不排的引擎站）；
+ *   撞到別站被讓掉的引擎站各出一句提示（plan.warnings 的 { ruleId: 'pinned-order', hint: true }）、列在 plan.yielded。畫面每次重排完呼叫 engine/insert.js repinTrip 把那一條記回旅程檔。
+ *   升級成站不動到別天（11-12 審查）：picks[].via 'corridor'（升級進來的那筆勾選）、removed[].via 'insert'（釘住的日子上不去的引擎站）與釘住的日子記著的引擎站，
+ *   在別天都是「挑好引擎插站的名單之後才拿掉」（內文 lateIds）——名單的組成跟安插之前一樣，那天搜出來的行程也就不變。
+ *   每天的 plan（釘不釘住都有）另多一樣 unplaced：排不進的勾選站（plan.dropped 的那幾家）照 picks 的先後、還沒定時刻的 stop 形狀——安插試算（insertTrial）插完之後拿它們
+ *   照釘住的日子同一套再試排一次（之前因為同類上限排不進的，選了「不去」另一家同類之後會排得進來），試算才跟套完重排的一樣。沒有就是空陣列。
  */
 export function planTrip({ trip, pois, rules, settings, country, kb, legFn, restPool = [], brief = null, options = {} }) {
   const out = []; const warnings = [];
@@ -160,27 +208,77 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
   // 前幾天已經插過的（同一家店不在兩天都被插）、走廊清單按過「我進去了」之後的日子（options.visited: { [poiId]: 'YYYY-MM-DD' }，裝置端 field.visited；
   // 原話 #138 去過的不再出現；進去那天本身照舊——visitedBefore）
   const pickedOrRemovedAnywhere = pickedOrRemoved(trip);
+  // 升級成站（釘住）不能動到別天（原話 #192「順路站 升級成站時 不應該把原本的行程刪掉 應該是安插進來」；11-12 審查）：
+  // 引擎每天挑恢復站／填站／順路站／坐下來的地方，都是「先扣掉不拿的店、再取最近的幾家」——多扣一家，名單就往後遞補一家，那天搜出來的行程會跟著變。
+  // 所以因為安插才變成「別天不能拿」的店，改成挑好名單之後才拿掉（late）：名單的組成跟安插之前一樣，只是不准選它（它本來就沒被選上——選上的話就不會出現在走廊清單）。
+  // 三種：(1) 釘住的日子記著的引擎站——排在它前面的日子不能把同一家先插走（輪到那天之後照舊算「前幾天插過的」）；
+  // (2) 走廊清單升級成站加進來的那筆勾選（picks[].via 'corridor'；engine/insert.js applyInsert 寫的；之後對它按了「不去了」，removed 那一筆帶同一個記號、照樣算這一種）；
+  // (3) 釘住的日子上不去的引擎站（removed[].via 'insert'：安插的選項裡選了「不去」的、釘住之後在畫面按「不去了」的）——那天之前的日子挑好才拿掉，那天起照舊算插過的。
+  // 11-12 實跑（七天包，42 個直接排得下的安插套完之後對那天每一站各按一次不去了，共 333 次）：removed 不帶記號的話別天變了 15 次（14 次是拒絕引擎站），帶了是 0 次。
+  // 上一版把 (1) 一開始就算成「插過」：七天包（段 K 待套用版）42 個直接排得下的安插有 15 個套了之後 8/15、8/18 跟著變（什麼都不插、只把 8/16 或 8/17 照原順序釘住也會）。
+  // 沒有釘住的日子、沒有升級過的勾選時這三個集合都是空的，跟以前一樣。
+  const pinnedEngine = pinnedEngineIds(trip);
+  const upgradedPicks = corridorPickIds(trip);
+  const insertDrops = insertDroppedEngine(trip);   // Map<日期, [poi id]>
+  const lateIds = new Set([...pinnedEngine, ...upgradedPicks, ...[...insertDrops.values()].flat()]);
+  const notLate = (c) => !lateIds.has(c.poi.id);
+  // 一開始就不拿的店（任何一天勾過、按過「不去了」的）要扣掉上面 (2)(3)：它們走「挑好才拿掉」那條路
+  const preExcluded = upgradedPicks.size || insertDrops.size ? pickedOrRemoved(trip, { skipLate: true }) : pickedOrRemovedAnywhere;
   const insertedSoFar = new Set();
+  const pinnedPlaced = new Set();   // 前面釘住的日子真的排進去的引擎站：兩個釘住的日子記著同一家時只留前面那天的
+  const poolById = new Map();       // 釘住的日子要把記著的引擎站對回 POI（pois 沒有就找 restPool）；用到才建
+  const enginePoiOf = (id) => { if (pois[id]) return pois[id]; if (!poolById.size) for (const p of restPool) if (p?.id) poolById.set(p.id, p); return poolById.get(id) ?? null; };
   const shopping = shoppingDaysOf(trip, settings, warnings);   // 購物日欄位寫壞了記整趟警告、照樣排（總則 0）
+  // 早餐（原話 #196；11-06 第二批）：國家層有早餐段才有這回事（沒有這個鍵時 bfSlot 是 null，下面跟早餐有關的每一步都不動作，舊打包檔的結果不變）。
+  // 住宿旁邊能當早餐的店留給早餐（走路 ≤ settings.breakfastWalkMaxMin 的那幾家；bfReserved 併進每天的 exclude）：恢復站、填站、順路站三個池都不拿——
+  // 不然填站先把那家用掉，同一家店又不在兩天都被插，輪到它該當早餐的那天就只剩備案或營業不固定的。離住宿遠的（松島的星鰻丼、上杉的麵包店）當不了引擎排的早餐，照舊可以當填站。
+  // 11-11 實跑、11-12 換成最後的知識庫重跑相同（段 K 待套用版的七天包）：不保留的話，引擎把 そばの神田 當成 8/14 11:06 的填站（插在 11:35 的牛舌午餐前）、Cafe de 埃比昂 當成 8/16 早上的填站，
+  // 三天的早餐變成 8/13 立ちそば処 杜、8/14 外帶飯糰 あみ（營業不固定）、8/16 DaTe Cafe O'rder（研究標備案）；保留之後是 杜、神田、埃比昂。
+  // 代價：8/16 早上的填站從咖啡廳換成商店街（多一句「不是購物日」），七天包七天的分數合計從 3768.75 變 3718.75（8/14 少 2.75、8/15 多 16.25、8/16 少 63.5）；公務版、試走版兩種做法每天都相同。
+  // 他自己勾的、走廊清單、換一家都不受影響。
+  const bfSlot = breakfastSlotOf(country, settings);
+  const bfHomes = bfSlot ? [...new Set(trip.days.map((d) => resolveHome(trip, d.date)))] : [];
+  const nearSomeHome = (p) => bfHomes.some((h) => { const leg = legFn(h, p); return Boolean(leg) && (leg.rideMin ?? 0) === 0 && (leg.walkMin ?? 0) <= (settings.breakfastWalkMaxMin ?? 12); });
+  const bfReserved = bfSlot ? restPool.filter((p) => p && servesBreakfast(p) && nearSomeHome(p)).map((p) => p.id) : [];
+  const work = [];   // 跟 out 一格對一格：每天排完之後安插早餐、掛提示要用的（住宿、這天拒絕過哪幾種引擎插站、他指定的早餐）；跳過沒排的日子是 null
   trip.days.forEach((d, index) => {
     const home = resolveHome(trip, d.date);
+    // 安插的選項裡在這天選了「不去」的引擎站：從這天起照舊算「插過的」（它本來就是這天插的；這天之前的日子走挑好才拿掉那條路）
+    for (const id of insertDrops.get(d.date) ?? []) insertedSoFar.add(id);
+    // 時窗先算（下面要用它判這天要不要早餐）；它的整趟警告照舊在「固定時段日卻沒有固定時段」那句之後才記，警告的先後不變
+    const win = dayWindow(d, index, settings, d.type === 'arrival' || d.type === 'departure' ? airportTransitMin({ legFn, home, settings }) : 0, country);
+    // 他說這天不排早餐（旅程檔 days[].breakfast：吃飯店早餐／改天去）；這天要不要早餐的靜態那一半——早餐段跟原時窗有重疊、他沒說不排（被固定時段蓋住要排完才知道）
+    const bfChoice = bfSlot ? breakfastChoiceOf(d) : null;
+    const wantsBreakfast = Boolean(bfSlot) && !bfChoice && overlapMin(win.raw.startMin, win.raw.endMin, bfSlot.core[0], bfSlot.core[1]) > 0;
+    let forcedBreakfast = null;   // 他指定當早餐的那一筆勾選（picks[].breakfast；engine/breakfast.js swapBreakfast／takeBreakfastOffer 寫的）
+    // 釘住順序的日子（原話 #192、#194；engine/insert.js）：照 pinned 的順序排，不跑搜尋。指定的早餐在這種日子不抽出來——它在順序裡的哪個位置就排哪個位置
+    const pin = pinnedOf(d);
+    let pinBreakfastSeen = false;
+    const ordered = [];   // 這天勾的每一站照 picks 的先後（含指定的早餐）：排完之後把排不進的那幾站照原樣記在 plan.unplaced，安插試算要拿它們再試排
     const candidates = (d.picks ?? []).map((p) => {
       const poi = pois[p.poiId];
       if (!poi) { warnings.push({ code: 'pick-unknown', date: d.date, msg: `${d.date} 的 ${p.poiId} 不在知識庫` }); return null; }
+      // 指定的早餐不進搜尋：其餘的站照常排完，再把它安插成第一站——他換一家早餐、按了「或 X」之後，別的站的先後才不會跟著翻。這天不要早餐（晚出門日）就當一般的站排
+      if (!pin && wantsBreakfast && p.breakfast === true && !forcedBreakfast) { forcedBreakfast = { poi, pick: p }; ordered.push({ poi, priority: p.priority ?? 'want', breakfastPick: p }); return null; }
       const fixedWindow = fixedWindowOf(p.fixedWindow, settings, warnings, d.date, poi);
-      return { poi, priority: p.priority ?? 'want', dwellMin: p.dwellMin ?? fixedSpanMin(fixedWindow), fixedWindow, designated: (d.designated ?? []).includes(p.poiId), isAnchor: d.anchor?.poiId === p.poiId || Boolean(d.anchor?.poiIds?.includes(p.poiId)), errand: Boolean(p.errand), deferredFrom: p.deferredFrom ?? null };
+      const cand = { poi, priority: p.priority ?? 'want', dwellMin: p.dwellMin ?? fixedSpanMin(fixedWindow), fixedWindow, designated: (d.designated ?? []).includes(p.poiId), isAnchor: d.anchor?.poiId === p.poiId || Boolean(d.anchor?.poiIds?.includes(p.poiId)), errand: Boolean(p.errand), deferredFrom: p.deferredFrom ?? null };
+      if (pin && wantsBreakfast && p.breakfast === true && !pinBreakfastSeen) { pinBreakfastSeen = true; cand.breakfastPick = p; }
+      ordered.push(cand);
+      return cand;
     }).filter(Boolean);
     // 主行程：單站型用那站；主題型用骨架店的第一家當顯示名（畫面不得露出 theme 鍵值）
     const anchorPoi = d.anchor?.poiId ? pois[d.anchor.poiId] : (d.anchor?.poiIds?.length ? pois[d.anchor.poiIds[0]] : null);
     const themeCategory = themeCategoryOf(d, warnings);
     // fixed 日卻沒有任何一站帶固定時段（旅程檔手改漏了、或 fixedWindow 寫壞被拿掉）：那天會照營業時間當普通站排、整天像普通日，記整趟警告（10-14 T23 審查）
     if (d.type === 'fixed' && !candidates.some((c) => c.fixedWindow)) warnings.push({ code: 'fixed-day-no-window', date: d.date, msg: `${d.date} 標了固定時段日，但沒有一站帶固定時段（picks[].fixedWindow），會場會照營業時間當普通站排` });
-    const win = dayWindow(d, index, settings, d.type === 'arrival' || d.type === 'departure' ? airportTransitMin({ legFn, home, settings }) : 0, country);
     for (const w of win.warnings) warnings.push({ ...w, date: d.date, msg: `${d.date} ${w.msg}` });
     // 那天在場的人與合併後的調整（T19）：party＝在場人數（有 dates 的只算那幾天；倍率那條照舊 ≥2 就 partyWalkFactor）；人之間取最鬆（原話 #144）
     const present = presentOn(persons, d.date);
     const adjust = mergeAdjustments(present);
-    const regionZones = regionZonesOf({ home, candidates, anchorPoi });
+    // 釘住順序的日子：記在順序裡的引擎站也算這天的區域——它們當初是在當日區域裡挑的；之後他把同一區唯一勾的那一站按掉，那一區不能就這樣變成「出了今天的區域」再罰一次
+    // （11-12 實跑：七天包 8/18 安插時選了「不去 伊達的牛舌本舖」，引擎插的 ふじや千舟 所在的區就不在當日區域裡了，試算 340.25 分、重排 280.25 分，差的 60 就是離開區域的罰）
+    const pinEngineZones = pin ? pin.sequence.filter((e) => e.insertedBy === 'engine').map((e) => enginePoiOf(e.poiId)).filter(Boolean).map((p) => ({ poi: p })) : [];
+    const regionZones = regionZonesOf({ home, candidates: pin ? [...candidates, ...pinEngineZones] : candidates, anchorPoi });
     const day = {
       date: d.date, type: d.type ?? 'normal', earlyDay: Boolean(d.earlyDay), dayTrip: Boolean(d.dayTrip), party: present.length,
       persons: present, adjust,
@@ -188,8 +286,10 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
       themeCategory, prevThemeCategory: prevTheme,
       anchorPoiId: anchorPoi?.id ?? null, anchorName: anchorPoi?.name_zh ?? d.anchor?.theme ?? null,
       designated: d.designated ?? [], regionZones, homeZoneId: home?.zoneId ?? null,
-      // 外地的區與末班車（原話 #190；11-06）：哪幾區回住宿要搭車、區對區搭車的末班；沒有就 null（規則 last-train、night-slot、day-trip-night 讀）
-      away: awayOf({ zones: regionZones, home, legFn, kb }), lastLegs: lastLegsOf({ zones: regionZones, legFn }),
+      // 外地的區與末班車（原話 #190；11-06）：哪幾區回住宿要搭車、區對區搭車的末班；沒有就 null（規則 last-train、night-slot、day-trip-night 讀）。
+      // serviceDay＝那天跑哪一種時刻表（末班分日別時取哪一班；日期看不懂是 null）
+      away: awayOf({ zones: regionZones, home, legFn, kb, date: d.date, country }), lastLegs: lastLegsOf({ zones: regionZones, legFn, date: d.date, country }),
+      serviceDay: serviceDayOf(d.date, country),
       window: { startMin: win.startMin, endMin: win.endMin }, windowRaw: win.raw, openSlotMin: win.openSlotMin,
       openSlotSkipped: win.warnings.some((w) => w.code === 'open-slot-skipped'),
       taxRefundBufferMin: win.taxRefundBufferMin,   // 離境日真的扣掉的免稅緩衝（國家層 taxRefund，T20）；plan-report 與之後的離境日畫面讀，其餘日子 0
@@ -198,10 +298,17 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
       nightSlotLess: adjust.nightSlot === 'less',
       // 購物日（原話 #36、#55；DESIGN §1.5）：規則 shopping-day 讀；非購物日 false／null
       shoppingDay: shopping.has(d.date), shoppingFromMin: shopping.get(d.date)?.fromMin ?? null,
+      // 早餐（原話 #196）：他說這天不排——{ mode: 'hotel' 吃飯店早餐｜'later' 改天去, poiId: 原定那家或 null, movedTo: 那家後來排到哪一天或 null }；照常排早餐的日子、國家層沒有早餐段都是 null。
+      // 規則 breakfast-slot 與三餐的尺（rules/_slots.js）讀它：那天不要早餐、不罰、不提示
+      breakfast: bfChoice ? { mode: bfChoice.mode, poiId: bfChoice.poiId, movedTo: bfChoice.movedTo } : null,
+      // 這天照他調過的順序排（旅程檔 days[].pinned；engine/insert.js）：有才帶這個鍵。window 照舊是扣過留白的收工，重算這天的序列要用 rawWindowDay(day)
+      ...(pin ? { pinned: true } : {}),
     };
     // 只試排幾天（options.onlyDates）：其他日子不跑 planDay，plan 回 null；上下文與主題的傳遞照常
     if (onlyDates && !onlyDates.has(d.date)) {
+      if (pin) for (const e of pin.sequence) if (e.insertedBy === 'engine') insertedSoFar.add(e.poiId);   // 跳過沒排的釘住日：它記著的引擎站照樣算插過（跟整趟排時同一個池）
       out.push({ date: d.date, day, plan: null });
+      work.push(null);
       prevTheme = themeCategory; prevType = d.dayTrip ? 'daytrip' : (d.type ?? 'normal');
       return;
     }
@@ -211,39 +318,107 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
     const rejected = rejectedKinds(d.removed);
     // 他在這天換掉過的站（二選一選了 B 頂掉的 A、「換一家」換掉的）與二選一沒選、別天也排不進的那家（trip.deferred 裡 unplaced）：這天引擎不再把它當恢復站／填站插回來
     // （別天照舊可以——原話 #138 沒選的可以再出現；推導，T16；choices.js swappedAwayFrom）
-    const exclude = new Set([...pickedOrRemovedAnywhere, ...insertedSoFar, ...visitedBefore(options.visited, d.date), ...swappedAwayFrom(trip, d.date)]);
+    const exclude = new Set([...preExcluded, ...insertedSoFar, ...visitedBefore(options.visited, d.date), ...swappedAwayFrom(trip, d.date), ...bfReserved]);
     // 坐下來的地方（spot：海邊、公園、展望台）每天都進第一趟候選（optional、價值 0、最多 settings.spotPoolMax 家）：它的用處是把等固定時段的時間坐掉，
     // 第二趟才加會看不到（第一趟為了少等會跑去別區再回來）；拒絕過恢復站的那天不加（原話 #172 採的做法；10-16）；在場的人不想去的店型不拿（T19）
     const spots = rejected.has('rest') ? [] : restPool
       .filter((p) => p && p.category === 'spot' && engineMayInsert(p) && (day.regionZones ?? []).includes(p.zoneId) && !exclude.has(p.id) && !personAvoids(day.adjust, p))
       .slice(0, settings.spotPoolMax ?? 2)
-      .map((p) => ({ poi: p, priority: 'rest', optional: true, insertedBy: 'engine', dwellMin: p.dwellMin ?? 30 }));
-    let plan = planDay({ candidates: [...candidates, ...spots], day, home, legFn, rules, settings, country, kb, options });
-    const extra = extraCandidates({ restPool, candidates, day, exclude, home, plan, settings, rejected, legFn });
-    if (extra.length) {
-      const withExtra = planDay({ candidates: [...candidates, ...spots, ...extra], day, home, legFn, rules, settings, country, kb, options });
-      if ((withExtra.complete && !plan.complete) || (withExtra.complete === plan.complete && withExtra.score > plan.score)) plan = withExtra;
-    }
-    // 順路站（原話 #170）：不進 DFS（價值 30 的候選會把節點吃爆，試走包兩天都撞 800 ms），改成貪婪插入——
-    // 對排好的序列，每家候選試每個位置、整條重定時刻與重算分數，分數有變好、沒撞硬規則才收
-    if (!(rejected.has('filler') || rejected.has('onway'))) {
-      const onway = onTheWayCandidates({ restPool, day, exclude: new Set([...exclude, ...plan.sequence.map((s) => s.poi.id)]), home, plan, legFn, settings });
-      plan = insertOnTheWay({ plan, onway, day, home, legFn, rules, settings, country, kb });
-    }
-    if (rejected.size) plan = { ...plan, warnings: plan.warnings.map((w) => (rejected.has(TRIGGER_KIND[w.ruleId]) ? { ...w, hint: true } : w)) };
+      .map((p) => ({ poi: p, priority: 'rest', optional: true, insertedBy: 'engine', dwellMin: p.dwellMin ?? 30 }))
+      .filter(notLate);   // 挑好才拿掉（見上面 lateIds）：下面恢復站、填站、順路站三個池同一個做法
+    // 這一天從搜尋排到順路站的整套（runDay）：平常就跑一次（他勾的全部）；早餐的推薦要知道「把他勾的那一站早餐換掉之後這天會排成什麼樣」時，拿少一站的勾選再跑一次（work[].replanWithout）。
+    const runDay = (candidates) => {
+      const planOnce = (dayCtx) => {
+        let p = planDay({ candidates: [...candidates, ...spots], day: dayCtx, home, legFn, rules, settings, country, kb, options });
+        const extra = extraCandidates({ restPool, candidates, day: dayCtx, exclude, home, plan: p, settings, rejected, legFn }).filter(notLate);
+        if (extra.length) {
+          const withExtra = planDay({ candidates: [...candidates, ...spots, ...extra], day: dayCtx, home, legFn, rules, settings, country, kb, options });
+          if ((withExtra.complete && !p.complete) || (withExtra.complete === p.complete && withExtra.score > p.score)) p = withExtra;
+        }
+        return p;
+      };
+      let plan = planOnce(day);
+      // 末班車對他勾的站不是牆（規則 last-train 只擋引擎插的；總則 0、3），但能趕上就該趕上。排出來有他勾的站趕不上時再排（平常日沒有人趕不上，不多跑）：
+      // 把末班車當牆（day.lastTrainWall）排一次——他勾的每一站都還在，就是「換個順序就趕得上」，用它；有站因此少掉，那幾站才是真的趕不上，免除它們（except）再排，
+      // 其餘的照樣要趕上；最多試 LAST_TRAIN_RETRY_MAX 次，試不出來就用原本的排法。最後還趕不上的站在下面掛提示。
+      // 11-06 實跑比過（合成夾具 5 個＋審查的兩個探針共 7 個情境，另跑帶 14 條真末班的三個打包檔）：
+      // (甲) 末班車對誰都是牆（上一版）：7 個情境裡他勾的站被丟掉 6 站，3 站是主行程；
+      // (乙) 只放行、不再排：一站不丟，但換個順序就趕得上的那天照樣排成趕不上（夏天中午的市區會曬，分數偏好先逛市區再去海邊），
+      //     而且一有站趕不上、同一天別的站也跟著排到末班之後（花火散場後才去逛市區的庭園、日歸湯泡完才去寺）——共 10 條提示；
+      // (丙) 這裡的做法：一站不丟、提示 7 條，都是真的趕不上的。只當牆再排一次、不免除再排的話是 9 條（一站趕不上，別的站就沒人管）。
+      // 三個打包檔上四種做法每天的序列都相同（沒有一站碰到末班，也就不會多跑）。
+      const missesOf = (p) => lastTrainMisses({ sequence: p.sequence, day, home, legFn }).filter((m) => !m.stop.insertedBy).length;
+      const missed = missesOf(plan);
+      if (missed) {
+        const mine = plan.sequence.filter((s) => !s.insertedBy).map((s) => s.poi.id);
+        const except = [];
+        for (let round = 0; round < LAST_TRAIN_RETRY_MAX; round++) {
+          const trial = planOnce({ ...day, lastTrainWall: { except: [...except] } });
+          const kept = new Set(trial.sequence.map((s) => s.poi.id));
+          const lost = mine.filter((id) => !kept.has(id));
+          if (lost.length) { except.push(...lost); continue; }
+          // 每一站都在：整天沒有因此變得不成立、趕不上的站也沒有變多才採用
+          if ((trial.complete || !plan.complete) && missesOf(trial) <= missed) plan = trial;
+          break;
+        }
+      }
+      // 順路站（原話 #170）：不進 DFS（價值 30 的候選會把節點吃爆，試走包兩天都撞 800 ms），改成貪婪插入——
+      // 對排好的序列，每家候選試每個位置、整條重定時刻與重算分數，分數有變好、沒撞硬規則才收
+      if (!(rejected.has('filler') || rejected.has('onway'))) {
+        const onway = onTheWayCandidates({ restPool, day, exclude: new Set([...exclude, ...plan.sequence.map((s) => s.poi.id)]), home, plan, legFn, settings }).filter(notLate);
+        plan = insertOnTheWay({ plan, onway, day, home, legFn, rules, settings, country, kb });
+      }
+      return plan;
+    };
+    // 釘住順序的日子不搜尋：照記著的順序組序列、重定時刻、重算（engine/insert.js planPinnedDay）。記著的引擎站還留不留得住在這裡判：
+    // 任何一天勾過或按過「不去了」的、這天之前按過「我進去了」的、前面釘住的日子已經排過的不留；引擎排的早餐在這天不要早餐時（他說不排、早餐段不在時窗裡）不留
+    const gonePinned = pin ? new Set([...pickedOrRemovedAnywhere, ...visitedBefore(options.visited, d.date), ...pinnedPlaced]) : null;
+    const plan = pin
+      ? planPinnedDay({ pinned: pin, candidates, swapped: d.swapped, enginePoi: enginePoiOf, engineGone: (id) => gonePinned.has(id), allowEngineBreakfast: wantsBreakfast, day, home, legFn, rules, settings, country, kb, options })
+      : runDay(candidates);
+    if (pin) for (const s of plan.sequence) if (s.insertedBy) pinnedPlaced.add(s.poi.id);
     for (const s of plan.sequence) if (s.insertedBy) insertedSoFar.add(s.poi.id);
+    // 釘住的日子記著的引擎站，這天之後的日子一律算插過——這天因為撞到別站暫時沒排進去的也算（釘住之前它就是這天插的，後面的日子本來就不拿它）
+    if (pin) for (const e of pin.sequence) if (e.insertedBy === 'engine') insertedSoFar.add(e.poiId);
     // 順延過來的站（picks[].deferredFrom）這天排不進了：整趟警告、不罰；trip.deferred 那筆不自動改（DESIGN §6.3.2 寫的 toDate 回 null／status 'dropped' 沒做，只出警告）
     for (const c of candidates) {
       if (c.deferredFrom && plan.dropped.some((x) => x.poi.id === c.poi.id)) warnings.push({ code: 'deferred-dropped', date: d.date, poiId: c.poi.id, msg: `${c.poi.name_zh ?? c.poi.id} 從 ${monthDay(c.deferredFrom)} 順延到這天，但這天排不進了` });
     }
+    out.push({ date: d.date, day, plan });
+    // replanWithout：這天少勾某一站會排成什麼樣（同一份不拿的店、同一套流程；只在算早餐的推薦時用，平常不跑）。同一站只重排一次：他記著好幾家沒去到的早餐時，每一家都會來問同一天
+    const replans = new Map();
+    const replanWithout = (poiId) => { if (!replans.has(poiId)) replans.set(poiId, runDay(candidates.filter((c) => c.poi.id !== poiId))); return replans.get(poiId); };
+    work.push({ home, rejected, forcedBreakfast, replanWithout, pinned: Boolean(pin), ordered });
+    prevTheme = themeCategory; prevType = d.dayTrip ? 'daytrip' : (d.type ?? 'normal');
+  });
+  // 早餐（原話 #196）：每天的站都排完才安插（engine/breakfast.js）——他指定的那一筆、沒指定就由引擎從知識庫挑一家，都排成第一站；原本的每一站留著、先後不變，只是時刻順延。
+  // 整趟一起分（一家店只當一天的早餐；每一種分法都試過、挑整趟最好的）。回還記著、等著推薦的那幾家（下面掛推薦用）。
+  const remembered = bfSlot ? planBreakfasts({ out, work, trip, pois, restPool, legFn, rules, settings, country, kb, visited: options.visited, taken: lateIds.size ? new Set([...preExcluded, ...pinnedEngine, ...[...insertDrops.values()].flat()]) : pickedOrRemovedAnywhere, reserved: bfReserved, held: upgradedPicks }) : [];
+  // 每天排完之後掛上去的（不進分數；早餐安插會整天重算警告，所以都在它之後）
+  out.forEach((x, i) => {
+    if (!x.plan) return;
+    const { day } = x; const { home, rejected } = work[i];
+    let plan = x.plan;
+    // 他拒絕過哪一種引擎插的站，那一種的觸發警告降成提示（原話 #126）
+    if (rejected.size) plan = { ...plan, warnings: plan.warnings.map((w) => (rejected.has(TRIGGER_KIND[w.ruleId]) ? { ...w, hint: true } : w)) };
     // 他勾的站是在場的人不想去的店型（T19）：照排，那站多一條提示 person-avoid（hint、不罰、不進規則檔——跟 leg-suggest 同一種後處理）
-    const avoidHints = personAvoidWarnings(plan.sequence, adjust);
+    const avoidHints = personAvoidWarnings(plan.sequence, day.adjust);
     if (avoidHints.length) plan = { ...plan, warnings: [...(plan.warnings ?? []), ...avoidHints] };
     // 一日遊回到市區已經晚於 settings.dayTripNightReturnByHM、後面還排了他勾的市區夜間站（原話 #190；11-06）：照排，那站多一條提示（hint、不罰；同一種後處理）
     const lateNightHints = dayTripNightHints({ sequence: plan.sequence, day, settings, country });
     if (lateNightHints.length) plan = { ...plan, warnings: [...(plan.warnings ?? []), ...lateNightHints] };
-    out.push({ date: d.date, day, plan });
-    prevTheme = themeCategory; prevType = d.dayTrip ? 'daytrip' : (d.type ?? 'normal');
+    // 他勾的站趕不上末班車（知識庫有那條路的末班才判）：照排，那站多一條提示（hint、不罰；同一種後處理）。引擎自己插的由規則 last-train 擋
+    const lastTrain = lastTrainHints({ sequence: plan.sequence, day, home, legFn, kb });
+    if (lastTrain.length) plan = { ...plan, warnings: [...(plan.warnings ?? []), ...lastTrain] };
+    // 這天要早餐卻沒排到（引擎也排不進）：一句提示「今天沒排早餐」（hint、沒有 poiId；原話 #196 他本來就可能吃飯店，不是黃字）。他說這天不排的日子不提示
+    const noBreakfast = bfSlot ? breakfastHints({ sequence: plan.sequence, day, settings, country }) : [];
+    if (noBreakfast.length) plan = { ...plan, warnings: [...(plan.warnings ?? []), ...noBreakfast] };
+    // 這天哪一站是哪一餐（原話 #195；11-06 第二批）：{ breakfast, lunch, dinner } 各是站的 id 或 null，照排好的序列算、不進分數（缺午餐晚餐的罰是規則 meal-slots 的事，同一把尺）。
+    // 畫面拿它知道這一站是哪一餐、換一家（engine/swap.js）拿它決定列「能當那一餐的店」還是「同店型」
+    // unplaced：這天排不進的勾選站（plan.dropped 的那幾家）照 picks 的先後、還沒定時刻的 stop 形狀（帶他寫的停留與固定時段）——走廊清單升級成站的安插試算（engine/insert.js insertTrial）
+    // 插完要拿它們照釘住的日子同一套再試排一次，試算才會跟套完重排的一樣；沒有排不進的站就是空陣列
+    const droppedIds = new Set((plan.dropped ?? []).map((q) => q.poi.id));
+    x.plan = { ...plan, meals: planMealsOf({ sequence: plan.sequence, day, settings, country }), unplaced: droppedIds.size ? work[i].ordered.filter((c) => droppedIds.has(c.poi.id)).map((c) => pickStopOf(c, undefined, settings)) : [] };
   });
   // 走廊清單與長段提示（T15）：七天都排完才算，掛在排好的序列旁，不進分數、不改時刻。exclude 比引擎插站多扣「任何一天引擎插過的站」（不只前幾天）：
   // 同一家店在別天是站就不當走廊——10-16 審查：仙台朝市早餐是 8/16 的引擎站卻列在 8/12、8/15 的走廊，8/12 按「升級」會把它變成 8/12 的站、8/16 就不插了。今天序列裡的站 corridorFor 自己扣。
@@ -254,7 +429,88 @@ export function planTrip({ trip, pois, rules, settings, country, kb, legFn, rest
   // 這天換掉過的與 unplaced 的 A 也不當這天的 B——swappedAwayFrom，10-16 審查）；不進分數與時刻
   const inAnySequence = new Set(sequences.flat().map((s) => s.poi.id));
   for (const x of out) if (x.plan) x.plan = { ...x.plan, choices: proposeChoices({ plan: x.plan, date: x.date, pool: restPool, legFn, settings, exclude: new Set([...pickedOrRemovedAnywhere, ...inAnySequence, ...visitedBefore(options.visited, x.date), ...swappedAwayFrom(trip, x.date)]) }) };
+  // 早餐的推薦（原話 #197「後續的其中一天在不影響原定行程的前提下 可以再推薦我一次」）：他按過「吃飯店早餐」「改天去」而記著的那家，掛在後面合格的日子的 plan.breakfastOffers，
+  // 他按了才換（engine/breakfast.js takeBreakfastOffer）。已經被勾進哪一天、或已經在哪一天序列裡的不再推薦。沒有就是空陣列（國家層沒有早餐段也是）。
+  const offers = remembered.length
+    ? breakfastOffers({
+      entries: remembered.filter((e) => !pickedOrRemovedAnywhere.has(e.poi.id) && !inAnySequence.has(e.poi.id)),
+      days: out.map((x, i) => (x.plan ? { date: x.date, day: x.day, plan: x.plan, home: work[i].home, visited: visitedBefore(options.visited, x.date), replanWithout: work[i].replanWithout, pinned: work[i].pinned } : null)).filter(Boolean),
+      legFn, rules, settings, country, kb, giveWay: BREAKFAST_POLICY.giveWay,
+    })
+    : null;
+  for (const x of out) if (x.plan) x.plan = { ...x.plan, breakfastOffers: offers?.get(x.date) ?? [] };
   return { days: out, warnings };
+}
+
+/**
+ * 整趟的早餐安插（planTrip 每天都排完之後呼叫；國家層有早餐段才會進來）。直接改 out[i].plan；回還記著、等著推薦的那幾家 [{ fromDate, mode, poiId, poi }]。
+ * 1. 他指定的早餐（work[i].forcedBreakfast＝那天 picks 裡標 breakfast: true 的那一筆）：排成第一站（engine/breakfast.js tryBreakfastFirst）；
+ *    排成第一站會害別的站撞硬規則就不排，落到那天的排不進清單（理由寫那一句），那天改由引擎挑。
+ * 2. 他勾的站裡已經有一站算早餐的日子（rules/_slots.js mealAssignments）：不另排，那家連同一處的另一筆算被佔走。
+ * 3. 要早餐卻沒有的日子（那天拒絕過引擎排的早餐——removed 記了 priority 'breakfast'——就不排）：breakfastOptions 列出排得進的店、assignBreakfasts 整趟一起分。
+ *    不拿的店：任何一天勾過／按過「不去了」的（taken）、任何一天序列裡的（含引擎插的）、那天之前按過「我進去了」的、那天換掉過的，連同一處的另一筆；
+ *    他記著要改天去的那幾家算被佔走（留給推薦），不扣在清單裡——這樣他按「吃飯店早餐」前後，其他日子可排的家數與先後都不變，挑到的店也就不變。
+ *    held（走廊清單升級成站加進來的勾選，planTrip 的 lateIds 第 (2) 種）同一個做法：算被佔走、不扣在別天的清單裡（taken 已經不含它們）——
+ *    他升級了一家能當早餐的店（站裡的 DaTe Cafe O'rder 就常出現在走廊清單），別天各家早餐的比較基準不能跟著變（原話 #192）。
+ */
+function planBreakfasts({ out, work, trip, pois, restPool, legFn, rules, settings, country, kb, visited, taken, reserved = [], held = new Set(), policy = BREAKFAST_POLICY }) {
+  const poolById = new Map(restPool.filter(Boolean).map((p) => [p.id, p]));
+  const byId = (id) => pois[id] ?? poolById.get(id) ?? null;
+  const placed = (plan, r) => ({ ...plan, sequence: r.trial, score: r.ev.score, penaltyMin: r.ev.penaltyMin, warnings: r.ev.warnings, complete: r.ev.complete });
+  const remembered = rememberedBreakfasts(trip).map((e) => ({ ...e, poi: byId(e.poiId) })).filter((e) => e.poi);
+  const yielded = [];   // 順路站讓過位的日子（out 的索引）：早餐都排定之後再挑一次順路站
+  out.forEach((x, i) => {
+    const forced = work[i]?.forcedBreakfast;
+    if (!x.plan || !forced) return;
+    const r = tryBreakfastFirst({ sequence: x.plan.sequence, stop: breakfastStop(forced.poi, settings, forced.pick), day: x.day, home: work[i].home, legFn, rules, settings, country, kb, complete: x.plan.complete, giveWay: policy.giveWay });
+    if (r.ok) { x.plan = placed(x.plan, r); if (r.displaced.length) yielded.push(i); }
+    else x.plan = { ...x.plan, dropped: [...(x.plan.dropped ?? []), { poi: forced.poi, priority: forced.pick.priority ?? 'want', reason: breakfastDropReason(r), deferredFrom: null }] };
+  });
+  const inSequence = new Set(out.flatMap((x) => (x.plan?.sequence ?? []).map((s) => s.poi.id)));
+  const placedElsewhere = held.size ? [...inSequence].filter((id) => !held.has(id)) : inSequence;   // 升級成站的那幾家不扣在別天的清單裡（下面算被佔走）；它自己那天的序列另外扣
+  // 被佔走的店：他記著要改天去的那幾家（留給推薦）、他換掉過的早餐（換一家、按了「或 X」頂掉的；放出來的話別天的早餐會自己換成它）
+  const used = [...remembered.map((e) => e.poi), ...blockedBreakfasts(trip).map(byId).filter(Boolean), ...[...held].map(byId).filter(Boolean)];
+  const days = [];
+  out.forEach((x, i) => {
+    if (!x.plan) return;
+    const a = mealAssignments({ sequence: x.plan.sequence, day: x.day, settings, country });
+    if (a.stops.breakfast) { used.push(a.stops.breakfast.poi); return; }
+    if (work[i].pinned) return;   // 釘住順序的日子引擎不另排早餐（那天不重排；原本排的那一家記在順序裡，上一行已經算它佔走）
+    if (!a.missing.includes('breakfast') || work[i].rejected.has('breakfast')) return;
+    const gone = new Set([...taken, ...placedElsewhere, ...(held.size ? x.plan.sequence.map((s) => s.poi.id) : []), ...visitedBefore(visited, x.date), ...swappedAwayFrom(trip, x.date)]);
+    const gonePois = [...gone].map(byId).filter(Boolean);
+    const excluded = (p) => gone.has(p.id) || gonePois.some((g) => samePlace(g, p));
+    days.push({ date: x.date, index: i, options: breakfastOptions({ sequence: x.plan.sequence, complete: x.plan.complete, pool: restPool, day: x.day, home: work[i].home, legFn, rules, settings, country, kb, mayInsert: engineMayInsert, excluded, giveWay: policy.giveWay }) });
+  });
+  // 沿用上一版（旅程檔 days[].engineBreakfast；engine/breakfast.js keepBreakfasts 記的）：那一家在那天還排得進、沒被佔走就不換，他只動了某一天、別天的早餐才不會跟著換店。
+  // 沒排的日子（options.onlyDates 跳過的）記著的那一家也算被佔走：只試排一天時，那一天不會把別天的早餐拿走（試排才跟整趟排的對得上）。沒有那一欄（打包檔剛載入）時跟以前一樣整趟一起分
+  const keep = breakfastKeepOf(trip);
+  if (keep.size) out.forEach((x) => { if (!x.plan) { const p = keep.has(x.date) ? byId(keep.get(x.date)) : null; if (p) used.push(p); } });
+  const chosen = assignBreakfasts({ days, taken: used, order: policy.order, keep });
+  for (const d of days) { const o = chosen.get(d.date); if (o) { out[d.index].plan = placed(out[d.index].plan, o); if (o.displaced.length) yielded.push(d.index); } }
+  // 順路站是有空才排的：讓過位的那幾天，早餐排定之後照新的時刻再挑一次（排得進、分數有變好的照樣排回來；跟每天排完那一次同一套門）。
+  // 不拿的店比照那一次，另外扣掉任何一天序列裡已經有的（含剛排定的早餐）。那天拒絕過填站或順路站就不挑。
+  for (const i of yielded) {
+    const x = out[i]; const w = work[i];
+    if (w.rejected.has('filler') || w.rejected.has('onway')) continue;
+    const exclude = new Set([...taken, ...out.flatMap((y) => (y.plan?.sequence ?? []).map((s) => s.poi.id)).filter((id) => !held.has(id) || x.plan.sequence.some((s) => s.poi.id === id)), ...visitedBefore(visited, x.date), ...swappedAwayFrom(trip, x.date), ...reserved]);
+    const onway = onTheWayCandidates({ restPool, day: x.day, exclude, home: w.home, plan: x.plan, legFn, settings }).filter((c) => !held.has(c.poi.id));
+    x.plan = insertOnTheWay({ plan: x.plan, onway, day: x.day, home: w.home, legFn, rules, settings, country, kb });
+  }
+  return remembered;
+}
+
+/** 他指定的早餐排不成第一站時，排不進清單上的那一句。 */
+function breakfastDropReason(r) {
+  if (r?.why === 'ride') return '要搭車才到得了，不排成早餐';
+  if (r?.why === 'hours-unknown') return '沒有營業時間資料，不排成早餐';
+  if (r?.why === 'closed-today') return '今天沒開';
+  if (r?.why === 'closed') return '出門的時候它還沒開，等它開門後面的站都要往後挪';
+  if (r?.why === 'not-breakfast') return '排在第一站也落不進早餐的時段';
+  if (r?.why === 'self') return `排成早餐（第一站）排不進：${r?.msg ?? '它自己撞到今天的限制'}`;
+  if (r?.why === 'last-train') return '排成早餐（第一站）的話，後面有站會趕不上末班車';
+  if (r?.why === 'day') return `排成早餐（第一站）的話，這天排不成：${r?.msg ?? '撞到整天的限制'}`;
+  return `排成早餐（第一站）的話，後面的站要往後挪：${r?.msg ?? '有站會排不進'}`;
 }
 
 /** '2026-08-15' → '8/15'（整趟警告的人話；畫面另有 dom.js dateLabel）。 */
@@ -264,7 +520,7 @@ function monthDay(date) {
 }
 
 /**
- * 第二趟要加進候選的引擎插站：第一趟有 walk-run 警告 → 恢復站（restCandidates）、有 wait-at-door 警告 → 填站（fillCandidates）；
+ * 第二趟要加進候選的引擎插站：第一趟有 walk-run 警告 → 恢復站（restCandidates）、有 wait-at-door 或 late-departure 警告（FILL_TRIGGERS）→ 填站（fillCandidates）；
  * rejected（這天拒絕過的種類 'rest'／'filler'）那一種不加；同一家店兩邊都選到只留恢復站那份（不綁空檔）。
  */
 export function extraCandidates({ restPool = [], candidates = [], day, exclude = new Set(), home = null, plan, settings = {}, rejected = new Set(), legFn = null }) {
@@ -272,7 +528,7 @@ export function extraCandidates({ restPool = [], candidates = [], day, exclude =
   const rests = triggered('walk-run') && !rejected.has('rest') ? restCandidates({ restPool, candidates, day, exclude, home, settings }) : [];
   // 填站與順路站都是「引擎多排一家店」：拒絕過其中一種，那天兩種都不插（推導；拒絕恢復站只管恢復站）
   const shopRejected = rejected.has('filler') || rejected.has('onway');
-  const fillers = triggered('wait-at-door') && !shopRejected ? fillCandidates({ restPool, candidates, day, exclude, home, plan, settings, legFn }) : [];
+  const fillers = FILL_TRIGGERS.some(triggered) && !shopRejected ? fillCandidates({ restPool, candidates, day, exclude, home, plan, settings, legFn }) : [];
   const seen = new Set(rests.map((c) => c.poi.id));
   return [...rests, ...fillers.filter((c) => (seen.has(c.poi.id) ? false : (seen.add(c.poi.id), true)))];
 }
@@ -280,17 +536,21 @@ export function extraCandidates({ restPool = [], candidates = [], day, exclude =
 /**
  * 把順路站貪婪插進排好的序列：候選依繞路分鐘排序，每家試每個位置（整條重定時刻、重算整天分數），
  * 分數變好、沒有站撞硬規則才收；一天的引擎插站（恢復站、填站、順路站三種）合計不超過 settings.restInsertMaxPerDay。
+ * 整天層級的硬規則也看（11-06 審查）：原本成立的一天、試排之後不成立（ev.complete 從 true 變 false）的跳過——每一站的硬規則都過不代表整天過，
+ * 一日遊晚回城之後把落在夜間時段的店當順路站插進兩個他勾的市區站之間，撞的是整天規則 day-trip-night，站層級看不到。收下時 plan.complete 跟著重算的結果走。
+ * 也不能害他勾的站趕不上末班車：他勾的站不受規則 last-train 擋（照排掛提示），所以插一家店把後面外地的站推過末班，站層級一樣看不到——試排後趕不上的站變多就跳過。
  */
 export function insertOnTheWay({ plan, onway = [], day, home, legFn, rules, settings, country, kb }) {
   if (!onway.length || !plan?.sequence) return plan;
   const maxOptional = settings.restInsertMaxPerDay ?? 2;
   const evaluate = (sequence) => evaluateSequence({ sequence, day, home, legFn, rules, settings, country, kb });
   const waitSum = (s) => s.reduce((n, x) => n + (x.waitMin ?? 0), 0);
+  const missCount = (s) => lastTrainMisses({ sequence: s, day, home, legFn }).length;
   const maxDetour = settings.onTheWayDetourMin ?? 8;
   const walkOnly = (leg) => leg && (leg.rideMin ?? 0) === 0 ? (leg.walkMin ?? 0) : null;
-  let seq = plan.sequence; let best = evaluate(seq); let changed = false;
+  let seq = plan.sequence; let best = evaluate(seq); let changed = false; let misses = missCount(seq);
   for (const c of onway) {
-    if (seq.filter((s) => s.optional).length >= maxOptional) break;
+    if (seq.filter((s) => s.optional && !isPlacedBreakfast(s)).length >= maxOptional) break;   // 排成第一站的早餐不佔這個名額（engine/breakfast.js）
     const stop = { poi: c.poi, dwellMin: c.dwellMin, priority: c.priority, optional: true, insertedBy: 'engine', isAnchor: false, designated: false, fixedWindow: null, gap: null, errand: false, deferredFrom: null, detourMin: c.detourMin };
     // 只插在它真的順路的那一段（兩邊都走路、繞路 ≤ onTheWayDetourMin）：候選是看某一段算出來的，位置換了就不是順路
     // （10-13 七天實驗：8/15 BILLY'S ENT 被塞進兩段搭車之間、8/18 古著屋 JAM 被接在最後一站後面走回頭路）；最後一站之後沒有「下一站」，不插
@@ -300,20 +560,24 @@ export function insertOnTheWay({ plan, onway = [], day, home, legFn, rules, sett
       return direct != null && w1 != null && w2 != null && w1 + w2 - direct <= maxDetour;
     };
     let bestTrial = null;
-    for (let i = 0; i < seq.length; i++) {
+    for (let i = isPlacedBreakfast(seq[0]) ? 1 : 0; i < seq.length; i++) {   // 早餐是第一站：不插在它前面
       if (!onWayAt(i)) continue;
-      const trial = retimeSequence({ sequence: [...seq.slice(0, i), stop, ...seq.slice(i)], day, home, legFn, settings, country, kb });
+      const trial = retimeWithBreakfast({ sequence: [...seq.slice(0, i), stop, ...seq.slice(i)], day, home, legFn, settings, country, kb });   // 沒有早餐站時就是 retimeSequence
       // 順路站自己不等開門，也不能害後面的站等：插在 11:00 才開的第一站前面，等於把「太晚出門」換成「在門口等 81 分」，
       // 分數上差不多、人卻站在門口（10-13 七天實驗 8/13）。填站同一條（原話 #164）。
       if ((trial[i].waitMin ?? 0) > 0 || waitSum(trial) > waitSum(seq)) continue;
       const ev = evaluate(trial);
       if (ev.breakdown.stops.some((s) => s.verdict !== 'ok')) continue;
-      if (ev.score > best.score && (!bestTrial || ev.score > bestTrial.ev.score)) bestTrial = { trial, ev };
+      if (best.complete && !ev.complete) continue;   // 整天的硬規則：插了之後這一天不成立
+      if (!(ev.score > best.score && (!bestTrial || ev.score > bestTrial.ev.score))) continue;
+      const trialMisses = missCount(trial);
+      if (trialMisses > misses) continue;   // 害後面的站趕不上末班車
+      bestTrial = { trial, ev, misses: trialMisses };
     }
-    if (bestTrial) { seq = bestTrial.trial; best = bestTrial.ev; changed = true; }
+    if (bestTrial) { seq = bestTrial.trial; best = bestTrial.ev; misses = bestTrial.misses; changed = true; }
   }
   if (!changed) return plan;
-  return { ...plan, sequence: seq, score: best.score, penaltyMin: best.penaltyMin, warnings: best.warnings };
+  return { ...plan, sequence: seq, score: best.score, penaltyMin: best.penaltyMin, warnings: best.warnings, complete: best.complete };
 }
 
 /**
@@ -358,7 +622,8 @@ export function onTheWayCandidates({ restPool = [], day, exclude = new Set(), ho
  * 排好的每一段走路（住宿→第一站也算；搭車段不算，人在車上經過什麼都進不去），知識庫裡離這段直線 ≤ settings.corridorListRadiusM（預設 100 m，DESIGN §4）的店。
  * 候選的門是 corridorEligible、不是引擎插站的 engineMayInsert（10-16 主控覆核：挖寶型、落選兩次、代購研究站都列，走廊清單正是被過濾掉的長尾回到他手上；只有他評 ≤2 星與 unlockWhen 未達的不列）、
  * 不是 NO_FILL_CATEGORIES（交通、活動、錢湯、一日遊、會場）、
- * 不是坐下來的地方（spot：他說的是「店家」，海邊、公園不是店；推導）、在當日區域、不在今天序列裡、不在 exclude（任何一天勾過、按過「不去了」的、任何一天引擎插過的、進去那天之後——corridorExclude）；沒座標的算不出距離、不列。
+ * 不是坐下來的地方（spot：他說的是「店家」，海邊、公園不是店；推導）、在當日區域、不在今天序列裡、不在 exclude（任何一天勾過、按過「不去了」的、任何一天引擎插過的、進去那天之後——corridorExclude）、
+ * 也不是那些站「同一處的另一筆」（知識庫欄位 samePlace；11-11）；沒座標的算不出距離、不列。
  * 經過那段的時間要開著（openIntervals；離開上一站→到下一站之間任一分鐘有開就算，出門那段用到第一站的時刻倒推走路分鐘）：午休、當天休息的不列
  * （10-16 審查：喜助 8/13 14:39–14:54 午休卻列在提示鍵裡、仙台朝市早餐 17:30 已關卻在現場頁「會經過」，升級還會落到「不在營業時間內」）；
  * 沒有營業時間資料的照列、標 open: null（畫面寫「營業時間沒查到」）；序列沒帶時刻（純幾何的呼叫）就只看當天有沒有營業。藏掉還是標「沒開」待確認，先藏。
@@ -373,8 +638,12 @@ export function corridorFor({ plan, home = null, pool = [], legFn, settings = {}
   const radius = settings.corridorListRadiusM ?? 100;
   const maxPerLeg = settings.corridorListMaxPerLeg ?? 5;
   const inSeq = new Set(seq.map((s) => s.poi.id));
+  // 同一個地點在知識庫寫成兩筆的（欄位 samePlace；仙台朝市／仙台朝市商店街）：其中一筆是站、或已經在 exclude 裡，另一筆也不列——
+  // 11-11 審查：七天包 8/18 去「仙台朝市（買＋吃）」那一段的走廊清單列了「仙台朝市早餐（0 m）」，就是他要去的那個地方。知識庫沒有這個欄位時不多做事。
+  const placed = pool.some((p) => p?.samePlace) || seq.some((s) => s.poi?.samePlace) ? [...seq.map((s) => s.poi), ...pool.filter((p) => p && exclude.has(p.id))] : [];
+  const twinOfPlaced = (p) => placed.some((q) => q.id !== p.id && samePlace(q, p));
   // 在場的人不想去的店型（day.adjust.avoidCategories，T19）也不列：清單是給他決定要不要進去的，但同行者已經說了不去
-  const cands = pool.filter((p) => p && hasCoords(p) && corridorEligible(p) && !NO_FILL_CATEGORIES.has(p.category) && p.category !== 'spot' && (day?.regionZones ?? []).includes(p.zoneId) && !inSeq.has(p.id) && !exclude.has(p.id) && !personAvoids(day?.adjust, p));
+  const cands = pool.filter((p) => p && hasCoords(p) && corridorEligible(p) && !NO_FILL_CATEGORIES.has(p.category) && p.category !== 'spot' && (day?.regionZones ?? []).includes(p.zoneId) && !inSeq.has(p.id) && !exclude.has(p.id) && !personAvoids(day?.adjust, p) && !twinOfPlaced(p));
   if (!cands.length) return [];
   const best = new Map();   // poiId → 離它最近、經過時有開的那段
   for (let i = 0; i < seq.length; i++) {
@@ -459,11 +728,16 @@ export function visitedBefore(visited = {}, date = '') {
   return Object.entries(visited ?? {}).filter(([, on]) => typeof on === 'string' && on < date).map(([id]) => id);
 }
 
-/** 引擎不插、走廊清單也不列的站：任何一天勾了的（含主行程；他勾的站由 picks 走）、任何一天按過「不去了」的（他拿掉的勾選站、拒絕過的引擎插站）。planTrip 與現場套改案後重算（applied.js）共用。 */
-export function pickedOrRemoved(trip) {
+/**
+ * 引擎不插、走廊清單也不列的站：任何一天勾了的（含主行程；他勾的站由 picks 走）、任何一天按過「不去了」的（他拿掉的勾選站、拒絕過的引擎插站）。planTrip 與現場套改案後重算（applied.js）共用。
+ * skipLate（只有 planTrip 挑引擎插站的池時給）：不算「走廊清單升級成站加進來的勾選」（picks[].via 'corridor'；之後對它按了不去了，removed 那一筆也帶同一個記號）
+ * 與「安插的選項裡選了不去的引擎站」（removed[].via 'insert'）——
+ * 這兩種改成挑好名單之後才拿掉（planTrip 內文 lateIds），別天的名單才不會因為他安插了一家店而換掉組成。同一家店另外被一般的勾選、主行程、一般的「不去了」記著的照算。
+ */
+export function pickedOrRemoved(trip, { skipLate = false } = {}) {
   const days = trip?.days ?? [];
-  const picked = days.flatMap((d) => [...(d.picks ?? []).map((p) => p.poiId), d.anchor?.poiId, ...(d.anchor?.poiIds ?? [])]);
-  const removed = days.flatMap((d) => (d.removed ?? []).map((r) => r?.poiId));
+  const picked = days.flatMap((d) => [...(d.picks ?? []).filter((p) => !(skipLate && p?.via === CORRIDOR_PICK)).map((p) => p?.poiId), d.anchor?.poiId, ...(d.anchor?.poiIds ?? [])]);
+  const removed = days.flatMap((d) => (d.removed ?? []).filter((r) => !(skipLate && ((r?.via === INSERT_DROP && r.insertedBy === 'engine') || r?.via === CORRIDOR_PICK))).map((r) => r?.poiId));
   return new Set([...picked, ...removed].filter(Boolean));
 }
 
@@ -720,10 +994,13 @@ function openFrom(poi, date, atMin, minGap) {
 
 const hasCoords = (p) => Number.isFinite(p?.lat) && Number.isFinite(p?.lng);
 
-/** 這天拒絕過哪幾種引擎插的站（規劃頁「不去了」把 stop.insertedBy 與 priority 記進 removed）；舊資料沒記 priority 的當恢復站。 */
+/**
+ * 這天拒絕過哪幾種引擎插的站（規劃頁「不去了」把 stop.insertedBy 與 priority 記進 removed）；舊資料沒記 priority 的當恢復站。
+ * 'breakfast'：拒絕過引擎排的早餐——那天引擎不再排早餐（planBreakfasts）；不當成拒絕恢復站。早餐卡的正路是「吃飯店早餐」「改天去」（旅程檔 days[].breakfast），這裡只是有人照一般的站按了「不去了」時不出錯。
+ */
 function rejectedKinds(removed = []) {
   const kinds = new Set();
-  for (const r of removed) if (r?.insertedBy === 'engine') kinds.add(r.priority === 'filler' || r.priority === 'onway' ? r.priority : 'rest');
+  for (const r of removed) if (r?.insertedBy === 'engine') kinds.add(r.priority === 'filler' || r.priority === 'onway' || r.priority === 'breakfast' ? r.priority : 'rest');
   return kinds;
 }
 

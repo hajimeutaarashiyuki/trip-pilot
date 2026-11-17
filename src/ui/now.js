@@ -13,6 +13,8 @@ import { darkBeforeMinOf } from './daylight.js';
 import { pendingRatings, progressOf, daysBetween, skipStopPatch } from './ratings.js';
 import { remainingFrom, lostStops, appliedPlan, snapshotPlan } from './applied.js';
 import { corridorOfLeg, corridorNames, corridorListNode, corridorDisclosure, visitedDates } from './corridor.js';
+import { breakfastCardOf } from './meals.js';
+import { undoBar } from './planner.js';   // 復原列（那一句、復原、關閉）跟規劃頁同一份
 
 export function renderNow({ state, actions }) {
   const f = state.field;
@@ -44,6 +46,13 @@ export function renderNow({ state, actions }) {
     ]));
   }
 
+  // 剛在這一頁按過早餐的鍵（吃飯店早餐／改天去）：給一次反悔的機會（原話 #171；跟規劃頁同一個復原）。只在還停在按的那一站時畫——出發去下一站之後這一頁不再提，
+  // 要改回來到規劃頁那天日期下面按「改回來」
+  const u = state.undo;
+  if (u?.kind === 'breakfast' && u.nowIndex === idx && u.dates?.includes(date)) nodes.push(undoBar(u.text, actions));
+  // 早餐的鍵按了要整趟重排（接近 1 秒）：先畫一句「正在重排…」讓他知道按到了，排完就消失（跟規劃頁同一句）
+  if (state.busy && state.notice) nodes.push(el('div', { class: 'undo-bar notice' }, [el('span', { text: state.notice.text })]));
+
   // 補評卡：前幾天走過、沒按評分的站（略過的不補）；今天＝試走模式選的那天、真的時間就是今天
   nodes.push(rateLaterCard({ state, actions, today: simulate ? date : todayStr() }));
 
@@ -66,6 +75,11 @@ export function renderNow({ state, actions }) {
   const arriveMin = nowMin + leg.walkMin + leg.rideMin;
   const threatened = limitMin != null && (ends != null ? arriveMin > ends : arriveMin + Math.min(next.dwellMin, 30) > limitMin);
   const status = lateMin > (state.settings.lateThresholdMin ?? 15) ? TEXT.late(lateMin) : lateMin < -5 ? TEXT.early(-lateMin) : '';
+  // 下一站是這天的早餐（原話 #196）：鍵換成「吃飯店早餐」「改天去」——引擎先挑的早餐原本那顆「略過這站」換成這兩顆，他勾的早餐也多這兩顆（指定站與主行程不出）。
+  // 按了那天不排早餐、那家留給後面的日子推薦（app.js breakfastOff，會重排；帶 idx 讓這一頁知道復原列要不要畫）
+  const bf = breakfastCardOf(planned.plan, next);
+  // 引擎排的早餐後來不再是當天那一餐時（他在它前面插了一家能當早餐的店）：這張卡的鍵是「略過這站」，那一句也用一般的寫法，不叫他按卡上沒有的「吃飯店早餐」「改天去」（11-12 畫面審查）
+  const engineNote = next.priority === 'breakfast' ? (bf ? TEXT.breakfast.insertedNow : TEXT.engineInsertedNow) : next.poi.category === 'spot' ? TEXT.spotInsertedNow(hm(next.endMin)) : next.priority === 'filler' ? TEXT.fillerInsertedNow : next.priority === 'onway' ? TEXT.onTheWayInsertedNow : TEXT.restInsertedNow;
 
   nodes.push(el('section', { class: 'card big next' }, [
     el('p', { class: 'muted small', text: TEXT.nextStop + (status ? `　${status}` : '') }),
@@ -74,12 +88,14 @@ export function renderNow({ state, actions }) {
     // 走廊清單（T15，原話 #57）：這段路會經過的店，一行小字「會經過：X、Y」，點了展開清單（有「我進去了」）；legIndex＝idx（0＝住宿→第一站）
     corridorLine({ pois: corridorOfLeg(planned.plan, idx), date, idx, state, actions }),
     el('p', { class: 'muted small', text: `${hm(next.startMin)} 到，待 ${next.dwellMin} 分` }),
-    next.insertedBy === 'engine' ? el('p', { class: 'muted small', text: next.poi.category === 'spot' ? TEXT.spotInsertedNow(hm(next.endMin)) : next.priority === 'filler' ? TEXT.fillerInsertedNow : next.priority === 'onway' ? TEXT.onTheWayInsertedNow : TEXT.restInsertedNow }) : null,
+    next.insertedBy === 'engine' ? el('p', { class: 'muted small', text: engineNote }) : null,
     // 路線深連結：不帶 origin（Google Maps 用現在位置），搭車段 transit、其餘 walking（原話 #157）
-    // 引擎插的站多一顆「略過這站」：記成略過（跟略過評分同形，補評卡不問）、進度前進、不彈評分；一般站沒有（跳過一般站走「我現在在這站」）
+    // 引擎插的站多一顆「略過這站」：記成略過（跟略過評分同形，補評卡不問）、進度前進、不彈評分；一般站沒有（跳過一般站走「我現在在這站」）。早餐換成自己的兩顆
     el('div', { class: 'actions' }, [
       el('a', { class: 'btn', href: routeUrl({ to: next.poi, mode: legMode(leg), cityName: tripCityName(state) }), target: '_blank', rel: 'noopener' }, TEXT.openMaps),
-      next.insertedBy === 'engine' ? el('button', { class: 'btn quiet', type: 'button', onclick: () => actions.setField(skipStopPatch(f, date, next.poi.id, new Date().toISOString())) }, TEXT.skipStop) : null,
+      bf?.keys ? el('button', { class: 'btn quiet', type: 'button', onclick: () => actions.breakfastOff(date, 'hotel', idx) }, TEXT.breakfast.hotel) : null,
+      bf?.keys ? el('button', { class: 'btn quiet', type: 'button', onclick: () => actions.breakfastOff(date, 'later', idx) }, TEXT.breakfast.later) : null,
+      next.insertedBy === 'engine' && !bf ? el('button', { class: 'btn quiet', type: 'button', onclick: () => actions.setField(skipStopPatch(f, date, next.poi.id, new Date().toISOString())) }, TEXT.skipStop) : null,
     ]),
   ]));
 

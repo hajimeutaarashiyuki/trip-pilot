@@ -235,7 +235,10 @@ test('planTrip：兩天各自排好；第二天是古著主題日、第一天不
         picks: [{ poiId: POIS.Utah.id, priority: 'must' }, { poiId: POIS.me.id }, { poiId: POIS['SEGA-RU'].id }, { poiId: POIS['おやま'].id, priority: 'must' }, { poiId: POIS['バンザイ'].id }, { poiId: 'ghost' }] },
     ],
   };
-  const r = planTrip({ trip, pois, rules, settings, country: COUNTRY, kb: KB, legFn });
+  // 汐谷標成能當晚餐（知識庫欄位 meals；示範資料還沒標）：這天只勾了五站，午後到 17:00 開門之間是空的，它是因為頂得了晚餐才值得等——
+  // 沒標的酒吧 11-06 第二批起不算一餐（原話 #195），引擎會把它丟掉（等開門的罰大過它的價值；下面另外驗）
+  const shioya = { ...POIS['汐谷'], meals: { dinner: '魚料理配日本酒，吃得成一頓晚餐' } };
+  const r = planTrip({ trip, pois: { ...pois, [shioya.id]: shioya }, rules, settings, country: COUNTRY, kb: KB, legFn });
   assert.equal(r.days.length, 2);
   assert.ok(r.warnings.some((w) => w.code === 'pick-unknown' && w.msg.includes('ghost')));
   const d1 = r.days[0]; const d2 = r.days[1];
@@ -250,6 +253,14 @@ test('planTrip：兩天各自排好；第二天是古著主題日、第一天不
   assert.equal(d1.day.openSlotSkipped, false);
   assert.ok(d2.plan.sequence.filter((s) => s.poi.category === 'vintage').length >= 3);
   assert.ok(d1.plan.sequence.some((s) => s.poi.id === POIS['汐谷'].id));
+  // 每天的 plan.meals：哪一站是哪一餐（rules/_slots.js planMealsOf；原話 #195）。日本的國家層還沒有早餐段，breakfast 一律 null
+  assert.deepEqual(d1.plan.meals, { breakfast: null, lunch: POIS['たん焼き一隆'].id, dinner: POIS['汐谷'].id });
+  assert.deepEqual(d2.plan.meals, { breakfast: null, lunch: POIS['おやま'].id, dinner: null }, '8/17 沒勾能當晚餐的店（バンザイ 是黑膠 bar、沒標）');
+  assert.ok(d2.plan.warnings.some((w) => w.ruleId === 'meal-slots' && w.msg === '今天沒排晚餐'));
+  // 沒標的汐谷（示範資料原樣：只有店型鍵 bar、沒有店型原文）不算晚餐：那天沒有晚餐、黃字提醒
+  const raw = planTrip({ trip, pois, rules, settings, country: COUNTRY, kb: KB, legFn }).days[0].plan;
+  assert.equal(raw.meals.dinner, null);
+  assert.ok(raw.warnings.some((w) => w.ruleId === 'meal-slots' && w.msg === '今天沒排晚餐'));
 });
 
 test('planTrip：一日遊那天 day.dayTrip 帶給規則（步行預算 ×0.7，原話 #160）；不是一日遊是 false；翌日 dayTripNext', () => {

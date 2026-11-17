@@ -8,19 +8,32 @@ import { candidateValue, legBetween, dedupeWarnings, absorbIntoSpot, spotLatestE
 import { placeStop } from './schedule.js';
 
 /** 整條序列從頭重定時刻（插站、換位後用）：照 core.js 的 placeStop 鏈，時刻重算、其他欄位照舊。
- *  坐下來的地方（spot）先回到它原本的停留（扣掉上次併進去的 flexedMin）再重算，下一站要等時再併一次（absorbIntoSpot），重定幾次都不會越坐越久。 */
+ *  坐下來的地方（spot）先回到它原本的停留（扣掉上次併進去的 flexedMin）再重算，下一站要等時再併一次（absorbIntoSpot），重定幾次都不會越坐越久。
+ *  站上帶 slotOpenMin（釘住順序的日子才有；engine/insert.js）就交給 placeStop：提早到、前一段營業時間待不完時等到原本那一段開門。沒帶的站照舊。 */
 export function retimeSequence({ sequence, day, home, legFn, settings = {}, country = null, kb = null }) {
   const out = [];
   for (const stop of sequence) {
     const prev = out.length ? out[out.length - 1] : null;
     const leg = legBetween(legFn, out, home, stop.poi);
     const dwellMin = stop.dwellMin - (stop.flexedMin ?? 0);
-    const placed0 = placeStop({ prevEndMin: prev ? prev.endMin : day.window.startMin, leg, poi: stop.poi, dwellMin, date: day.date, fixedWindow: stop.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev && !day.resumed });
+    const placed0 = placeStop({ prevEndMin: prev ? prev.endMin : day.window.startMin, leg, poi: stop.poi, dwellMin, date: day.date, fixedWindow: stop.fixedWindow ?? null, dayStartMin: day.window.startMin, first: !prev && !day.resumed, slotOpenMin: stop.slotOpenMin ?? null });
     const flex = absorbIntoSpot(prev, placed0, settings, prev?.poi?.category === 'spot' ? spotLatestEnd({ poi: prev.poi, startMin: prev.startMin, day, settings, country, kb }) : Infinity);
     if (flex.prev !== prev) out[out.length - 1] = flex.prev;
     out.push({ ...stop, dwellMin, flexedMin: 0, ...flex.placed });
   }
   return out;
+}
+
+/**
+ * 拿「原時窗」當收工線的 day 上下文（window.endMin 換成 windowRaw.endMin，其餘照舊）：留白可以被用掉的那幾種重算用這一份——
+ * 釘住順序的日子（engine/insert.js planPinnedDay：照他調過的順序排）、升級成站的安插試算（insertTrial；主控 11-06 定：留白本來就是留給臨時起意的）、
+ * 釘住的日子上換早餐（engine/breakfast.js）。現場套過改案的那天（ui/applied.js）是同一個意思，它自己組。沒有 windowRaw 或兩者相同就回原物件。
+ * 回傳的 day.window 仍是「扣過留白的收工」的呼叫端（planTrip 回的 days[].day）不受影響：這裡回的是新物件。
+ */
+export function rawWindowDay(day) {
+  const endMin = day?.windowRaw?.endMin;
+  if (!day?.window || !Number.isFinite(endMin) || endMin === day.window.endMin) return day;
+  return { ...day, window: { ...day.window, endMin } };
 }
 
 /**

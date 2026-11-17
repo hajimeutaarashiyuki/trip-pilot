@@ -1,10 +1,13 @@
-// 走廊清單的畫面邏輯（T15；原話 #57、#124）：純函式——哪段有哪些店、長段提示、升級成站（加進 picks 並重排後它就是站）、「我進去了」只記裝置；
+// 走廊清單的畫面邏輯（T15；原話 #57、#124）：純函式——哪段有哪些店、長段提示、「我進去了」只記裝置；
 // 現場套過改案的序列（applied.js appliedPlan）走廊跟著新序列重算。比照 applied.test 的做法，不碰 DOM。
+// 升級成站 11-06 第二批起＝安插（原話 #192）：畫面邏輯在 insert.test.js、從鍵按到畫面在 plan-actions.test.js（清單每家的簡介也在那裡驗）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { planTrip } from '../../src/engine/trip.js';
 import { appliedPlan } from '../../src/ui/applied.js';
-import { corridorOfLeg, legSuggestOf, upgradePick, visitedPatch, visitedDates, corridorNames, shortName } from '../../src/ui/corridor.js';
+import { corridorOfLeg, legSuggestOf, visitedPatch, visitedDates, corridorNames, shortName } from '../../src/ui/corridor.js';
+import { trialArgs, startInsert, insertDoneText } from '../../src/ui/insert.js';
+import { applyInsert } from '../../src/engine/insert.js';
 import { loadRules } from '../../src/rules/index.js';
 import { BUILTIN } from '../../src/rules/builtin.js';
 import rulesJson from '../../src/rules.json' with { type: 'json' };
@@ -37,24 +40,22 @@ test('corridorOfLeg／legSuggestOf：第 0 段是住宿→第一站；沒那段�
   assert.equal(legSuggestOf(null, 0), null);
 });
 
-test('upgradePick：加進那天的 picks（priority want）、已經在就不重複、removed 裡同一家拿掉、不改傳入的 day；重排後它就是站、不再在走廊清單裡', () => {
+test('升級成站＝安插進走廊清單掛的那一段（原話 #192）：座標各不相同的小世界——清單掛在第 1 段（A→B）的店插在 A 和 B 之間，A、B 都在、先後不變；它變成他勾的站、不再在走廊清單裡', () => {
   const trip = mkTrip();
-  const day = trip.days[0];
-  const patch = upgradePick(day, '近33');
-  assert.deepEqual(patch.picks, [{ poiId: 'A', priority: 'must' }, { poiId: 'B', priority: 'must' }, { poiId: '近33', priority: 'want' }]);
-  assert.deepEqual(patch.removed, []);
-  assert.equal(day.picks.length, 2, '不改傳入的 day');
-  assert.equal(upgradePick({ picks: patch.picks }, '近33').picks, patch.picks, '已經在就回同一個陣列');
-  assert.deepEqual(upgradePick({ picks: [], removed: [{ poiId: '近33' }, { poiId: 'x' }] }, '近33'), { picks: [{ poiId: '近33', priority: 'want' }], removed: [{ poiId: 'x' }] });
-  assert.deepEqual(upgradePick(undefined, 'y'), { picks: [{ poiId: 'y', priority: 'want' }], removed: [] });
-  // app.js upgradeCorridor 的效果：Object.assign(day, patch) 再 planTrip
-  Object.assign(day, patch);
-  const { plan } = plansOf(trip);
-  const placed = plan.sequence.find((s) => s.poi.id === '近33');
-  assert.ok(placed, `升級後要排進序列：${plan.sequence.map((s) => s.poi.id).join('→')}；落選 ${JSON.stringify(plan.dropped.map((d) => d.reason))}`);
-  assert.ok(!placed.insertedBy, '是他勾的站，不是引擎插的');
-  assert.equal(placed.priority, 'want');
-  assert.ok(!plan.corridor.some((c) => c.pois.some((x) => x.poi.id === '近33')), '升級後不再在走廊清單裡');
+  const planned = plansOf(trip);
+  assert.deepEqual(planned.plan.sequence.map((s) => s.poi.id), ['A', 'B']);
+  const legIndex = planned.plan.corridor.find((c) => c.pois.some((x) => x.poi.id === 'AB中')).legIndex;
+  assert.equal(legIndex, 1);
+  const state = { trip, pois, plans: { '2026-08-13': planned }, legFn, rules, settings, country, kb };
+  const step = startInsert(trialArgs(state, '2026-08-13', 'AB中', legIndex));
+  assert.equal(step.kind, 'apply', '排得下');
+  assert.match(insertDoneText(step.result), /^已把 AB中 插在 A 和 B 之間，後面順延 \d+ 分/);
+  const after = plansOf(applyInsert(trip, '2026-08-13', step.result)).plan;
+  assert.deepEqual(after.sequence.map((s) => s.poi.id), ['A', 'AB中', 'B']);
+  const placed = after.sequence[1];
+  assert.deepEqual([placed.insertedBy ?? null, placed.priority], [null, 'want'], '是他勾的站，不是引擎插的');
+  assert.equal(after.pinned, true, '那天照他調過的順序排');
+  assert.ok(!after.corridor.some((c) => c.pois.some((x) => x.poi.id === 'AB中')), '升級後不再在走廊清單裡');
 });
 
 test('visitedPatch：field.visited[poiId] = { date, at }，舊的留著、再按一次蓋新時刻、不改傳入的 field；corridorNames 取前幾家與剩下幾家', () => {

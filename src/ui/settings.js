@@ -1,16 +1,10 @@
 // 設定頁：四個數字（決策樹 Q17），改了立刻重排；加上旅程資料（桌機打包檔的網址、更新、從檔案載入、誰同行、本機改動與還原成打包版）。
-import { el } from './dom.js';
+import { el, monthDay as md } from './dom.js';   // md：'2026-08-13' → '8/13'（同行哪幾天那串；dateLabel 帶星期太長）
 import { TEXT, CATEGORY } from './text.js';
 import { personsOf, briefApplies, cityNamesOf } from '../engine/persons.js';
 import { diffTripEdits } from './trip-edits.js';
 import { canSubmitBrief } from '../data/brief.js';
 import { briefEnv } from './brief.js';
-
-/** '2026-08-13' → '8/13'（同行哪幾天那串；dateLabel 帶星期太長）。 */
-function md(date) {
-  const m = String(date ?? '').match(/^\d{4}-(\d{2})-(\d{2})$/);
-  return m ? `${Number(m[1])}/${Number(m[2])}` : String(date ?? '');
-}
 
 /** 連續的日期合成一段：['2026-08-13','2026-08-14','2026-08-15','2026-08-17'] → '8/13–8/15、8/17'。 */
 export function dateRanges(dates) {

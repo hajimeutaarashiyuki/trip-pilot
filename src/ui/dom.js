@@ -32,6 +32,12 @@ export function dateLabel(dateStr) {
   return `${m}/${d}（${dow}）`;
 }
 
+/** '2026-08-13' → '8/13'（句子中間用，不帶星期；看不懂就原樣回）。 */
+export function monthDay(dateStr) {
+  const m = String(dateStr ?? '').match(/^\d{4}-(\d{2})-(\d{2})$/);
+  return m ? `${Number(m[1])}/${Number(m[2])}` : String(dateStr ?? '');
+}
+
 export function todayStr() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;

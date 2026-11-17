@@ -1,7 +1,7 @@
 // T5：站對站移動的查法——先 walk.json，再直線距離估（記警告），再跨區連結，最後區域預設。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { makeLegFn, haversineM, lastDepartMin } from '../../src/geo/matrix.js';
+import { makeLegFn, haversineM, lastDepartMin, serviceDayOf, SERVICE_DAYS } from '../../src/geo/matrix.js';
 
 const A = { id: 'a', name_zh: 'A', zoneId: 'ichibancho', lat: 38.2600, lng: 140.8710 };
 const B = { id: 'b', name_zh: 'B', zoneId: 'ichibancho', lat: 38.2650, lng: 140.8750 };
@@ -106,4 +106,67 @@ test('rideLink：這一段照 legFn 的判斷會搭車才回連結（走得到�
   const copy = legFn.linkBetween('hachiman', 'ichibancho'); copy.rideMin = 999;
   assert.equal(legFn.linkBetween('hachiman', 'ichibancho').rideMin, 15, '改複本不影響 legFn');
   assert.throws(() => { legFn.linkBetween('hachiman', 'ichibancho').last.leaveByMin = 0; }, TypeError, '末班物件是凍結的');
+});
+
+// ── 末班分日別（11-06 第二批）：last 的值可以是 { weekday, saturday, holiday }；那天的日別由 serviceDayOf 算 ──
+test('serviceDayOf：週六 saturday、週日 holiday、其餘 weekday；落在國家層的特殊時刻表期間（頭尾都含、可跨年）回 special；日期看不懂回 null；寫壞的期間跳過', () => {
+  assert.deepEqual([...SERVICE_DAYS], ['weekday', 'saturday', 'holiday']);
+  assert.equal(serviceDayOf('2026-08-14'), 'weekday', '週五');
+  assert.equal(serviceDayOf('2026-08-15'), 'saturday');
+  assert.equal(serviceDayOf('2026-08-16'), 'holiday', '週日');
+  assert.equal(serviceDayOf('2026-08-17'), 'weekday', '週一');
+  const jp = { transportProfile: { specialSchedule: [{ name: 'お盆', from: '08-13', to: '08-16' }, { name: '年末年始', from: '12-29', to: '01-03' }, { name: '寫壞的', from: '8/1', to: '08-31' }, null] } };
+  assert.equal(serviceDayOf('2026-08-12', jp), 'weekday', '期間前一天');
+  for (const d of ['2026-08-13', '2026-08-15', '2026-08-16']) assert.equal(serviceDayOf(d, jp), 'special', d);
+  assert.equal(serviceDayOf('2026-08-17', jp), 'weekday', '期間後一天');
+  for (const d of ['2026-12-29', '2026-12-31', '2027-01-01', '2027-01-03']) assert.equal(serviceDayOf(d, jp), 'special', `跨年的期間 ${d}`);
+  assert.equal(serviceDayOf('2027-01-04', jp), 'weekday');
+  assert.equal(serviceDayOf('2026-08-01', jp), 'saturday', 'from 寫成 8/1 的那筆不算');
+  assert.equal(serviceDayOf('2026-08-15', { transportProfile: { specialSchedule: '盂蘭盆' } }), 'saturday', '不是陣列＝沒有特殊期間');
+  assert.equal(serviceDayOf('2026-08-15', { transportProfile: {} }), 'saturday');
+  for (const bad of [null, undefined, '', '2026/08/15', '2026-02-30', 20260815]) assert.equal(serviceDayOf(bad), null, String(bad));
+});
+
+test('lastDepartMin 分日別：那天的日別有寫就用那一班；沒給日別、特殊期間、那一種沒寫或寫壞都取有寫的裡面最早的；單一 "HH:MM" 每天同一個；三個都沒有回 null', () => {
+  const akiu = { mode: 'bus', rideMin: 50, walkMin: 5, last: { akiu: { weekday: '21:01', saturday: '21:01', holiday: '19:18' }, town: '23:00' } };
+  assert.equal(lastDepartMin(akiu, 'akiu', 'weekday'), 21 * 60 + 1);
+  assert.equal(lastDepartMin(akiu, 'akiu', 'saturday'), 21 * 60 + 1);
+  assert.equal(lastDepartMin(akiu, 'akiu', 'holiday'), 19 * 60 + 18);
+  assert.equal(lastDepartMin(akiu, 'akiu', 'special'), 19 * 60 + 18, '特殊時刻表期間：取最早的（保守）');
+  assert.equal(lastDepartMin(akiu, 'akiu'), 19 * 60 + 18, '不知道哪一天：取最早的');
+  assert.equal(lastDepartMin(akiu, 'akiu', 'sunday'), 19 * 60 + 18, '不認得的日別當不知道');
+  for (const day of [undefined, 'weekday', 'saturday', 'holiday', 'special']) assert.equal(lastDepartMin(akiu, 'town', day), 23 * 60, `單一值每天同一個（${day}）`);
+  const partial = { last: { jogi: { weekday: '17:23', holiday: '17:38' } } };
+  assert.equal(lastDepartMin(partial, 'jogi', 'holiday'), 17 * 60 + 38);
+  assert.equal(lastDepartMin(partial, 'jogi', 'saturday'), 17 * 60 + 23, '週六沒寫：取有寫的裡面最早的');
+  assert.equal(lastDepartMin({ last: { a: { weekday: '末班', saturday: '22:10', holiday: '21:50' } } }, 'a', 'weekday'), 21 * 60 + 50, '那一種寫壞：取其餘最早的');
+  assert.equal(lastDepartMin({ last: { a: { weekday: '00:12', holiday: '23:40' } } }, 'a'), 23 * 60 + 40, '過午夜的班次照加過 24 小時的比：23:40 比 00:12 早');
+  assert.equal(lastDepartMin({ last: { a: { weekday: '00:12', holiday: '23:40' } } }, 'a', 'weekday'), 24 * 60 + 12);
+  assert.equal(lastDepartMin({ last: { a: {} } }, 'a', 'weekday'), null);
+  assert.equal(lastDepartMin({ last: { a: { sunday: '20:00' } } }, 'a', 'holiday'), null, '只認 weekday／saturday／holiday 三個鍵');
+  assert.equal(lastDepartMin({ last: { a: ['21:00'] } }, 'a', 'weekday'), null);
+});
+
+test('查表的兩個方法帶日別：linkBetween／rideLink 第三個參數是那天的日別，直達與轉乘都照它取；不帶就取最早的；legFn(from, to) 上的 last 不知道哪一天、也是最早的', () => {
+  const links = {
+    'station|akiu': { mode: 'bus', rideMin: 50, walkMin: 5, last: { akiu: { weekday: '21:01', saturday: '21:01', holiday: '19:18' } } },
+    'station|town': { mode: 'walk', rideMin: 0, walkMin: 12 },
+    'station|club': { mode: 'subway', rideMin: 8, walkMin: 5, last: { station: { weekday: '23:50', saturday: '23:50', holiday: '23:20' } } },
+  };
+  const legFn = makeLegFn({ settings, zoneLinks: links });
+  const L = (leaveByMin, departMin, fromZoneId) => ({ leaveByMin, departMin, fromZoneId });
+  assert.deepEqual(legFn.linkBetween('akiu', 'station', 'saturday').last, L(20 * 60 + 56, 21 * 60 + 1, 'akiu'));
+  assert.deepEqual(legFn.linkBetween('akiu', 'station', 'holiday').last, L(19 * 60 + 13, 19 * 60 + 18, 'akiu'));
+  assert.deepEqual(legFn.linkBetween('akiu', 'station').last, L(19 * 60 + 13, 19 * 60 + 18, 'akiu'), '不帶日別：最早的');
+  assert.deepEqual(legFn.linkBetween('akiu', 'station', 'special').last, L(19 * 60 + 13, 19 * 60 + 18, 'akiu'));
+  assert.deepEqual(legFn.linkBetween('akiu', 'station', 'saturday').last, L(20 * 60 + 56, 21 * 60 + 1, 'akiu'), '查過別的日別之後再查，各是各的（快取連日別當鍵）');
+  // 轉乘一次：秋保→車站→夜店區，第二段（車站發車）也照日別；週日 23:20 − (5＋50) − 5＝22:20，還是秋保 19:18 那班先卡住
+  assert.deepEqual(legFn.linkBetween('akiu', 'club', 'holiday').last, L(19 * 60 + 13, 19 * 60 + 18, 'akiu'));
+  assert.deepEqual(legFn.linkBetween('town', 'club', 'weekday').last, L(23 * 60 + 50 - 12 - 5, 23 * 60 + 50, 'station'));
+  assert.deepEqual(legFn.linkBetween('town', 'club', 'holiday').last, L(23 * 60 + 20 - 12 - 5, 23 * 60 + 20, 'station'));
+  const there = { id: 'yu', zoneId: 'akiu' }; const home = { id: 'home', zoneId: 'station' };
+  assert.deepEqual(legFn.rideLink(there, home, 'saturday').last, L(20 * 60 + 56, 21 * 60 + 1, 'akiu'));
+  assert.deepEqual(legFn.rideLink(there, home).last, L(19 * 60 + 13, 19 * 60 + 18, 'akiu'));
+  assert.deepEqual(legFn(there, home).last, L(19 * 60 + 13, 19 * 60 + 18, 'akiu'), 'leg 本身不帶日期：最早的那一班');
+  assert.deepEqual([legFn(there, home).rideMin, legFn(there, home).walkMin], [50, 5], '路怎麼走、幾分鐘不看日別');
 });

@@ -1,8 +1,9 @@
 // 設定頁的純函式（不碰 DOM）：「同行：…」那行（T19；原話 #136、#144——一個人、多人（名字、同行哪幾天、體力、夜間站、不去的店型）、來源是需求單時尾巴「（需求單）」）
-// 與「本機改動：…」那行（T16b，tripEditsText）。
+// 與「本機改動：…」那行（T16b，tripEditsText）；還有設定頁與空白頁那幾句不分裝置（11-06 第二批）。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { personsLine, dateRanges, tripEditsText } from '../../src/ui/settings.js';
+import { TEXT } from '../../src/ui/text.js';
 
 const home = { id: 'home', name_zh: '飯店', zoneId: 'town' };
 const trip = (over = {}) => ({ id: 't', cityName: '仙台', party: 1, homeBases: [{ poi: home }], days: [{ date: '2026-08-13', type: 'normal', picks: [] }, { date: '2026-08-14', type: 'normal', picks: [] }, { date: '2026-08-15', type: 'normal', picks: [] }], ...over });
@@ -55,4 +56,12 @@ test('tripEditsText（T16b）：沒改「本機改動：沒有」、N 天有改�
   assert.equal(tripEditsText({ dates: ['2026-08-13'], deferredChanged: true, any: true }), '本機改動：1 天有改', '有改到哪一天就寫天數，順延不另寫');
   assert.equal(tripEditsText({ dates: [], deferredChanged: true, any: true }), '本機改動：只有順延紀錄');
   assert.equal(tripEditsText(null), '本機改動：沒有');
+});
+
+test('設定頁與空白頁的字不分裝置（11-06 第二批：這一頁桌機也會開——桌機伺服器供應 /app/ 填需求單）：不寫「手機」', () => {
+  const lines = [TEXT.noPack, TEXT.lastPack('仙台七天', '2026-11-11T19:27:50.110Z'), TEXT.shellHint, TEXT.updateFailed('HTTP 404')];
+  for (const line of lines) assert.doesNotMatch(line, /手機/, line);
+  assert.equal(TEXT.noPack, '這台裝置還沒有旅程');
+  assert.ok(TEXT.lastPack('仙台七天', null).startsWith('這台裝置裡的旅程：仙台七天（打包於 '));
+  assert.ok(TEXT.shellHint.includes('「設定」') && TEXT.shellHint.includes('「更新」'), '空白頁講去哪裡按什麼');
 });

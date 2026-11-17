@@ -1,10 +1,12 @@
-// 規劃頁的改動存在手機（T16b；原話 #154、#121、#171）：快照只存整天的 picks／removed／swapped 與 deferred，過 JSON 再蓋回同一份、引擎排出一樣的序列；
+// 規劃頁的改動存在手機（T16b；原話 #154、#121、#171）：快照存整天的 picks／removed／swapped（11-06 第二批起另帶釘住的順序 pinned、早餐不排的紀錄 breakfast）與 deferred，過 JSON 再蓋回同一份、引擎排出一樣的序列；
 // 打包時間或旅程不同就丟掉（規劃頁頂端那句在 app.js，這裡只驗 dropped 與那句存在）；跟打包那版比哪幾天有改、還原成打包版；
 // 跟現場改案（field.applied）各存各的：規劃頁改了那天的 applied 由呼叫端清掉（withoutApplied 照舊），別天的改案重載後照還原。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { planTrip } from '../../src/engine/trip.js';
+import { planTrip, resolveHome } from '../../src/engine/trip.js';
 import { applySwap } from '../../src/engine/swap.js';
+import { insertTrial, applyInsert } from '../../src/engine/insert.js';
+import { setBreakfast } from '../../src/engine/breakfast.js';
 import { snapshotTripEdits, applyTripEdits, overlayTripEdits, diffTripEdits, validTripEdits } from '../../src/ui/trip-edits.js';
 import { snapshotPlan, restoreApplied, withoutApplied } from '../../src/ui/applied.js';
 import { TEXT } from '../../src/ui/text.js';
@@ -42,7 +44,8 @@ test('快照：整天的 picks／removed／swapped 與 deferred，過 JSON 再�
   assert.equal(snap.packAt, 'p1');
   assert.equal(snap.tripId, edited.id);
   assert.deepEqual(Object.keys(snap.days), [D13, D17]);
-  assert.deepEqual(Object.keys(snap.days[D13]).sort(), ['picks', 'removed', 'swapped'], '一天只存三個陣列');
+  assert.deepEqual(Object.keys(snap.days[D13]).sort(), ['breakfast', 'engineBreakfast', 'picks', 'pinned', 'removed', 'swapped'], '一天存三個陣列＋釘住的順序＋早餐不排的紀錄（11-06 第二批加的）＋引擎的備忘（上一版引擎挑的早餐，11-12 加的）');
+  assert.deepEqual([snap.days[D13].pinned, snap.days[D13].breakfast, snap.days[D13].engineBreakfast], [null, null, null], '沒有就存 null');
   assert.deepEqual(snap.days[D13].picks, dayOf(edited, D13).picks);
   assert.deepEqual(snap.days[D13].removed, dayOf(edited, D13).removed);
   assert.deepEqual(snap.days[D17].swapped, dayOf(edited, D17).swapped);
@@ -177,4 +180,101 @@ test('跟現場改案各存各的：規劃頁改了 8/13 → 呼叫端清那天�
   const cleared = withoutApplied(afterClear, D17);
   assert.deepEqual(cleared, {});
   assert.notEqual(cleared, afterClear);
+});
+
+test('釘住的順序與早餐不排的紀錄也跟著存（11-06 第二批；原話 #192、#196）：安插之後快照帶 pinned、蓋回去引擎照那個順序排；一次性復原＝蓋回動作前的快照；舊版的鍵沒有這兩欄照舊讀得進來；形狀壞掉的當丟掉', () => {
+  const AT = '2026-11-12T00:00:00.000Z';
+  const trip = demoTrip();
+  const base = clone(snapshotTripEdits(trip, 'p1'));
+  const d = plansOf(trip)[D13];
+  const home = resolveHome(trip, D13);
+  // 示範資料的 19 站都勾了：另外造一家路邊的店（走廊清單上那種）插進 8/13。那天已經 8 站，第 9 站要先少去一站——用選項裡「不去某站」排得下的那一個
+  const extra = { ...POIS['松本清'], id: 'roadside-shop', name_zh: '路邊的店', dwellMin: 30 };
+  const pois2 = { ...pois, [extra.id]: extra };
+  const plansWith = (tr) => Object.fromEntries(planTrip({ trip: tr, pois: pois2, restPool: Object.values(pois), ...ctx }).days.map((x) => [x.date, x]));
+  const blocked = insertTrial({ plan: d.plan, day: d.day, home, poi: extra, legIndex: 6, ...ctx });
+  assert.equal(blocked.fits, false, '示範的 8/13 已經 8 站');
+  const option = blocked.options.find((o) => o.fits && o.kind === 'drop');
+  assert.ok(option, `要有「不去某站」排得下的選項：${blocked.options.map((o) => `${o.kind} ${o.poiId} ${o.fits}`).join('；')}`);
+  const t = option.result;
+  const before = clone(snapshotTripEdits(trip, 'p1'));   // 動作前先留一份（app.js 的一次性復原就是蓋回這一份）
+  const inserted = applyInsert(trip, D13, option, AT);
+  const snap = clone(snapshotTripEdits(inserted, 'p1'));
+  assert.deepEqual(snap.days[D13].pinned, clone(dayOf(inserted, D13).pinned));
+  assert.equal(snap.days[D13].pinned.sequence.length, t.sequence.length);
+  assert.deepEqual(snap.days[D13].removed.map((x) => x.poiId), [option.poiId], '選了不去的那一站記在 removed');
+  assert.ok(!snap.days[D13].picks.some((x) => x.poiId === option.poiId) && snap.days[D13].picks.some((x) => x.poiId === extra.id));
+  assert.equal(snap.days[D17].pinned, null);
+  assert.deepEqual(diffTripEdits(inserted, base), { dates: [D13], deferredChanged: false, any: true });
+  // 重開 App：蓋回 → 引擎照釘住的順序排，就是試算的那一條
+  const reloaded = applyTripEdits(demoTrip(), snap, 'p1').trip;
+  assert.deepEqual(clone(dayOf(reloaded, D13).pinned), snap.days[D13].pinned);
+  const p = plansWith(reloaded)[D13].plan;
+  assert.equal(p.pinned, true);
+  assert.deepEqual(p.sequence.map((s) => [s.poi.id, s.startMin]), t.sequence.map((s) => [s.poi.id, s.startMin]));
+  // 一次性復原：蓋回動作前的快照 → pinned 拿掉、picks 回到原樣、那天回到搜尋
+  const undone = overlayTripEdits(inserted, before);
+  assert.equal('pinned' in dayOf(undone, D13), false);
+  assert.deepEqual(dayOf(undone, D13).picks, dayOf(trip, D13).picks);
+  assert.equal(diffTripEdits(undone, base).any, false);
+  assert.equal(plansWith(undone)[D13].plan.pinned, undefined);
+  assert.ok(dayOf(inserted, D13).pinned, '不改傳入的');
+  // 早餐不排的紀錄（吃飯店早餐）一樣存、一樣還原
+  const withBf = setBreakfast(inserted, D17, 'hotel', null, AT);
+  const snapBf = clone(snapshotTripEdits(withBf, 'p1'));
+  assert.deepEqual(snapBf.days[D17].breakfast, { mode: 'hotel', poiId: null, at: AT });
+  assert.deepEqual(diffTripEdits(withBf, base).dates, [D13, D17]);
+  assert.deepEqual(dayOf(applyTripEdits(demoTrip(), snapBf, 'p1').trip, D17).breakfast, { mode: 'hotel', poiId: null, at: AT });
+  assert.equal('breakfast' in dayOf(overlayTripEdits(withBf, before), D17), false, '蓋回沒有紀錄的快照：那天的 breakfast 拿掉');
+  // 舊版存的鍵（那天沒有 pinned、breakfast 這兩個鍵）：合法、三個陣列照蓋，旅程檔那天本來有的這兩欄不動
+  const old = { packAt: 'p1', tripId: trip.id, days: { [D13]: { picks: before.days[D13].picks, removed: [], swapped: [] }, [D17]: { picks: before.days[D17].picks, removed: [], swapped: [] } }, deferred: [] };
+  assert.equal(validTripEdits(old), true);
+  assert.equal(applyTripEdits(demoTrip(), old, 'p1').dropped, false);
+  const kept = overlayTripEdits(withBf, old);
+  assert.deepEqual(dayOf(kept, D13).pinned, dayOf(withBf, D13).pinned);
+  assert.deepEqual(dayOf(kept, D17).breakfast, dayOf(withBf, D17).breakfast);
+  assert.deepEqual(dayOf(kept, D13).picks, before.days[D13].picks);
+  assert.equal(diffTripEdits(demoTrip(), old).any, false, '對照那份少了這兩欄：當作沒有，不算差異');
+  // 形狀壞掉：pinned 不是帶 sequence 陣列的物件、breakfast 不是物件 → 整份當丟掉；sequence 裡的 null 靜靜濾掉
+  for (const bad of [{ pinned: 5 }, { pinned: [] }, { pinned: { sequence: 'x' } }, { pinned: {} }, { breakfast: 'hotel' }, { breakfast: [1] }]) {
+    const edits = { ...snap, days: { ...snap.days, [D13]: { ...snap.days[D13], ...bad } } };
+    assert.equal(validTripEdits(edits), false, JSON.stringify(bad));
+    assert.equal(applyTripEdits(demoTrip(), edits, 'p1').dropped, true);
+  }
+  const holes = { ...snap, days: { ...snap.days, [D13]: { ...snap.days[D13], pinned: { at: AT, sequence: [null, ...snap.days[D13].pinned.sequence, 7] } } } };
+  assert.equal(validTripEdits(holes), true);
+  assert.deepEqual(dayOf(applyTripEdits(demoTrip(), holes, 'p1').trip, D13).pinned.sequence, snap.days[D13].pinned.sequence);
+});
+
+test('引擎的備忘（上一版引擎替那天挑的早餐 engineBreakfast；11-12 畫面審查）：跟著快照存、蓋得回來、復原帶得回去；不算他的改動——只有它不一樣時是「沒有改」；寫壞的當丟掉', () => {
+  const AT = '2026-11-12T00:00:00.000Z';
+  const trip = demoTrip();
+  const base = clone(snapshotTripEdits(trip, 'p1'));   // 載入時留的對照：還沒排過，沒有備忘
+  assert.equal(base.days[D13].engineBreakfast, null);
+  // 重排完記回來的樣子（engine/breakfast.js keepBreakfasts 寫的）
+  const noted = { ...trip, days: trip.days.map((d) => (d.date === D13 ? { ...d, engineBreakfast: '麵店' } : d)) };
+  const snap = clone(snapshotTripEdits(noted, 'p1'));
+  assert.equal(snap.days[D13].engineBreakfast, '麵店');
+  assert.equal(snap.days[D17].engineBreakfast, null);
+  assert.deepEqual(diffTripEdits(noted, base), { dates: [], deferredChanged: false, any: false }, '只有備忘不一樣：不算有改（設定頁不寫「1 天有改」、鍵照刪）');
+  // 他真的改了一天：那天算有改，別天只有備忘不一樣的不算
+  const edited = { ...noted, days: noted.days.map((d) => (d.date === D17 ? { ...d, engineBreakfast: '站內店', removed: [{ poiId: 'x', at: AT }] } : d)) };
+  assert.deepEqual(diffTripEdits(edited, base).dates, [D17]);
+  // 重開 App：蓋回 → 兩天的備忘都回來
+  const reloaded = applyTripEdits(demoTrip(), clone(snapshotTripEdits(edited, 'p1')), 'p1').trip;
+  assert.deepEqual([dayOf(reloaded, D13).engineBreakfast, dayOf(reloaded, D17).engineBreakfast], ['麵店', '站內店']);
+  // 一次性復原／還原成打包版：蓋回那天是 null 的快照 → 那一欄拿掉；蓋回舊版存的快照（沒有這個鍵）→ 不動
+  assert.equal('engineBreakfast' in dayOf(overlayTripEdits(edited, base), D13), false);
+  const old = { packAt: 'p1', tripId: trip.id, days: { [D13]: { picks: base.days[D13].picks, removed: [], swapped: [] } }, deferred: [] };
+  assert.equal(validTripEdits(old), true);
+  assert.equal(dayOf(overlayTripEdits(edited, old), D13).engineBreakfast, '麵店');
+  // 形狀壞掉：不是字串 → 整份當丟掉；空字串當沒有
+  for (const bad of [5, {}, ['麵店'], true]) {
+    const edits = { ...snap, days: { ...snap.days, [D13]: { ...snap.days[D13], engineBreakfast: bad } } };
+    assert.equal(validTripEdits(edits), false, JSON.stringify(bad));
+    assert.equal(applyTripEdits(demoTrip(), edits, 'p1').dropped, true);
+  }
+  const empty = { ...snap, days: { ...snap.days, [D13]: { ...snap.days[D13], engineBreakfast: '' } } };
+  assert.equal(validTripEdits(empty), true);
+  assert.equal('engineBreakfast' in dayOf(applyTripEdits(noted, empty, 'p1').trip, D13), false);
 });

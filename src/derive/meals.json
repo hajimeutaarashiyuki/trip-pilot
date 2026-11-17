@@ -1,0 +1,9 @@
+{
+ "_說明": "店型→能當哪一餐的推導，知識庫那一筆沒有 meals 欄位時才用（原話 #195；11-06）。讀法、每個鍵的意思與取捨的依據寫在 rules/_slots.js 的 deriveMeals 上方（這裡的字會打包進 App，所以只留這一句）。改這張表不用改程式。",
+ "slots": ["breakfast", "lunch", "dinner"],
+ "legacyMealFlag": ["lunch", "dinner"],
+ "byCategory": {
+  "food": { "meals": ["lunch", "dinner"], "exceptMatched": ["甜點"] },
+  "bar": { "meals": ["dinner"], "textAny": ["居酒屋", "酒場", "爐端", "炉端", "炉ばた", "めし"], "textNone": ["立飲", "立ち飲み", "立呑"], "note": "居酒屋這類坐下來吃喝的店" }
+ }
+}

@@ -7,13 +7,18 @@
 // 餐段中途才開始的（19:00 開演的演唱會、花火）不算，開演前要先吃；早上就散的（09:00–12:00 的半天會，12:00 早於午餐中點 12:30）也不算。
 // 10-14 T23 審查前寫的是「整段蓋住」，晚宴永遠落在晚餐段裡、那條對它不成立，審查後改成這條。
 // 餐段放寬（11-06；原話 #189「這點不強制 像是有主行程要跑 但時間落在晚餐時段 那晚餐提早或延後 都可以」）：吃的站落在餐段前後各 settings.mealGraceMin（預設 60）分以內
-// 就算那一餐（日本值：午 10:30–14:30、晚 17:00–21:30；午餐比照是推導）。之前要跟餐段本身重疊才算——七天包 8/16 松島流灯会 18:30–20:20 佔住晚餐段，
-// 回城後 21:03 才喝的那一杯不算，那天出「今天沒排晚餐」；17:00 一開門就進去吃的晚餐也不算。「這天要不要這一餐」與「被固定時段蓋住」照舊看原本的餐段；放寬的只有「這一站算不算」。
-// 每一站最多算一餐（午、晚不重複算；rules/_slots.js unmetMeals）。餐段、放寬量與配站的算法在 rules/_slots.js，分配器（engine/allocate.js）判「這家能當午餐／晚餐」用同一把尺。
-import { overlapMin } from '../engine/time.js';
-import { mealSlotsOf, inWindow, coversMealSlot, unmetMeals } from './_slots.js';
-
-const EATING = new Set(['food', 'bar', 'cafe']);
+// 就算那一餐（日本值：午 10:30–14:30、晚 17:00–21:30；午餐比照是推導）。之前要跟餐段本身重疊才算——17:00 一開門就進去吃的晚餐不算、
+// 主行程散場後 21:00 才吃的也不算。「這天要不要這一餐」與「被固定時段蓋住」照舊看原本的餐段；放寬的只有「這一站算不算」。
+// 七天包 8/16（松島流灯会 18:30–20:20 佔住晚餐段）的「今天沒排晚餐」當時是靠回城後 21:03 那一杯算晚餐拿掉的；那一杯是立飲，11-06 第二批起不算正餐（原話 #195），
+// 那一句又回來——11-12 改成：主行程是活動、佔著餐段，而他勾了同一區能當那一餐的會場攤位，就當那一餐由攤位解決、不算缺（原話 #172 採的提案：祭典的縁日攤位算那天的晚餐；rules/_slots.js stallsCover）。
+// 每一站最多算一餐（午、晚不重複算）。
+// 哪一站算哪一餐（11-06 第二批；原話 #195「爐端燒的換一間 推薦我咖啡廳 這可以當晚餐嗎」）：不再是「food／bar／cafe 的恢復站都算」，改成那家店要能當那一餐——
+// 知識庫欄位 meals 優先，沒有欄位才照店型推導（food 甜點除外＝午餐晚餐、酒場型的 bar＝晚餐、咖啡廳不算、舊旗標 meal: true 照舊；rules/_slots.js servesMeal、derive/meals.json）。
+// 咖啡廳、立飲、喝酒為主的酒吧不再自動算一餐：靠它們撐著一餐的日子會多出「今天沒排午餐／晚餐」，那是實話（要它們算，就在知識庫標 meals）。
+// 整套算法（餐段、放寬量、這一站算不算、配站）在 rules/_slots.js 的 mealAssignments，這裡只問「午餐、晚餐缺哪幾餐」（missingMeals：同一套、只回缺的）；分配器、換一家、plan.meals 用同一把尺。
+// 這條規則只管午餐與晚餐（MAIN_MEALS）：國家層多了早餐段也不罰早餐——早餐是每天預設排、他也可能吃飯店的（原話 #196「我也有可能在飯店吃早餐」），缺了不是黃字；
+// 早餐怎麼排、怎麼提示不在這條規則裡（尺認得早餐段：mealAssignments 不給 only 就連早餐一起配）。
+import { missingMeals, MAIN_MEALS, MEAL_NAMES } from './_slots.js';
 
 export default {
   id: 'meal-slots',
@@ -22,26 +27,9 @@ export default {
   reads: ['sequence', 'country.mealSlots'],
   defaults: { missMin: 20 },
   apply(ctx) {
-    return missing(ctx).length * ctx.params.missMin;
+    return missingMeals(ctx, MAIN_MEALS).length * ctx.params.missMin;
   },
   warn(ctx) {
-    const names = { lunch: '午餐', dinner: '晚餐' };
-    return `今天沒排${missing(ctx).map((k) => names[k] ?? k).join('、')}`;
+    return `今天沒排${missingMeals(ctx, MAIN_MEALS).map((k) => MEAL_NAMES[k] ?? k).join('、')}`;
   },
 };
-
-/** 這一站算不算吃的站：坐下來吃喝的店（food／bar／cafe 而且是恢復站）、或知識庫標 meal: true 的站（祭典的縁日攤位，原話 #172；10-16）；引擎插的不算。 */
-const eats = (s) => !s.insertedBy && ((s.poi.recovery && EATING.has(s.poi.category)) || s.poi.meal === true);
-
-function missing(ctx) {
-  const win = ctx.day?.windowRaw ?? ctx.day?.window ?? null;
-  // 降速策略釘的「現在就去坐」（fixedWindow.pinned）不是固定時段，不當大會供餐
-  const pinned = ctx.sequence.filter((s) => s.fixedWindow && !s.fixedWindow.pinned);
-  const needs = [];
-  for (const { slot, core, window } of mealSlotsOf(ctx.country, ctx.settings)) {
-    if (win && overlapMin(win.startMin, win.endMin, core[0], core[1]) <= 0) continue;
-    if (pinned.some((s) => coversMealSlot(s.startMin, s.endMin, core))) continue;
-    needs.push({ slot, cands: ctx.sequence.filter((s) => eats(s) && inWindow(s.startMin, s.endMin, window)) });
-  }
-  return unmetMeals(needs);
-}

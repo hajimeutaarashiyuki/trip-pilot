@@ -27,6 +27,15 @@ export default {
   warn(ctx) {
     const intervals = openIntervals(ctx.stop.poi, ctx.day.date) ?? [];
     if (intervals.length === 0) return `${ctx.stop.poi.name_zh} 今天沒開`;
-    return `${ctx.stop.poi.name_zh} ${minToHm(ctx.stop.startMin)} 到的時候不在營業時間內（${intervals.map(([o, c]) => `${minToHm(o)}–${minToHm(c)}`).join('、')}）`;
+    // 到的時候有開、待完卻超過那一段的關門時刻：照實寫「待到幾點，超過幾點關門」。之前兩種情況都寫「到的時候不在營業時間內（…）」，到達時刻明明落在列出來的時段裡，讀起來是錯的
+    // （11-12 畫面審查：升級成站排不下時這是那組選項最上面的一句，待套用版七天包 28 組裡 22 組都是這種——「鹽竈神社 17:06 到的時候不在營業時間內（05:00–18:00、…）」）。
+    // 到的時候真的沒開（還沒開門、已經關了、落在午休）照舊寫時段。只改句子，判定（apply）沒動
+    const { startMin, endMin } = ctx.stop;
+    const inside = intervals.filter(([open, close]) => startMin >= open && startMin < close);
+    if (inside.length) {
+      const close = Math.max(...inside.map(([, c]) => c));
+      if (endMin > close) return `${ctx.stop.poi.name_zh} 待到 ${minToHm(endMin)}，超過 ${minToHm(close)} 關門`;
+    }
+    return `${ctx.stop.poi.name_zh} ${minToHm(startMin)} 到的時候不在營業時間內（${intervals.map(([o, c]) => `${minToHm(o)}–${minToHm(c)}`).join('、')}）`;
   },
 };

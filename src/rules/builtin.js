@@ -30,6 +30,7 @@ import anchor from './anchor.js';
 import designated from './designated.js';
 import itemGap from './item-gap.js';
 import mealSlots from './meal-slots.js';
+import breakfastSlot from './breakfast-slot.js';
 import nightSlot from './night-slot.js';
 import shoppingDay from './shopping-day.js';
 import lastTrain from './last-train.js';
@@ -43,5 +44,5 @@ export const BUILTIN = Object.freeze([
   // 軟約束（站）
   walkBudget, walkCost, rideCost, walkRun, shopRun, cafeAdjacent, recoveryRun, backtrack, zoneExit, zoneReentry, noonUrban, waitAtDoor, lateDeparture, shoppingDay,
   // 整天
-  anchor, designated, itemGap, mealSlots, nightSlot, dayTripNight,
+  anchor, designated, itemGap, mealSlots, breakfastSlot, nightSlot, dayTripNight,
 ]);

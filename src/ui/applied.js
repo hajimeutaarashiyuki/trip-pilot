@@ -6,10 +6,15 @@
 import { evaluateSequence } from '../engine/sequence.js';
 import { resolveHome, attachCorridor, corridorExclude, visitedBefore } from '../engine/trip.js';
 import { personAvoidWarnings } from '../engine/persons.js';
+import { dayTripNightHints, lastTrainHints, breakfastHints, planMealsOf } from '../rules/_slots.js';   // 一日遊晚回城、趕不上末班車、今天沒排早餐的提示：跟 person-avoid 一樣是 trip.js 排完才掛的，重算後要再掛一次；三餐也照新序列重算
 import { TEXT } from './text.js';
 
-/** 快照每站存的欄位（POI 本體不存，還原時從 state.pois 對回；跟 planDay 排出的 stop 同名） */
-const STOP_KEYS = ['startMin', 'endMin', 'dwellMin', 'waitMin', 'arriveMin', 'fixedWindow', 'insertedBy', 'priority', 'optional', 'gap', 'isAnchor', 'designated', 'errand', 'deferredFrom'];
+/**
+ * 快照每站存的欄位（POI 本體不存，還原時從 state.pois 對回；跟 planDay 排出的 stop 同名）。
+ * 11-06 第二批加三個：breakfast（他指定當早餐的那一筆；不存的話還原之後掉標記）、detourMin（早餐比直接去第一站多繞幾分）、
+ * flexedMin（坐下來的地方併進去的等待分鐘；重定時刻與安插試算要靠它把停留還原）。舊快照沒有這三欄，還原出來是 null，照舊讀得進來。
+ */
+const STOP_KEYS = ['startMin', 'endMin', 'dwellMin', 'waitMin', 'arriveMin', 'fixedWindow', 'insertedBy', 'priority', 'optional', 'gap', 'isAnchor', 'designated', 'errand', 'deferredFrom', 'breakfast', 'detourMin', 'flexedMin'];
 
 /**
  * 還沒去的站翻成 planDay 的候選（現場改案的 remaining）。optional、insertedBy、gap 要帶著：引擎插的站重排時還是價值 0、排不進不算落選、
@@ -69,6 +74,10 @@ export function mergeDropped({ engine, sequence, lost = [] }) {
  * 收工時刻用原時窗：改案本來就准吃留白（strategies/index.js），用扣過的收工會冒出「超過收工」的硬警告。
  * 走廊清單（T15）跟著新序列重算：legIndex 指的是這條序列的段，不重算會指到改案前的段；pool＝整個知識庫（pois），扣掉任何一天勾過／拒絕過的與別天引擎插過的
  * （corridorExclude；plans 給了才扣得到別天的，跟 planTrip 一樣）與這天之前按過「我進去了」的（visited: { poiId: date }，visitedBefore）；沒給 pois 就沒有走廊（舊呼叫端）。長段提示也跟著重出。
+ * trip.js 排完才掛的站卡提示也重掛（規則重算不會出這幾句）：同行者不想去的店型（person-avoid）、一日遊晚回城還排了他勾的市區夜間站（day-trip-night）、
+ * 他勾的站趕不上末班車（last-train）——後兩種 11-06 第二批補上，算法在 rules/_slots.js；「今天沒排早餐」（breakfast-slot，整天的提示；國家層有早餐段才有）同一批。
+ * 三餐（plan.meals：哪一站是早餐／午餐／晚餐，原話 #195）照新序列重算（planMealsOf）——沿用引擎那一版會指到已經不在序列裡的站，換一家清單與早餐的鍵就對不上。
+ * 早餐的推薦（plan.breakfastOffers）是對引擎排的序列驗過的（換了其餘各站先後不變、最多晚 10 分），現場改過的那天不出——跟二選一同一個理由。
  */
 export function appliedPlan({ planned, sequence, appliedIndex, lost = [], trip, legFn, rules, settings, country, kb, pois = null, plans = null, visited = {} }) {
   const day = { ...planned.day, resumed: true };
@@ -76,8 +85,11 @@ export function appliedPlan({ planned, sequence, appliedIndex, lost = [], trip, 
   const home = resolveHome(trip, day.date);
   const ev = evaluateSequence({ sequence, day: evalDay, home, legFn, rules, settings, country, kb });
   // 二選一（plan.choices）是對引擎排的序列算的（slot 指引擎序列的位置）：現場改過的那天不出，按了也會先清掉改案再重排（T16）
-  // 他勾的站是同行者不想去的店型（T19）：重算後的警告是規則出的，person-avoid 那句（trip.js 的後處理）要再掛一次
-  const base = { ...planned.plan, ...ev, sequence, warnings: [...(ev.warnings ?? []), ...personAvoidWarnings(sequence, day.adjust)], corridor: [], choices: [], dropped: mergeDropped({ engine: planned.plan, sequence, lost }), applied: true };
+  // 他勾的站是同行者不想去的店型（T19）：重算後的警告是規則出的，person-avoid 那句（trip.js 的後處理）要再掛一次；
+  // 一日遊晚回城還排了他勾的市區夜間站、他勾的站趕不上末班車這兩種提示同理（原話 #190；11-06 第二批）——改案常常就是把站往後推，這兩句正是那時候要看到的。
+  // 末班車那句用 evalDay：走過的前綴還在時第一段是早上從住宿出門、照判；改案從第 0 站接上時第一段的起點是他現在的位置、不判（rules/_slots.js missedLastTrain）
+  const hints = [...personAvoidWarnings(sequence, day.adjust), ...dayTripNightHints({ sequence, day, settings, country }), ...lastTrainHints({ sequence, day: evalDay, home, legFn, kb }), ...breakfastHints({ sequence, day, settings, country })];
+  const base = { ...planned.plan, ...ev, sequence, warnings: [...(ev.warnings ?? []), ...hints], corridor: [], choices: [], breakfastOffers: [], meals: planMealsOf({ sequence, day, settings, country }), dropped: mergeDropped({ engine: planned.plan, sequence, lost }), applied: true };
   const others = Object.values(plans ?? {}).filter((p) => p && p !== planned && p.date !== planned.date).map((p) => p.plan?.sequence);
   const plan = pois ? attachCorridor({ plan: base, home, pool: Object.values(pois), legFn, settings, day, exclude: corridorExclude(trip, others, visitedBefore(visited, day.date)) }) : base;
   return { ...planned, day, plan };

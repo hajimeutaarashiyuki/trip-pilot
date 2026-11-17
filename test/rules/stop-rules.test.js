@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { stop, ctx, run, warnOf, rules, settings } from './_fixtures.js';
 import { evaluateStop } from '../../src/engine/evaluate.js';
 import { budgetMultiplier } from '../../src/rules/_helpers.js';
+import { missedLastTrain, lastTrainText } from '../../src/rules/_slots.js';
 
 const HOURS = { thu: [['11:30', '13:30'], ['17:30', '21:00']] };   // 2026-08-13 是週四
 
@@ -15,6 +16,16 @@ test('hours：營業區間內 ok；開門前 no；全部過了 never；當天休
   assert.equal(run('hours', ctx(s(21 * 60 + 30))), 'never');
   assert.equal(run('hours', ctx(stop('X', { hours: { mon: [['09:00', '17:00']] }, startMin: 600 }))), 'never', '週四沒開');
   assert.match(warnOf('hours', ctx(s(11 * 60))), /11:00 到的時候不在營業時間內/);
+  // 句子分兩種（11-12 畫面審查）：到的時候有開、待完卻超過那一段的關門 → 「待到幾點，超過幾點關門」（之前也寫「到的時候不在營業時間內」，到達時刻明明在列出來的時段裡）；
+  // 到的時候真的沒開（還沒開、落在午休、已經關了）→ 照舊列時段
+  assert.equal(warnOf('hours', ctx(s(13 * 60))), 'Elbe 待到 14:00，超過 13:30 關門');
+  assert.equal(warnOf('hours', ctx(s(20 * 60 + 30))), 'Elbe 待到 21:30，超過 21:00 關門');
+  assert.equal(warnOf('hours', ctx(s(16 * 60 + 35))), 'Elbe 16:35 到的時候不在營業時間內（11:30–13:30、17:30–21:00）', '午休時到：真的沒開');
+  assert.equal(warnOf('hours', ctx(s(21 * 60 + 30))), 'Elbe 21:30 到的時候不在營業時間內（11:30–13:30、17:30–21:00）', '關門後到');
+  assert.equal(warnOf('hours', ctx(s(13 * 60 + 30))), 'Elbe 13:30 到的時候不在營業時間內（11:30–13:30、17:30–21:00）', '剛好關門那一刻到：算沒開');
+  assert.equal(warnOf('hours', ctx(stop('X', { hours: { mon: [['09:00', '17:00']] }, startMin: 600 }))), 'X 今天沒開');
+  // 幾段重疊的（神社：境內、授與所、寶物殿各有時段）取到的時候開著的那幾段裡最晚關的
+  assert.equal(warnOf('hours', ctx(stop('鹽竈神社', { hours: { thu: [['05:00', '18:00'], ['08:30', '16:30'], ['09:00', '16:00']] }, startMin: 17 * 60 + 6 }))), '鹽竈神社 待到 18:06，超過 18:00 關門');
   // 固定時段的站不看營業時間：研討會會場寫 09:30–19:30，08:50 到場卡位、20:00 散場都 ok（10-14 T23）
   const pinned = { startMin: 9 * 60 + 30, endMin: 19 * 60 + 30, arriveEarlyMin: 40, afterMin: 30 };
   assert.equal(run('hours', ctx({ ...s(8 * 60 + 50, 670), fixedWindow: pinned })), 'ok', '固定時段的站營業時間不擋');
@@ -252,28 +263,29 @@ test('shopping-day（原話 #36、#55；DESIGN §5.2 舊表 +80）：購物類�
   assert.ok(!evaluateStop(ctx(drug(), { day: { shoppingDay: true, shoppingFromMin: null } }), rules).warnings.some((w) => w.ruleId === 'shopping-day'));
 });
 
-test('last-train（原話 #190「只要趕的上末班車都可以」；11-06）：搭車那一段離開上一站晚於最晚要離開的時刻 never；外地的站待到回程的末班之後 never；沒有末班資料、走路的段、day 上沒有表都不判；警告講得出哪一班', () => {
+test('last-train（原話 #190「只要趕的上末班車都可以」；11-06 第二批：只擋引擎自己插的站）：引擎插的站——搭車那一段離開上一站晚於最晚要離開的時刻 never、外地的站待到回程的末班之後 never；他勾的站不擋；沒有末班資料、走路的段、day 上沒有表都不判；警告講得出哪一班', () => {
   const kbZones = { zones: { matsushima: { name_zh: '松島海岸', environment: 'town' }, 'sendai-station': { name_zh: '仙台站前', environment: 'urban' }, ichibancho: { environment: 'urban' } } };
   const last = (leaveByMin, departMin, fromZoneId) => ({ leaveByMin, departMin, fromZoneId });
   const ride = { walkMin: 5, rideMin: 38, climbMin: 0 };
+  const eng = (s) => ({ ...s, insertedBy: 'engine' });   // 引擎插的站（恢復站、填站、順路站）
   // (1) 這一段搭車趕不上：松島 23:10 的末班（走去搭車 5 分，最晚 23:05 離開）
   const lastLegs = { 'matsushima|sendai-station': last(23 * 60 + 5, 23 * 60 + 10, 'matsushima') };
   const day = { lastLegs, away: null, homeZoneId: 'sendai-station' };
   const there = (endMin) => stop('松島的酒吧', { category: 'bar', zoneId: 'matsushima', startMin: endMin - 60, dwellMin: 60 });
   const town = (leaveMin, over = {}) => stop('てん', { category: 'bar', zoneId: 'sendai-station', startMin: leaveMin + 43, dwellMin: 30, arriveMin: leaveMin + 43, ...over });
   const c = (cur, prev, d = day, leg = ride) => ctx(cur, { prev, leg, day: d, kb: kbZones });
-  assert.equal(run('last-train', c(town(23 * 60 + 5), there(23 * 60 + 5))), 'ok', '23:05 離開剛好趕上');
-  assert.equal(run('last-train', c(town(23 * 60 + 6), there(23 * 60 + 6))), 'never', '23:06 離開就趕不上');
-  assert.equal(warnOf('last-train', c(town(23 * 60 + 6), there(23 * 60 + 6))), '去 てん 趕不上 23:10 的末班車，松島海岸發車');
-  assert.equal(run('last-train', c(town(23 * 60 + 30), there(23 * 60 + 30), day, { walkMin: 43, rideMin: 0, climbMin: 0 })), 'ok', '這一段是走路（rideMin 0）：不判');
-  assert.equal(run('last-train', c(town(23 * 60 + 30), there(23 * 60 + 30), { ...day, lastLegs: { 'sendai-station|matsushima': last(1415, 1420, 'sendai-station') } })), 'ok', '只有反方向的資料：這個方向不判');
-  assert.equal(run('last-train', c(town(23 * 60 + 30), there(23 * 60 + 30), { homeZoneId: 'sendai-station' })), 'ok', 'day 上沒有表（舊呼叫端、自訂的 legFn）：不判');
-  assert.equal(run('last-train', c(stop('沒歸區', { zoneId: null, startMin: 1400 }), there(23 * 60 + 30))), 'ok', '站沒有歸區：不判、也不因缺欄位跳過');
+  assert.equal(run('last-train', c(eng(town(23 * 60 + 5)), there(23 * 60 + 5))), 'ok', '23:05 離開剛好趕上');
+  assert.equal(run('last-train', c(eng(town(23 * 60 + 6)), there(23 * 60 + 6))), 'never', '23:06 離開就趕不上');
+  assert.equal(warnOf('last-train', c(eng(town(23 * 60 + 6)), there(23 * 60 + 6))), '去 てん 趕不上 23:10 的末班車，松島海岸發車');
+  assert.equal(run('last-train', c(eng(town(23 * 60 + 30)), there(23 * 60 + 30), day, { walkMin: 43, rideMin: 0, climbMin: 0 })), 'ok', '這一段是走路（rideMin 0）：不判');
+  assert.equal(run('last-train', c(eng(town(23 * 60 + 30)), there(23 * 60 + 30), { ...day, lastLegs: { 'sendai-station|matsushima': last(1415, 1420, 'sendai-station') } })), 'ok', '只有反方向的資料：這個方向不判');
+  assert.equal(run('last-train', c(eng(town(23 * 60 + 30)), there(23 * 60 + 30), { homeZoneId: 'sendai-station' })), 'ok', 'day 上沒有表（舊呼叫端、自訂的 legFn）：不判');
+  assert.equal(run('last-train', c(eng(stop('沒歸區', { zoneId: null, startMin: 1400 })), there(23 * 60 + 30))), 'ok', '站沒有歸區：不判、也不因缺欄位跳過');
   // 等開門的站：離開上一站的時刻＝到站時刻 − 移動分鐘，不是開始時刻
-  assert.equal(run('last-train', c(town(23 * 60, { startMin: 23 * 60 + 50 }), there(23 * 60))), 'ok', '23:00 就離開、到了等到 23:50 才開門：趕得上');
+  assert.equal(run('last-train', c(eng(town(23 * 60, { startMin: 23 * 60 + 50 })), there(23 * 60))), 'ok', '23:00 就離開、到了等到 23:50 才開門：趕得上');
   // 第一站：從住宿出發（day.homeZoneId）；現場改案的第一段起點不是住宿，不判
   const out = { 'sendai-station|matsushima': last(23 * 60 + 35, 23 * 60 + 40, 'sendai-station') };
-  const first = (arriveMin) => stop('松島的酒吧', { category: 'bar', zoneId: 'matsushima', startMin: arriveMin, dwellMin: 30, arriveMin });
+  const first = (arriveMin) => eng(stop('松島的酒吧', { category: 'bar', zoneId: 'matsushima', startMin: arriveMin, dwellMin: 30, arriveMin }));
   assert.equal(run('last-train', c(first(23 * 60 + 35 + 43), null, { ...day, lastLegs: out })), 'ok', '23:35 出門趕得上 23:40');
   assert.equal(run('last-train', c(first(23 * 60 + 36 + 43), null, { ...day, lastLegs: out })), 'never');
   assert.equal(warnOf('last-train', c(first(23 * 60 + 36 + 43), null, { ...day, lastLegs: out })), '去 松島的酒吧 趕不上 23:40 的末班車，仙台站前發車');
@@ -282,20 +294,59 @@ test('last-train（原話 #190「只要趕的上末班車都可以」；11-06）
   const away = { matsushima: { homeMin: 43, last: last(23 * 60 + 5, 23 * 60 + 10, 'matsushima') }, shiogama: { homeMin: 33 } };
   const home = { lastLegs: null, away, homeZoneId: 'sendai-station' };
   const walk = { walkMin: 6, rideMin: 0, climbMin: 0 };
-  assert.equal(run('last-train', c(there(23 * 60 + 5), null, home, walk)), 'ok', '待到 23:05 還趕得上');
-  assert.equal(run('last-train', c(there(23 * 60 + 40), null, home, walk)), 'never', '待到 23:40 回不了住宿');
-  assert.equal(warnOf('last-train', c(there(23 * 60 + 40), null, home, walk)), '松島的酒吧 待到 23:40，回住宿趕不上 23:10 的末班車，松島海岸發車');
-  assert.equal(run('last-train', c(stop('鹽竈的店', { zoneId: 'shiogama', startMin: 23 * 60, dwellMin: 55 }), null, home, walk)), 'ok', '那一區回程沒有末班資料：不判');
-  assert.equal(run('last-train', c(town(23 * 60 + 40), null, home, walk)), 'ok', '市區的站（不在外地表裡）不判');
-  assert.equal(run('last-train', c(there(23 * 60 + 40), null, { ...home, resumed: true }, walk)), 'never', '現場改案照樣判回住宿這一項');
+  assert.equal(run('last-train', c(eng(there(23 * 60 + 5)), null, home, walk)), 'ok', '待到 23:05 還趕得上');
+  assert.equal(run('last-train', c(eng(there(23 * 60 + 40)), null, home, walk)), 'never', '待到 23:40 回不了住宿');
+  assert.equal(warnOf('last-train', c(eng(there(23 * 60 + 40)), null, home, walk)), '松島的酒吧 待到 23:40，回住宿趕不上 23:10 的末班車，松島海岸發車');
+  assert.equal(run('last-train', c(eng(stop('鹽竈的店', { zoneId: 'shiogama', startMin: 23 * 60, dwellMin: 55 })), null, home, walk)), 'ok', '那一區回程沒有末班資料：不判');
+  assert.equal(run('last-train', c(eng(town(23 * 60 + 40)), null, home, walk)), 'ok', '市區的站（不在外地表裡）不判');
+  assert.equal(run('last-train', c(eng(there(23 * 60 + 40)), null, { ...home, resumed: true }, walk)), 'never', '現場改案照樣判回住宿這一項');
   // 過了午夜的末班（24:12）
   const after = { matsushima: { homeMin: 43, last: last(24 * 60 + 7, 24 * 60 + 12, 'matsushima') } };
-  assert.equal(run('last-train', c(there(24 * 60), null, { ...home, away: after }, walk)), 'ok');
-  assert.match(warnOf('last-train', c(there(24 * 60 + 20), null, { ...home, away: after }, walk)), /回住宿趕不上 24:12 的末班車/);
+  assert.equal(run('last-train', c(eng(there(24 * 60)), null, { ...home, away: after }, walk)), 'ok');
+  assert.match(warnOf('last-train', c(eng(there(24 * 60 + 20)), null, { ...home, away: after }, walk)), /回住宿趕不上 24:12 的末班車/);
   // 走整個 evaluateStop：硬規則、帶 poiId；沒有表的平常日一條 last-train 的警告都沒有（reads 是空的，不會因缺欄位跳過）
-  const r = evaluateStop(c(there(23 * 60 + 40), null, home, walk), rules);
+  const r = evaluateStop(c(eng(there(23 * 60 + 40)), null, home, walk), rules);
   assert.equal(r.verdict, 'never');
   assert.ok(r.warnings.some((w) => w.ruleId === 'last-train' && w.code === 'hard' && w.poiId === '松島的酒吧'));
   assert.ok(!evaluateStop(ctx(stop('平常的站')), rules).warnings.some((w) => w.ruleId === 'last-train'));
   assert.equal(rules.byId.get('last-train').kind, 'hard');
+});
+
+test('last-train 對他勾的站不是牆（總則 0、3；11-06 第二批）：同樣趕不上，他勾的站（沒有 insertedBy）一律 ok、不出硬警告；試排用的 day.lastTrainWall 才把他勾的站也當牆，except 裡的除外；判法本身（missedLastTrain）不分誰排的', () => {
+  const last = (leaveByMin, departMin, fromZoneId) => ({ leaveByMin, departMin, fromZoneId });
+  const kbZones = { zones: { matsushima: { name_zh: '松島海岸' }, 'sendai-station': { name_zh: '仙台站前' } } };
+  const away = { matsushima: { homeMin: 43, last: last(23 * 60 + 5, 23 * 60 + 10, 'matsushima') } };
+  const lastLegs = { 'matsushima|sendai-station': last(23 * 60 + 5, 23 * 60 + 10, 'matsushima') };
+  const day = { lastLegs, away, homeZoneId: 'sendai-station' };
+  const walk = { walkMin: 6, rideMin: 0, climbMin: 0 };
+  const ride = { walkMin: 5, rideMin: 38, climbMin: 0 };
+  const there = stop('松島的酒吧', { category: 'bar', zoneId: 'matsushima', startMin: 22 * 60 + 40, dwellMin: 60 });   // 待到 23:40
+  const town = stop('てん', { category: 'bar', zoneId: 'sendai-station', startMin: 24 * 60 + 23, dwellMin: 30, arriveMin: 24 * 60 + 23 });   // 23:40 才離開松島
+  const c = (cur, prev, d = day, leg = walk) => ctx(cur, { prev, leg, day: d, kb: kbZones });
+  // 他勾的：兩種趕不上都不擋
+  assert.equal(run('last-train', c(there, null)), 'ok', '待到 23:40：他勾的照排');
+  assert.equal(run('last-train', c(town, there, day, ride)), 'ok', '23:40 才搭車回來：他勾的照排');
+  assert.equal(run('last-train', c({ ...there, isAnchor: true, priority: 'must' }, null)), 'ok', '主行程也一樣');
+  const ev = evaluateStop(c(there, null), rules);
+  assert.equal(ev.verdict, 'ok');
+  assert.ok(!ev.warnings.some((w) => w.ruleId === 'last-train'), '不擋也不出硬警告（提示由 trip.js 排完掛）');
+  // 引擎插的：照擋
+  assert.equal(run('last-train', c({ ...there, insertedBy: 'engine' }, null)), 'never');
+  assert.equal(run('last-train', c({ ...town, insertedBy: 'engine' }, there, day, ride)), 'never');
+  // 試排：day.lastTrainWall 在，他勾的也當牆；except 裡的那幾站除外
+  const walled = { ...day, lastTrainWall: { except: [] } };
+  assert.equal(run('last-train', c(there, null, walled)), 'never');
+  assert.equal(run('last-train', c(town, there, walled, ride)), 'never');
+  assert.equal(warnOf('last-train', c(there, null, walled)), '松島的酒吧 待到 23:40，回住宿趕不上 23:10 的末班車，松島海岸發車');
+  const exempt = { ...day, lastTrainWall: { except: ['松島的酒吧'] } };
+  assert.equal(run('last-train', c(there, null, exempt)), 'ok', '被免除的那一站照排');
+  assert.equal(run('last-train', c(town, there, exempt, ride)), 'never', '沒被免除的照擋');
+  assert.equal(run('last-train', c({ ...there, insertedBy: 'engine' }, null, exempt)), 'never', '引擎插的不看免除清單');
+  assert.equal(run('last-train', c(there, null, { ...day, lastTrainWall: {} })), 'never', 'except 沒寫＝沒有人免除');
+  // 判法本身不分誰排的：規則與提示（_slots.js lastTrainHints）共用
+  assert.deepEqual(missedLastTrain(c(there, null)), { kind: 'home', last: away.matsushima.last });
+  assert.deepEqual(missedLastTrain(c(town, there, day, ride)), { kind: 'leg', last: lastLegs['matsushima|sendai-station'] });
+  assert.equal(missedLastTrain(c(stop('平常的站'), null)), null);
+  assert.equal(lastTrainText(there, missedLastTrain(c(there, null)), kbZones), '松島的酒吧 待到 23:40，回住宿趕不上 23:10 的末班車，松島海岸發車');
+  assert.equal(lastTrainText(town, missedLastTrain(c(town, there, day, ride)), null), '去 てん 趕不上 23:10 的末班車', '查不到區名就不寫從哪裡發車');
 });

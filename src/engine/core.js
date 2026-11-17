@@ -13,7 +13,7 @@ import { warnText } from '../rules/index.js';
 
 // rest＝引擎插的恢復站（trip.js restCandidates）、filler＝引擎填等開門空檔的任何站（trip.js fillCandidates，原話 #161）：
 // 都沒有自己的價值，降得了罰分才排得進（DESIGN §1.3 走路連跑破 150 才插；§5.2 等開門才填）
-export const PRIORITY_VALUE = Object.freeze({ must: 180, want: 90, maybe: 45, rest: 0, filler: 0, onway: 30 });   // onway＝順路站（trip.js onTheWayCandidates，原話 #170）：有一點價值才會被排進去，但低於他自己勾的 maybe
+export const PRIORITY_VALUE = Object.freeze({ must: 180, want: 90, maybe: 45, rest: 0, filler: 0, onway: 30, breakfast: 0 });   // onway＝順路站（trip.js onTheWayCandidates，原話 #170）：有一點價值才會被排進去，但低於他自己勾的 maybe；breakfast＝引擎替他排的早餐（engine/breakfast.js，原話 #196）：自己沒有價值，值多少由規則 breakfast-slot 的缺席罰分表達（不寫這個鍵會落到 maybe 的 45）
 
 /** 一個候選的價值（分鐘）：優先度＋星等加分。預設等級的數字。 */
 export function candidateValue(c, settings = {}) {

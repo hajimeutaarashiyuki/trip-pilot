@@ -1,4 +1,4 @@
-// 規則共用的小工具。規則檔只能 import 這裡與 engine/time.js，不能互相 import。
+// 規則共用的小工具。規則檔只能 import 這裡、_slots.js（餐段、夜間時段、一日遊回程、末班車的共用尺；11-06 加）與 engine/time.js，不能互相 import。
 import { hmToMin } from '../engine/time.js';
 
 /** 會計入「逛店連跑」的店型（站著逛的店；代購型藥妝與伴手禮不算，#117、§2.4 細則）。 */

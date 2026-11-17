@@ -7,9 +7,11 @@ import { mealSlotsOf, mealGraceOf, unmetMeals, nightWindowOf, returnToTownMin, d
 import rulesJson from '../../src/rules.json' with { type: 'json' };
 
 const lunch = stop('一隆', { category: 'food', walkFactor: 0, recovery: true, startMin: 12 * 60 + 15, dwellMin: 65 });
-const dinner = stop('Elbe', { category: 'cafe', walkFactor: 0, recovery: true, cafeLike: true, startMin: 17 * 60 + 30, dwellMin: 60 });
-const night = stop('汐谷', { category: 'bar', walkFactor: 0, recovery: true, startMin: 18 * 60 + 45, dwellMin: 90 });
-const late = stop('バンザイ', { category: 'bar', walkFactor: 0, recovery: true, startMin: 20 * 60 + 30, dwellMin: 90 });
+// 能當哪一餐（11-06 第二批；原話 #195）：咖啡廳、酒吧不再自動算一餐。Elbe 是知識庫標了能當午餐晚餐的洋食喫茶（meals 欄位）；
+// 汐谷的店型原文寫了「めし」，照店型推導算晚餐（酒場型）；バンザイ 是黑膠 bar，只算夜間站、不算晚餐
+const dinner = stop('Elbe', { category: 'cafe', walkFactor: 0, recovery: true, cafeLike: true, startMin: 17 * 60 + 30, dwellMin: 60, meals: { lunch: '鹽味義大利麵、拿坡里、蛋包飯', dinner: '鹽味義大利麵、拿坡里、蛋包飯，晚間另收 350 円' } });
+const night = stop('汐谷', { category: 'bar', walkFactor: 0, recovery: true, startMin: 18 * 60 + 45, dwellMin: 90, categoryRaw: '日本酒バー（めし＆地酒，夫婦二人經營）', categoryMatched: 'バー' });
+const late = stop('バンザイ', { category: 'bar', walkFactor: 0, recovery: true, startMin: 20 * 60 + 30, dwellMin: 90, categoryRaw: '黑膠 bar（唱片行×LP Cafe & Bar，客人點播）', categoryMatched: 'bar' });
 const shrine = stop('大崎八幡宮', { id: 'osaki' });
 
 test('anchor：主行程沒排進去整天 no', () => {
@@ -39,8 +41,13 @@ test('meal-slots：午晚餐各缺一個罰 20；night-slot：normal 日 20:00 �
   assert.equal(run('meal-slots', ctx(null, { sequence: [shrine] })), 40);
   assert.equal(run('meal-slots', ctx(null, { sequence: [lunch] })), 20);
   assert.match(warnOf('meal-slots', ctx(null, { sequence: [lunch] })), /沒排晚餐/);
-  assert.equal(run('meal-slots', ctx(null, { sequence: [lunch, dinner] })), 0, '喫茶吃晚餐也算晚餐');
-  assert.equal(run('meal-slots', ctx(null, { sequence: [night], day: { type: 'arrival', windowRaw: { startMin: 17 * 60, endMin: 1440 } } })), 0, '抵達日 17:00 才開始：午餐不在時窗內不罰，bar 18:45 起算晚餐');
+  assert.equal(run('meal-slots', ctx(null, { sequence: [lunch, dinner] })), 0, '知識庫標了能當晚餐的喫茶（meals.dinner）算晚餐');
+  // 沒標 meals 的咖啡廳不再自動算一餐（原話 #195「推薦我咖啡廳 這可以當晚餐嗎」）；喝酒為主的酒吧也不算
+  const plainCafe = stop('珈巣多夢', { category: 'cafe', walkFactor: 0, recovery: true, cafeLike: true, startMin: 17 * 60 + 30, dwellMin: 60 });
+  assert.equal(run('meal-slots', ctx(null, { sequence: [lunch, plainCafe] })), 20, '沒標的咖啡廳不算晚餐');
+  assert.equal(warnOf('meal-slots', ctx(null, { sequence: [lunch, plainCafe] })), '今天沒排晚餐');
+  assert.equal(run('meal-slots', ctx(null, { sequence: [lunch, { ...late, startMin: 18 * 60, endMin: 19 * 60 + 30 }] })), 20, '黑膠 bar 排在晚餐時段也不算晚餐（只算夜間站）');
+  assert.equal(run('meal-slots', ctx(null, { sequence: [night], day: { type: 'arrival', windowRaw: { startMin: 17 * 60, endMin: 1440 } } })), 0, '抵達日 17:00 才開始：午餐不在時窗內不罰，酒場型的 bar 18:45 起算晚餐');
   assert.equal(run('meal-slots', ctx(null, { sequence: [lunch], day: { type: 'departure', windowRaw: { startMin: 540, endMin: 13 * 60 } } })), 0, '離境日 13:00 收工：晚餐不在時窗內不罰');
   assert.equal(run('meal-slots', ctx(null, { sequence: [], day: { windowRaw: { startMin: 540, endMin: 1440 } } })), 40, '整天都在時窗內、兩餐都沒排罰 40');
   const ennichi = stop('縁日廣場', { category: 'event', walkFactor: 0.5, recovery: false, startMin: 17 * 60, dwellMin: 90, meal: true });
@@ -136,11 +143,16 @@ test('餐段的共用尺（rules/_slots.js）：放寬量讀 settings.mealGraceM
 test('meal-slots 餐段放寬（原話 #189「晚餐提早或延後 都可以」；11-06）：吃的站落在餐段前後各 60 分以內就算那一餐；每一站最多算一餐；這天要不要這一餐、被固定時段蓋住照舊看原本的餐段', () => {
   // 晚餐延後：主行程 18:30–20:20 佔住晚餐段，回城後 21:03–21:33 才喝的那一杯（七天包 8/16 的樣子）
   const event = stop('流灯会', { category: 'event', walkFactor: 0.5, startMin: 18 * 60 + 30, dwellMin: 110, fixedWindow: { startMin: 19 * 60, arriveEarlyMin: 30 }, isAnchor: true });
-  const lateBar = stop('てん', { category: 'bar', walkFactor: 0, recovery: true, startMin: 21 * 60 + 3, dwellMin: 30 });
-  assert.equal(run('meal-slots', ctx(null, { sequence: [lunch, event, lateBar] })), 0, '21:03 的那一杯落在 21:30 以前，算晚餐');
+  // 回城後那一站要是能當晚餐的店（酒場型的居酒屋）才算——11-06 第一批這裡用的是立飲「てん」，第二批起立飲不算晚餐（原話 #195；下面另外驗）
+  const izakaya = { category: 'bar', walkFactor: 0, recovery: true, categoryRaw: '居酒屋（站前的大眾酒場）', categoryMatched: '居酒屋' };
+  const lateBar = stop('站前居酒屋', { ...izakaya, startMin: 21 * 60 + 3, dwellMin: 30 });
+  assert.equal(run('meal-slots', ctx(null, { sequence: [lunch, event, lateBar] })), 0, '21:03 才吃的那一頓落在 21:30 以前，算晚餐');
   assert.equal(run('meal-slots', ctx(null, { sequence: [lunch, event, lateBar], ...grace(0) })), 20, '放寬量 0＝放寬前：要跟 18:00–20:30 重疊才算');
   assert.equal(warnOf('meal-slots', ctx(null, { sequence: [lunch, event, lateBar], ...grace(0) })), '今天沒排晚餐');
-  const tooLate = stop('太晚', { category: 'bar', walkFactor: 0, recovery: true, startMin: 21 * 60 + 35, dwellMin: 30 });
+  const standing = stop('てん', { category: 'bar', walkFactor: 0, recovery: true, categoryRaw: '立飲酒場（15 席全站立）', categoryMatched: '酒場', startMin: 21 * 60 + 3, dwellMin: 30 });
+  assert.equal(run('meal-slots', ctx(null, { sequence: [lunch, event, standing] })), 20, '立飲（站著喝一杯）不是晚餐：七天包 8/16 靠它撐著的晚餐現在算缺');
+  assert.equal(warnOf('meal-slots', ctx(null, { sequence: [lunch, event, standing] })), '今天沒排晚餐');
+  const tooLate = stop('太晚', { ...izakaya, startMin: 21 * 60 + 35, dwellMin: 30 });
   assert.equal(run('meal-slots', ctx(null, { sequence: [lunch, event, tooLate] })), 20, '21:35 才開始，過了 21:30 不算');
   assert.equal(run('meal-slots', ctx(null, { sequence: [lunch, event, tooLate], ...grace(90) })), 0, '放寬量是設定：90 分就到 22:00');
   // 晚餐提早：17:00 一開門就進去吃
@@ -220,8 +232,11 @@ test('day-trip-night（原話 #190；11-06）：一日遊回到市區已晚於 2
   assert.equal(evaluateDay(c([lunch, late, bar({ insertedBy: 'engine' })]), rules).verdict, 'no');
   assert.equal(evaluateDay(c([lunch, late, bar()]), rules).verdict, 'ok');
   // 他勾的那站的提示（engine/trip.js 排完掛；不罰）
+  // 字只講事實、不勸退（11-06 第二批：這一站常常就是那天的晚餐，原話 #189）；門檻的時刻讀設定
   const hints = dayTripNightHints({ sequence: [lunch, late, bar()], day, settings, country });
-  assert.deepEqual(hints, [{ ruleId: 'day-trip-night', code: 'hint', hint: true, poiId: 'てん', backMin: 21 * 60 + 3, msg: '一日遊回到市區已經 21:03（晚於 21:00），てん 照你勾的排；太晚就別去了' }]);
+  assert.deepEqual(hints, [{ ruleId: 'day-trip-night', code: 'hint', hint: true, poiId: 'てん', backMin: 21 * 60 + 3, msg: '一日遊回到市區約 21:03（晚於 21:00），てん 是你勾的，照排' }]);
+  assert.equal(dayTripNightHints({ sequence: [lunch, late, bar()], day, settings: { ...settings, dayTripNightReturnByHM: '20:30' }, country })[0].msg, '一日遊回到市區約 21:03（晚於 20:30），てん 是你勾的，照排');
+  assert.doesNotMatch(hints[0].msg, /別去|太晚/);
   assert.deepEqual(dayTripNightHints({ sequence: [lunch, late, bar({ insertedBy: 'engine' })], day, settings, country }), [], '引擎插的不出提示（規則擋掉）');
   assert.deepEqual(dayTripNightHints({ sequence: [lunch, event(20 * 60 + 10), bar({ startMin: 20 * 60 + 53 })], day, settings, country }), [], '回得不晚沒有提示');
   assert.deepEqual(dayTripNightHints({ sequence: [lunch, late, bar()], day: { ...day, dayTrip: false }, settings, country }), []);

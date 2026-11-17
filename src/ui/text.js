@@ -1,9 +1,18 @@
 // 畫面文字集中在這裡。程式鍵值不得直接印到畫面（UX 鐵律）；店型、優先度、狀態都在這裡翻成人話。
 const fmtAt = (at) => (at ? new Date(at).toLocaleString('zh-TW', { hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '不明');
 
+/**
+ * 一站的簡介：導讀的那句（guide.intro）有就用它，沒有退回 highlight。站卡那行、換一家清單、二選一的 B、走廊清單、安插的選項、早餐的「或 X」都用這一個
+ * （原話 #177「單看店名 我會不清楚選哪間好」、#193「還有選項沒有簡介」）。
+ */
+export function introOf(poi) {
+  return poi?.guide?.intro ?? poi?.highlight ?? null;
+}
+
 export const TEXT = {
   appName: 'Trip Pilot',
-  shellHint: '還沒有旅程。出發前在電腦上排好、打包，手機按一次「更新」就會出現在這裡。',
+  // 空白頁與設定頁的字不分裝置（11-06 第二批）：這一頁桌機也會開（桌機伺服器供應 /app/ 填需求單），不寫「手機」
+  shellHint: '還沒有旅程。出發前在電腦上排好、打包，再到「設定」按一次「更新」就會出現在這裡。',
   loadDemo: '載入仙台示範',
   updateBanner: '有新版本',
   updateButton: '重新載入',
@@ -21,11 +30,19 @@ export const TEXT = {
   swap: '換一家',
   remove: '不去了',
   noSwap: '附近沒有同類型、順路又開著的店',
+  // 餐段的換一家不分店型（原話 #195），沒有候選時那一句也照餐別寫，不寫「同類型」
+  noSwapMeal: (meal) => `附近沒有能當${meal}、順路又開著的店`,
+  // 釘住順序的日子每一家都先試排過（engine/choices.js pinnedSwapCheck），有候選卻全被試排濾掉時多半句
+  noSwapPinnedTail: '（照你調過的順序，換了會害別的站排不進的不列）',
   swapNote: (d) => (d > 0 ? `多繞 ${d} 分` : '順路'),
+  // 換一家清單最上面一句講在換哪一餐（原話 #195）；候選有那一餐的說明就多一行，不分店型
+  swapTitle: (meal) => `${meal}換一家`,
+  mealNote: (meal, note) => `可以當${meal}：${note}`,
   openUnknown: '營業時間沒查到，要先確認',
   replan: '重排',
   dayScore: (score, penalty) => (penalty > 0 ? `這天有 ${Math.round(penalty)} 分鐘的勉強` : '這天沒有勉強的地方'),
-  openSlotLine: (min, used) => (used > 0 ? `留白 ${min} 分（排在最後；等開門用掉 ${used} 分）` : `留白 ${min} 分（排在最後）`),
+  // taken：釘住順序的日子（安插之後）這條順序用掉幾分留白（plan.openSlotUsedMin）
+  openSlotLine: (min, used, taken = 0) => `留白 ${min} 分（${['排在最後', used > 0 ? `等開門用掉 ${used} 分` : '', taken > 0 ? `調過的行程用掉 ${taken} 分` : ''].filter(Boolean).join('；')}）`,
   openSlotNone: '這天沒留白',
   openSlotSkipped: (dayMin) => `這天只有 ${dayMin} 分鐘，留白沒從時窗扣`,
   darkBefore: (hm) => `天黑 ${hm} 前`,
@@ -35,9 +52,89 @@ export const TEXT = {
   fillerInserted: '引擎排進來填空檔的站，不要就按『不去了』',
   onTheWayInserted: '順路，引擎排進來的，不要就按『不去了』',
   spotInserted: (hm) => `坐下來的地方，引擎排的；坐到 ${hm} 再去下一站，不要就按『不去了』`,
+  // 引擎排的早餐後來不再是那天的早餐（他在它前面插了一家能當早餐的店）：卡上的鍵回到一般的「不去了」，那一句也用一般的寫法
+  engineInserted: '引擎排進來的，不要就按『不去了』',
   undoRemoved: (name, day) => `已把 ${name} 從 ${day} 拿掉`,
-  undoUpgraded: (name, day) => `已把 ${name} 升級成 ${day} 的站，那天重排了`,
+  // 換一家也有一次性的復原（11-12 畫面審查；原話 #171、#181 同一套）
+  undoSwapped: (from, to, day) => `已把 ${day} 的 ${from} 換成 ${to}`,
   undo: '復原',
+  undoClose: '關閉',
+  // 動到的那天以外，別天的行程也跟著變了（ui/other-days.js；接在復原列那一句後面）：他只動一天、別天卻變了要講（11-12 畫面審查）
+  otherDays: {
+    lead: (list) => `別天跟著變了：${list}`,
+    day: (day, parts) => `${day} ${parts}`,
+    dropped: (names) => `${names} 排不進了`,
+    revived: (names) => `${names} 排進來了`,
+    breakfastTo: (name) => `早餐換成 ${name}`,
+    breakfastGone: (name) => `早餐 ${name} 沒排了`,
+    breakfastNew: (name) => `多排了早餐 ${name}`,
+    swapped: (a, b) => `引擎排的 ${a} 換成 ${b}`,
+    gone: (names) => `少了引擎排的 ${names}`,
+    came: (names) => `多了引擎排的 ${names}`,
+    reordered: '順序變了',
+    reorderedToo: '順序也變了',
+    more: (days) => `另外 ${days} 也變了`,
+  },
+  // 走廊清單「升級成站」＝安插（11-06 第二批；原話 #192「不應該把原本的行程刪掉 應該是安插進來」、#194「再跳一組選項問我 要壓縮哪個行程或是砍掉」、#193 選項要有簡介）：
+  // 排得下就直接插、頂端復原列講插在誰跟誰之間；排不下在那一家底下展開一組選項，選了還排不下再問一輪（最多三輪）
+  trying: '正在試排…',
+  insert: {
+    between: (x, a, b) => `已把 ${x} 插在 ${a} 和 ${b} 之間`,
+    first: (x, b) => `已把 ${x} 排成第一站（${b} 之前）`,
+    last: (x, a) => `已把 ${x} 接在 ${a} 之後`,
+    only: (x) => `已把 ${x} 排進這天`,
+    // early：原本的站最多提早幾分（選了「不去某站」時後面是提早；11-12 畫面審查：之前只看有沒有站變晚，後面提早 64 分也寫「時刻不變」）
+    shift: (n, early = 0) => (n > 0 ? `後面順延 ${n} 分` : early > 0 ? `後面最多提早 ${early} 分` : '其餘各站的時刻不變'),
+    slack: (m) => `（用掉留白 ${m} 分）`,
+    shrunk: (name, to) => `${name} 縮短成 ${to} 分`,
+    revived: (name) => `原本排不進的 ${name} 也排進來了`,
+    why: (x, msgs) => `插進 ${x} 之後排不下：${msgs}`,
+    still: (msgs) => `還是排不下：${msgs}`,
+    short: (n) => `（差 ${n} 分）`,
+    stillShort: (n) => `（還差 ${n} 分）`,
+    chosen: (list) => `已選：${list}`,
+    pick: '選一個讓它排得下，或算了不插：',
+    pickNone: '單選一項不夠：先選一項，下一輪再調，或算了不插：',
+    pickMore: (round, max) => `再選一項（第 ${round} 輪，最多 ${max} 輪）：`,
+    pickLast: '最後一輪，只列選了就排得下的：',
+    moreHead: '下面這幾個選了還不夠，要再調一項：',
+    dead: '這一段插不進這家',
+    deadLater: '調到這裡還是排不下，這一段插不進這家',
+    shortenNew: (name, from, to) => `${name} 只待 ${to} 分（原本 ${from} 分）`,
+    shorten: (name, from, to) => `${name} 少待 ${from - to} 分（${from}→${to}）`,
+    drop: (name) => `不去 ${name}`,
+    fits: (shift, slack, early = 0) => ['排得下', shift > 0 ? `後面最多順延 ${shift} 分` : early > 0 ? `後面最多提早 ${early} 分` : '其餘各站的時刻不變', slack > 0 ? `用掉留白 ${slack} 分` : ''].filter(Boolean).join('，'),
+    needMore: (n) => (n != null ? `還差 ${n} 分，要再調一項` : '還排不下，要再調一項'),
+    adds: (msgs) => `會多一句：${msgs}`,
+    revives: (names) => `原本排不進的 ${names} 會排進來`,
+    cancel: '算了，不插',
+  },
+  // 釘住順序的日子（安插之後；主控定的落地 A2）：日期下面一行小字＋小鍵，按了解除、整天交回引擎重排
+  pinnedNote: '這天照你調過的順序排',
+  unpin: '讓引擎重排這天',
+  undoUnpinned: (day) => `已讓引擎重排 ${day}`,
+  // 早餐（11-06 第二批；原話 #196「早餐的按鈕會不太一樣 不是不去了可能是改天去或是我吃飯店早餐」、#197 沒去到的後面再推薦一次）
+  breakfast: {
+    tag: '早餐',
+    inserted: '引擎先挑的早餐，不合意就按『換一家』；也可以改天去、或吃飯店早餐',
+    insertedNow: '引擎先挑的早餐；不去就按『吃飯店早餐』或『改天去』',
+    later: '改天去',
+    hotel: '吃飯店早餐',
+    back: '改回來',
+    offHotel: '早餐在飯店吃',
+    // 原定那家是他自己勾的站（按了就從這天拿掉）：把店名寫出來，不然那一站無聲不見（11-12 畫面審查）
+    offHotelPicked: (name) => `早餐在飯店吃（${name} 這天不去）`,
+    offHotelMoved: (name, day) => `早餐在飯店吃（${name} 改到 ${day} 去）`,
+    offLater: (name) => (name ? `早餐這天不排（${name} 改天去）` : '早餐這天不排'),
+    offMoved: (name, day) => `早餐這天不排（${name} 改到 ${day} 去）`,
+    offerFrom: (day) => `（${day} 沒去的）`,
+    offerLoose: (day, name) => `${day} 沒去的 ${name} 這天早上可以去`,
+    take: '排進這天',
+    undoHotel: (day) => `${day} 的早餐改成在飯店吃`,
+    undoHotelPicked: (name, day) => `${day} 的早餐改成在飯店吃，${name} 這天不去`,
+    undoLater: (name, day) => `${day} 不排早餐，${name} 改天去`,
+    undoTaken: (name, day) => `已把 ${name} 排成 ${day} 的早餐`,
+  },
   // 二選一與順延（T16；原話 #119、#138）：站卡「或 B」、排不進清單「排到別天」、順延到的那天「從 8/15 順延」、候選頁「順延中」
   orChoice: '或',
   choiceDroppedNote: '今天只塞得下一家',
@@ -108,6 +205,7 @@ export const TEXT = {
   fillerInsertedNow: '引擎排進來填空檔的站，不想去可以略過',
   onTheWayInsertedNow: '順路排進來的，不想去可以略過',
   spotInsertedNow: (hm) => `坐下來的地方，坐到 ${hm} 再走；不想坐可以略過`,
+  engineInsertedNow: '引擎排進來的，不想去可以略過',
   openMaps: 'Google Maps 路線',
 
   // 設定
@@ -121,11 +219,11 @@ export const TEXT = {
   update: '更新',
   updating: '更新中…',
   updated: (name, at) => `更新好了：${name}（${fmtAt(at)}）`,
-  updateFailed: (msg) => `更新失敗：${msg}。沒網路的話，手機裡原本的旅程還在。`,
+  updateFailed: (msg) => `更新失敗：${msg}。沒網路的話，這台裝置裡原本的旅程還在。`,
   needUrl: '先填桌機的打包檔網址',
   importFile: '從檔案載入',
-  noPack: '手機裡還沒有旅程',
-  lastPack: (name, at) => `手機裡的旅程：${name}（打包於 ${fmtAt(at)}）`,
+  noPack: '這台裝置還沒有旅程',
+  lastPack: (name, at) => `這台裝置裡的旅程：${name}（打包於 ${fmtAt(at)}）`,
   goUpdate: '去更新',
   saved: '已存',
   // 規劃頁的改動存在手機（T16b；原話 #154、#121）：設定頁「旅程資料」一行「本機改動：N 天有改」＋「還原成打包版」（按兩次）；手機更新了新打包就丟掉、規劃頁頂端一句

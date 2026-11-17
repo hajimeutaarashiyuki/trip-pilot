@@ -1,4 +1,5 @@
 // 分配器的兩條新規則（11-06；原話 #189、#190）：餐段放寬（跟規則 meal-slots 同一把尺）、一日遊的夜間站（當地的要趕得上末班車、市區的只在回城不晚時給）。
+// 11-06 第二批：一日遊的晚餐可以回到市區才吃（#189 後半）、末班車的提示（單日引擎照排他勾的站）分配器自己分的收回、當地夜間站查末班帶那天的日別。
 // 分配器其餘的規則在 test/engine/allocate.test.js；小世界共用 test/fixtures/alloc-world.js。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,9 +18,9 @@ const worldOf = (last = null) => {
   const links = { ...LINKS, 'town|sea': { ...LINKS['town|sea'], ...(last ? { last } : {}) } };
   return { kb: { ...KB, links }, legFn: makeLegFn({ walk: {}, settings, zoneLinks: links }) };
 };
-const alloc = ({ days, pois, last = null, over = {}, verify = false }) => {
+const alloc = ({ days, pois, last = null, over = {}, verify = false, brief = null, country = COUNTRY }) => {
   const w = worldOf(last);
-  return allocateTrip({ trip: { id: 'dt', party: 1, homeBases: [{ poi: HOME }], days }, pois, kb: w.kb, country: COUNTRY, settings: { ...settings, ...over }, rules, legFn: w.legFn, options: { verify } });
+  return allocateTrip({ trip: { id: 'dt', party: 1, homeBases: [{ poi: HOME }], days }, pois, kb: w.kb, country, settings: { ...settings, ...over }, rules, legFn: w.legFn, brief, options: { verify } });
 };
 const pickOf = (r, id) => r.report.days.flatMap((d) => d.picks.map((p) => ({ ...p, date: d.date }))).find((p) => p.poiId === id) ?? null;
 const reasonOf = (r, id) => r.unplaced.find((u) => u.poiId === id)?.reason ?? null;
@@ -78,7 +79,9 @@ test('一日遊市區的夜間站（原話 #190「回程不算晚(9:00)也可以
 });
 
 test('一日遊當地的夜間站（原話 #190「可以是在當地進行 只要趕的上末班車都可以」）：回程查得到末班、夜間時段到末班之前開得夠久才排；查不到末班不排；太早收班不排', () => {
-  const barsea = { ...POIS.barn1, id: 'barsea', name_zh: '海邊酒吧', zoneId: 'sea' };   // 17:00–24:00
+  // 17:00–24:00。店型原文寫居酒屋＝酒場型、算得了晚餐（rules/_slots.js servesMeal 的推導；11-06 第二批起沒有店型原文的酒吧不算一餐）：
+  // 這個兩站的小世界裡，單日引擎是因為它頂得了晚餐才願意等到 17:00 開門——換成喝酒為主的酒吧，驗證那一趟會把它丟掉（那是分數取捨，不是末班車擋的）
+  const barsea = { ...POIS.barn1, id: 'barsea', name_zh: '海邊酒吧', zoneId: 'sea', categoryRaw: '居酒屋' };
   const day = { date: '2026-08-15', type: 'normal', dayTrip: true, anchor: { poiId: 'templesea' }, picks: [] };
   const pois = { templesea: POIS.templesea, barsea, barn1: POIS.barn1 };
   const withLast = alloc({ days: [day], pois, last: { sea: '22:30', town: '23:00' } });
@@ -115,4 +118,116 @@ test('一日遊估計回得來、排出來其實晚回城：單日引擎在那�
   assert.equal(reasonOf(r, 'barn1'), '2026-08-15 排不進（一日遊回到市區已經晚於 21:00，不主動排市區的夜間站）');
   assert.deepEqual(r.report.verify.skeletonDropped, []);
   assert.ok(!r.report.slotWarnings.some((w) => /夜間站/.test(w.msg)), '晚回城又沒有夜間站：規則 night-slot 不罰');
+});
+
+// ── 11-06 第二批 ──
+test('一日遊的晚餐也可以回到市區才吃（原話 #189 後半「晚餐地點在主行程去程回程順路或是周邊的地點都可以」）：據點步行圈的吃的店只當晚餐、估計回得不晚而且回來之後晚餐時段它還開著才給；當地有晚餐的店先挑當地的；不是一日遊的日子照舊', () => {
+  const day = { date: '2026-08-15', type: 'normal', dayTrip: true, anchor: { poiId: 'templesea' }, picks: [] };   // 估計 11:40 回到市區
+  // 只有市區的晚餐食堂（17:00–22:00）：當那天的晚餐。離主行程＝回程 35 分＋從旅館走過去 10 分
+  const a = alloc({ days: [day], pois: { templesea: POIS.templesea, foodd: POIS.foodd } });
+  const dinner = pickOf(a, 'foodd');
+  assert.equal(dinner?.slot, 'dinner');
+  assert.equal(dinner.travelMin, 45);
+  assert.equal(dinner.why, '一日遊回到市區才吃，離住宿 10 分');
+  assert.deepEqual(a.report.days[0].regionZones, ['sea'], '當日區域照舊只有主行程那一區（據點圈不併進去）');
+  // 只開中午的午餐食堂（11:00–14:00）：午餐人還在外地，晚餐它沒開——不排
+  const b = alloc({ days: [day], pois: { templesea: POIS.templesea, foodl: POIS.foodl } });
+  assert.equal(pickOf(b, 'foodl'), null);
+  assert.equal(reasonOf(b, 'foodl'), '一日遊回到市區才吃的晚餐：估計 11:40 回到市區，晚餐時段它沒開或來不及');
+  // 當地（海邊）也有晚餐的店：先挑當地的（離主行程 10 分 < 45 分），市區的留池
+  const fooddsea = { ...POIS.foodd, id: 'fooddsea', name_zh: '海邊晚餐食堂', zoneId: 'sea' };
+  const c = alloc({ days: [day], pois: { templesea: POIS.templesea, fooddsea, foodd: POIS.foodd } });
+  assert.equal(pickOf(c, 'fooddsea')?.slot, 'dinner');
+  assert.equal(pickOf(c, 'fooddsea').why, null, '當地的店照舊，理由欄不加註');
+  assert.equal(pickOf(c, 'foodd'), null);
+  assert.equal(reasonOf(c, 'foodd'), '晚餐有了（一日遊那天據點附近的店只當晚餐）');
+  // 估計回到市區晚於 21:00（遠方夕市 19:00 開始、停 59 分 → 19:59 散、回程 65 分 → 21:04）：跟市區的夜間站一樣不主動排。
+  // 19:00 才開始：從晚餐段開始前就在進行的固定時段會被當成蓋住晚餐（大會供餐），那天就不要晚餐了
+  const eventfar = { ...POIS.far1, id: 'eventfar', name_zh: '遠方夕市', category: 'event' };
+  const farDay = (dwellMin) => ({ date: '2026-08-15', type: 'normal', dayTrip: true, anchor: { poiId: 'eventfar' }, picks: [{ poiId: 'eventfar', priority: 'must', dwellMin, fixedWindow: { startMin: 19 * 60, arriveEarlyMin: 0 } }] });
+  const late = alloc({ days: [farDay(59)], pois: { eventfar, foodd: POIS.foodd } });
+  assert.equal(late.report.days[0].dayTripBackMin, 21 * 60 + 4);
+  assert.equal(pickOf(late, 'foodd'), null);
+  assert.equal(reasonOf(late, 'foodd'), '一日遊回到市區已經晚於 21:00，不主動排回市區才吃的晚餐');
+  // 停 40 分 → 估計 20:45 回到市區：開到 22:00 的晚餐食堂還吃得到（20:45–21:30）；20:50 就關的來不及
+  const foodearly = { ...POIS.foodd, id: 'foodearly', name_zh: '早關食堂', hours: hours('17:00', '20:50') };
+  const back = alloc({ days: [farDay(40)], pois: { eventfar, foodd: POIS.foodd, foodearly } });
+  assert.equal(back.report.days[0].dayTripBackMin, 20 * 60 + 45);
+  assert.equal(pickOf(back, 'foodd')?.slot, 'dinner');
+  assert.equal(pickOf(back, 'foodearly'), null);
+  assert.equal(reasonOf(back, 'foodearly'), '晚餐有了（一日遊那天據點附近的店只當晚餐）');
+  const only = alloc({ days: [farDay(40)], pois: { eventfar, foodearly } });
+  assert.equal(pickOf(only, 'foodearly'), null);
+  assert.equal(reasonOf(only, 'foodearly'), '一日遊回到市區才吃的晚餐：估計 20:45 回到市區，晚餐時段它沒開或來不及');
+  // 不是一日遊的日子：晚餐食堂照舊當晚餐、理由欄沒有那一句
+  const normal = alloc({ days: [{ date: '2026-08-13', type: 'normal', anchor: { poiId: 'gardeng' }, picks: [] }], pois: { gardeng: POIS.gardeng, foodd: POIS.foodd } });
+  assert.deepEqual([pickOf(normal, 'foodd')?.slot, pickOf(normal, 'foodd')?.why], ['dinner', null]);
+  // 沒有國家層的晚餐段就沒有「晚餐」可言：一日遊那天據點圈的吃的店照舊不在當日區域
+  const noSlots = alloc({ days: [day], pois: { templesea: POIS.templesea, foodd: POIS.foodd }, country: null });
+  assert.equal(reasonOf(noSlots, 'foodd'), '不在當日區域');
+});
+
+test('回到市區才吃的晚餐排出來其實晚回城（估計只算骨架）：單日引擎在那一站掛提示 day-trip-night，分配器收回、理由講晚餐；排得進晚餐時段的留著', () => {
+  // 骨架：主行程（白天的寺）＋指定站「夜間點燈」19:40–20:40——估計 12:40 就回得來，排出來 21:15 才回到市區
+  const viewsea = { ...POIS.templesea, id: 'viewsea', name_zh: '海邊夜間點燈', hours: hours('19:40', '20:40'), dwellMin: 60 };
+  const dayTemple = { ...POIS.templesea, hours: hours('09:00', '17:00') };
+  const lateDay = { date: '2026-08-15', type: 'normal', dayTrip: true, anchor: { poiId: 'templesea' }, designated: ['viewsea'], picks: [] };
+  const foodnight = { ...POIS.foodd, id: 'foodnight', name_zh: '宵夜食堂', hours: hours('20:10', '23:00') };   // 晚餐段裡有開（20:10–20:30），但他回來之前吃不到
+  const pois = { templesea: dayTemple, viewsea, foodnight };
+  const dry = alloc({ days: [lateDay], pois });
+  assert.equal(pickOf(dry, 'foodnight')?.slot, 'dinner', '沒驗證時照估計分進去');
+  const r = alloc({ days: [lateDay], pois, verify: true });
+  assert.equal(pickOf(r, 'foodnight'), null, '排出來 21:15 才回到市區、宵夜食堂落在回城之後的夜間時段：收回');
+  assert.equal(reasonOf(r, 'foodnight'), '2026-08-15 排不進（一日遊回到市區已經晚於 21:00，不主動排回市區才吃的晚餐）');
+  assert.deepEqual(r.days[0].picks.map((p) => p.poiId).sort(), ['templesea', 'viewsea'], '骨架照舊');
+  // 下午的活動 14:00–16:00、16:35 回到市區：晚餐食堂 17:00 開門就吃，驗證後留著
+  const eventsea = { ...POIS.templesea, id: 'eventsea', name_zh: '海邊午後祭', category: 'event' };
+  const earlyDay = { date: '2026-08-15', type: 'normal', dayTrip: true, anchor: { poiId: 'eventsea' }, picks: [{ poiId: 'eventsea', priority: 'must', fixedWindow: { startMin: 14 * 60, endMin: 16 * 60, arriveEarlyMin: 0, afterMin: 0 } }] };
+  const kept = alloc({ days: [earlyDay], pois: { eventsea, foodd: POIS.foodd }, verify: true });
+  assert.equal(kept.report.days[0].dayTripBackMin, 16 * 60 + 35);
+  assert.equal(pickOf(kept, 'foodd')?.slot, 'dinner');
+  assert.deepEqual(kept.report.verify.dropped, []);
+  assert.ok(!kept.report.slotWarnings.some((w) => /晚餐/.test(w.msg)), '那天有晚餐了');
+});
+
+test('末班車的提示（單日引擎對他勾的站照排、掛 last-train）：分配器自己分進去的站收回、留池理由就是那一句；需求單點名的不收；旅程檔原本就有的（骨架）不動', () => {
+  const onsen = { ...POIS.templesea, id: 'onsensea', name_zh: '海邊日歸湯', name_local: 'onsensea', category: 'onsen', walkFactor: 0, recovery: true, hours: hours('11:00', '21:00'), dwellMin: 90 };
+  const day = { date: '2026-08-15', type: 'normal', dayTrip: true, anchor: { poiId: 'templesea' }, picks: [] };
+  const pois = { templesea: POIS.templesea, onsensea: onsen };
+  const last = { sea: '12:00', town: '23:00' };   // 11:00 才開、泡 90 分：最早 12:30 泡完，怎麼排都趕不上 12:00（寺排在它前面的早上，趕得上）
+  const dry = alloc({ days: [day], pois, last });
+  assert.ok(pickOf(dry, 'onsensea'), '沒驗證時分進去（那天有開、在當日區域；分配時不看末班）');
+  const r = alloc({ days: [day], pois, last, verify: true });
+  assert.equal(pickOf(r, 'onsensea'), null, '單日引擎照排但掛了提示：分配器自己分的收回');
+  assert.equal(reasonOf(r, 'onsensea'), '2026-08-15 排不進（海邊日歸湯 待到 12:45，回住宿趕不上 12:00 的末班車，海邊發車）');
+  assert.deepEqual(r.days[0].picks.map((p) => p.poiId), ['templesea']);
+  assert.ok(r.report.verify.runs >= 2, '收回之後再驗一趟');
+  // 末班夠晚（21:30）就留著
+  const fine = alloc({ days: [day], pois, last: { sea: '21:30', town: '23:00' }, verify: true });
+  assert.ok(pickOf(fine, 'onsensea'));
+  // 需求單點名的（②）：不收，那一天照排（提示留在單日引擎的那一站）
+  const named = alloc({ days: [day], pois, last, verify: true, brief: { persons: [{ isMe: true, go: { designated: ['海邊日歸湯'] }, buy: { own: [] } }], errands: [] } });
+  assert.deepEqual([pickOf(named, 'onsensea')?.level, pickOf(named, 'onsensea')?.priority], [2, 'want']);
+  assert.deepEqual(named.unplaced.map((u) => u.poiId), []);
+  // 旅程檔原本就有的（指定站＝骨架）：不動，也不再被單日引擎丟（上一版會記進 verify.skeletonDropped）
+  const skeleton = alloc({ days: [{ ...day, designated: ['onsensea'] }], pois, last, verify: true });
+  assert.deepEqual(skeleton.days[0].picks.map((p) => p.poiId).sort(), ['onsensea', 'templesea']);
+  assert.deepEqual(skeleton.report.verify.skeletonDropped, []);
+});
+
+test('當地夜間站查末班帶那天的日別（末班分日別）：同一家海邊酒吧，週六 22:30 的末班排得進、週日 20:10 的排不進；特殊時刻表期間取最早的', () => {
+  const barsea = { ...POIS.barn1, id: 'barsea', name_zh: '海邊酒吧', zoneId: 'sea', categoryRaw: '居酒屋' };   // 17:00–24:00；酒場型（算得了晚餐，驗證那一趟才留得住；見上面那條的說明）
+  const pois = { templesea: POIS.templesea, barsea };
+  const last = { sea: { weekday: '22:30', saturday: '22:30', holiday: '20:10' }, town: '23:00' };
+  const on = (date) => [{ date, type: 'normal', dayTrip: true, anchor: { poiId: 'templesea' }, picks: [] }];
+  assert.equal(pickOf(alloc({ days: on('2026-08-15'), pois, last }), 'barsea')?.slot, 'night', '週六');
+  const sun = alloc({ days: on('2026-08-16'), pois, last });
+  assert.equal(pickOf(sun, 'barsea'), null, '週日');
+  assert.equal(reasonOf(sun, 'barsea'), '當地的夜間站：夜間時段到末班車之前（最晚 20:05 要走）它開不夠久');
+  const obon = alloc({ days: on('2026-08-15'), pois, last, country: { ...COUNTRY, transportProfile: { specialSchedule: [{ name: 'お盆', from: '08-13', to: '08-16' }] } } });
+  assert.equal(pickOf(obon, 'barsea'), null, '盂蘭盆期間的週六：不知道跑哪一種，取最早的 20:10');
+  // 驗證也過：週六那天單日引擎沒有掛末班車的提示
+  const verified = alloc({ days: on('2026-08-15'), pois, last, verify: true });
+  assert.equal(pickOf(verified, 'barsea')?.slot, 'night');
+  assert.deepEqual(verified.report.verify.dropped, []);
 });

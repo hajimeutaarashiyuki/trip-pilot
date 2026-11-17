@@ -1,4 +1,5 @@
-// 驗一城的研究產出（data.json）能不能進管線：必填欄位、店型認不認得、營業時間解析得出幾成、歸區率、座標覆蓋、重複 id、研究註記欄位（值看不懂的、註記還寫在店名裡的）。
+// 驗一城的研究產出（data.json）能不能進管線：必填欄位、店型認不認得、營業時間解析得出幾成、歸區率、座標覆蓋、重複 id、研究註記欄位（值看不懂的、註記還寫在店名裡的）、
+// 能當哪一餐的欄位 meals（吃的類標了幾站、各餐幾家、值看不懂的、咖啡廳酒吧只寫 true 沒有說明的、還沒標的照店型推導會算成什麼）。
 // 用法：node tools/kb-check.mjs <知識庫資料夾>
 // 唯讀、報告型：永遠 exit 0；最後一行「可以打包」或「先補這些」。有 zones.json／coords.json 才算歸區率與座標覆蓋。
 // 統計以「站」為單位（同店多類別算一站，打包時會合併）；交通類（logistics）不算營業時間與座標覆蓋，跟 geocode 一樣不查。
@@ -6,8 +7,9 @@ import { readFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { normalizePoi, RESEARCH_FIELDS } from '../src/data/schema.js';
+import { normalizePoi, RESEARCH_FIELDS, MEALS_FIELD } from '../src/data/schema.js';
 import { researchNameHints } from '../src/rules/_helpers.js';
+import { servesMeal, hasMealsField, MEAL_NAMES } from '../src/rules/_slots.js';   // 這家店能當哪一餐：引擎的讀法（欄位優先、沒欄位照店型推導），統計用同一個
 import { zoneOfPoi } from '../src/geo/zones.js';
 import { SKIP_CATEGORIES } from './geocode.mjs';
 
@@ -16,6 +18,8 @@ export const REQUIRED_FIELDS = ['name_zh', 'name_local', 'category', 'area', 'ho
 // 「可以打包」的門檻：比例低於這些就列進「先補這些」（歸區與座標只在有該檔時算；比例都是對「要算的站」）
 export const THRESHOLDS = { zonedRate: 0.9, coordsRate: 0.9, hoursRate: 0.8 };
 export const LIST_LIMIT = 20;   // 有問題的站名清單只印前幾個
+// 「吃的類」＝該標能當哪一餐（meals）的店型；帶舊旗標 meal: true 的站（祭典攤位）與已經寫了 meals 的站不分店型也算進來
+export const EATING_CATEGORIES = ['food', 'bar', 'cafe'];
 // === 以上 ===
 
 const LOW_CONFIDENCE = new Set(['zone', 'fuzzy', 'unzoned']);
@@ -41,6 +45,13 @@ export function checkKb({ data, zones = null, coords = null }) {
     duplicates: [],                                  // { id, names, sameStore }
     // 研究註記與解鎖條件的欄位（src/data/schema.js RESEARCH_FIELDS；11-06）：各欄幾筆有值、值看不懂的、註記還寫在店名裡卻沒有對應欄位的（引擎會退回認店名字樣）。逐筆數，不看是不是同店多類別
     research: { byField: {}, bad: [], nameOnly: [] },
+    // 能當哪一餐（知識庫欄位 meals；src/data/schema.js MEALS_FIELD；11-06 第二批，原話 #195）。以站為單位：eating＝吃的類幾站（EATING_CATEGORIES、帶舊旗標 meal: true、或已經寫了 meals 的）、
+    // annotated＝其中寫了欄位的、byMeal＝標了能當那一餐的站數、none＝標 {}（三餐都不算）的；derived＝沒標、引擎照店型推導的那幾站會被當成什麼（讀法就是引擎的 servesMeal），unmarked 是它們的站名。
+    // bad（值看不懂）與 bareTrue（不是吃的類卻只寫 true、沒有說明）逐筆數，跟研究註記欄位一樣不看是不是同店多類別。
+    meals: {
+      eating: 0, annotated: 0, byMeal: Object.fromEntries(MEALS_FIELD.keys.map((k) => [k, 0])), none: 0,
+      derived: { count: 0, byMeal: Object.fromEntries(MEALS_FIELD.keys.map((k) => [k, 0])), none: 0 }, unmarked: [], bad: [], bareTrue: [],
+    },
   };
   const seen = new Map();
   for (const raw of rows) {
@@ -52,11 +63,31 @@ export function checkKb({ data, zones = null, coords = null }) {
     const hints = researchNameHints(poi);
     const nameOnly = [hints.rank && raw.researchRank === undefined ? 'researchRank' : null, hints.skip && raw.researchSkip === undefined && raw.skip !== true ? 'researchSkip' : null, hints.notAStop && raw.notAStop === undefined ? 'notAStop' : null].filter(Boolean);
     if (nameOnly.length) s.research.nameOnly.push(`${label}［該寫 ${nameOnly.join('、')}］`);
+    for (const w of warnings) if (w.code === 'meals-bad') s.meals.bad.push(`${label}［${w.msg}］`);
+    // 不是吃的類（咖啡廳、酒吧、祭典攤位）能當一餐要寫一句說明、不能只寫 true：畫面要顯示「可以當晚餐：…」（原話 #195「如果可以那也應該在簡介裡提及」）
+    if (hasMealsField(raw) && poi.category !== 'food') {
+      const bare = MEALS_FIELD.keys.filter((k) => raw.meals[k] === true).map((k) => MEAL_NAMES[k] ?? k);
+      if (bare.length) s.meals.bareTrue.push(`${label}［${bare.join('、')}只寫 true］`);
+    }
     if (seen.has(poi.id)) { const d = seen.get(poi.id); d.names.push(label); d.keys.add(storeKey(raw)); continue; }
     seen.set(poi.id, { names: [label], keys: new Set([storeKey(raw)]) });
     s.stations++;
     s.category.byKey[poi.category] = (s.category.byKey[poi.category] ?? 0) + 1;
     if (poi.category === 'other') s.category.unknown.push(`${label}［${raw.category ?? '（空）'}］`); else s.category.recognized++;
+    if (EATING_CATEGORIES.includes(poi.category) || raw.meal === true || hasMealsField(poi)) {
+      s.meals.eating++;
+      const served = MEALS_FIELD.keys.filter((k) => servesMeal(poi, k) !== false);
+      if (hasMealsField(poi)) {
+        s.meals.annotated++;
+        for (const k of served) s.meals.byMeal[k]++;
+        if (!served.length) s.meals.none++;
+      } else {
+        s.meals.derived.count++;
+        for (const k of served) s.meals.derived.byMeal[k]++;
+        if (!served.length) s.meals.derived.none++;
+        s.meals.unmarked.push(`${label}［${served.length ? served.map((k) => MEAL_NAMES[k] ?? k).join('、') : '都不算'}］`);
+      }
+    }
     const place = !SKIP_CATEGORIES.has(poi.category);
     if (!place) { s.notPlaces++; continue; }
     s.hours.applicable++;
@@ -100,6 +131,11 @@ function verdictOf(s) {
   // 研究註記欄位：值看不懂直接擋（寫錯字的 researchRank 會靜靜變成沒標、形狀不對的 unlockWhen 照樣會鎖）；註記還寫在店名裡的只提醒（引擎會退回認店名字樣，排得出來）
   if (s.research.bad.length) blocking.push(`研究註記欄位的值看不懂 ${s.research.bad.length} 處（照 src/data/schema.js RESEARCH_FIELDS 改）`);
   if (s.research.nameOnly.length) notes.push(`${s.research.nameOnly.length} 筆的研究註記還寫在店名裡（首選／備案／保底／備援／可略過／不可指望／A vs B），引擎會退回認店名；搬成欄位、店名清掉那些字`);
+  // 能當哪一餐（meals）：值看不懂直接擋（寫錯字的鍵、看不懂的值，引擎會靜靜當成不能當那一餐）；不是吃的類卻只寫 true 也擋（換一家要顯示它怎麼個能當法，原話 #195）；
+  // 還沒標的只提醒（引擎照店型推導，排得出來）
+  if (s.meals.bad.length) blocking.push(`能當哪一餐（meals）的值看不懂 ${s.meals.bad.length} 處（照 src/data/schema.js MEALS_FIELD 改）`);
+  if (s.meals.bareTrue.length) blocking.push(`${s.meals.bareTrue.length} 筆不是吃的類卻只寫 true、沒有說明（咖啡廳、酒吧、攤位能當一餐要寫一句是怎麼個能法，畫面會顯示）`);
+  if (s.meals.unmarked.length) notes.push(`${s.meals.unmarked.length} 站吃的類還沒標能當哪一餐（meals），引擎照店型推導：咖啡廳不算一餐、酒吧只有酒場型的算晚餐、早餐一律不算`);
   return { ok: blocking.length === 0, blocking, notes };
 }
 
@@ -125,6 +161,11 @@ export function formatReport(s, label = 'data.json') {
   lines.push(s.duplicates.length ? `重複 id：${s.duplicates.map((d) => `${d.id} ×${d.names.length}（${d.sameStore ? '同店多類別' : `撞名：${[...new Set(d.names)].join('／')}`}）`).join('、')}` : '重複 id：無');
   const fields = Object.keys(RESEARCH_FIELDS).filter((f) => s.research.byField[f]).map((f) => `${f} ${s.research.byField[f]}`).join('、');
   lines.push(`研究註記欄位：${fields || '沒有一筆用到'}${s.research.bad.length ? `；值看不懂 ${s.research.bad.length}${list(s.research.bad)}` : ''}${s.research.nameOnly.length ? `；註記還寫在店名裡 ${s.research.nameOnly.length}${list(s.research.nameOnly)}` : ''}`);
+  const m = s.meals;
+  const perMeal = (by) => MEALS_FIELD.keys.map((k) => `${MEAL_NAMES[k] ?? k} ${by[k]}`).join('、');
+  lines.push(`能當哪一餐（meals）：${m.eating ? `吃的類 ${m.eating} 站，標了 ${m.annotated}${m.annotated ? `（${perMeal(m.byMeal)}、三餐都不算 ${m.none}）` : ''}` : '沒有吃的類的站'}`
+    + `${m.derived.count ? `；沒標 ${m.derived.count} 站照店型推導（${perMeal(m.derived.byMeal)}、都不算 ${m.derived.none}）${list(m.unmarked)}` : ''}`
+    + `${m.bad.length ? `；值看不懂 ${m.bad.length}${list(m.bad)}` : ''}${m.bareTrue.length ? `；不是吃的類卻只寫 true ${m.bareTrue.length}${list(m.bareTrue)}` : ''}`);
   if (s.verdict.notes.length) lines.push(`要注意：${s.verdict.notes.join('；')}`);
   lines.push(s.verdict.ok ? '結論：可以打包' : `結論：先補這些：${s.verdict.blocking.join('；')}`);
   return lines.join('\n');

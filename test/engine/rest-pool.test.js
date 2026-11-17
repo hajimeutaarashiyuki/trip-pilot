@@ -125,6 +125,31 @@ test('等開門超過留白（wait-at-door）也觸發第二趟：空檔放一�
   assert.deepEqual(ids(none), ids(bare));
 });
 
+test('太晚出門也觸發第二趟（11-12 審查；10-12 立規則時就寫了、開關卻一直只看等開門）：第一站很晚才開、沒有任何一站等開門的日子，早上的空檔照樣放一家店；拒絕過填站就不放、警告變提示', () => {
+  // 只勾一站、12:00 才開：第一趟是 11:55 才出門（太晚出門的黃字），沒有等開門——之前第二趟根本不跑，早上整段空著
+  const onlyLate = { id: 't3', party: 1, homeBases: [{ poi: home }], days: [{ date: '2026-08-13', type: 'normal', designated: [late.id], picks: [{ poiId: late.id, priority: 'must' }] }] };
+  const pl = { [late.id]: late };
+  const bare = planTrip({ trip: onlyLate, pois: pl, rules, settings, country, kb, legFn }).days[0].plan;
+  assert.deepEqual(ids(bare), ['晚開']);
+  assert.ok(bare.warnings.some((w) => w.ruleId === 'late-departure' && !w.hint) && !bare.warnings.some((w) => w.ruleId === 'wait-at-door'), '只有太晚出門、沒有等開門');
+  // extraCandidates：太晚出門的警告就會帶出填站；空檔＝時窗起點 09:00 → 第一站開門 12:00
+  const cands = extraCandidates({ restPool: [cafe('咖啡廳')], candidates: [{ poi: late }], day: { date: '2026-08-13', regionZones: ['town'], window: { startMin: 540, endMin: 1440 } }, home, plan: bare, settings, legFn });
+  assert.deepEqual(cands.map((c) => [c.poi.id, c.priority, c.gap]), [['咖啡廳', 'filler', { startMin: 540, endMin: 720 }]]);
+  assert.deepEqual(extraCandidates({ restPool: [cafe('咖啡廳')], candidates: [{ poi: late }], day: { date: '2026-08-13', regionZones: ['town'], window: { startMin: 540, endMin: 1440 } }, home, plan: { ...bare, warnings: [] }, settings, legFn }), [], '兩種警告都沒有就不加');
+  const filled = planTrip({ trip: onlyLate, pois: pl, rules, settings, country, kb, legFn, restPool: [cafe('咖啡廳')] }).days[0].plan;
+  const inserted = filled.sequence.find((s) => s.insertedBy === 'engine');
+  assert.ok(inserted && inserted.poi.id === '咖啡廳' && inserted.priority === 'filler', `早上的空檔放了一家：${ids(filled).join('→')}`);
+  assert.ok(inserted.startMin >= 540 && inserted.endMin <= 720, '落在空檔內');
+  assert.equal(ids(filled).at(-1), '晚開');
+  assert.ok(!filled.warnings.some((w) => w.ruleId === 'late-departure'), '不再是太晚出門');
+  assert.ok(filled.score > bare.score, `分數 ${filled.score} 要高於 ${bare.score}`);
+  // 拒絕過填站：不放別家、太晚出門的警告變提示
+  const rejected = { ...onlyLate, days: [{ ...onlyLate.days[0], removed: [{ poiId: '咖啡廳', at: '2026-08-13T00:00:00Z', insertedBy: 'engine', priority: 'filler' }] }] };
+  const kept = planTrip({ trip: rejected, pois: pl, rules, settings, country, kb, legFn, restPool: [cafe('咖啡廳'), cafe('第二家咖啡廳', { lng: 140.879 })] }).days[0].plan;
+  assert.ok(!kept.sequence.some((s) => s.insertedBy));
+  assert.ok(kept.warnings.filter((w) => w.ruleId === 'late-departure').every((w) => w.hint === true) && kept.warnings.some((w) => w.ruleId === 'late-departure'));
+});
+
 test('引擎插的恢復站不拿錢湯：要準備的站只有他自己勾才會出現', () => {
   const day = { regionZones: ['town'] };
   const pool = [

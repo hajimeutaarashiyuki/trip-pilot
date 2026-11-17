@@ -11,6 +11,10 @@ import { loadRules } from '../../src/rules/index.js';
 import { BUILTIN } from '../../src/rules/builtin.js';
 import rulesJson from '../../src/rules.json' with { type: 'json' };
 import { POIS, HOME, KB, COUNTRY, legFn, demoTrip } from '../sendai/fixture.js';
+import { makeLegFn } from '../../src/geo/matrix.js';
+import { setBreakfast, takeBreakfastOffer } from '../../src/engine/breakfast.js';
+import * as AW from '../fixtures/alloc-world.js';
+import * as UW from './_world.js';
 
 const rules = loadRules(BUILTIN, rulesJson.rules);
 const settings = rulesJson.settings;
@@ -144,4 +148,68 @@ test('lostStops：這案沒排進的他勾的站（引擎插的不算），理�
   const remaining = [{ poi: p('a'), priority: 'want' }, { poi: p('b'), priority: 'want' }, { poi: p('c'), priority: 'maybe' }, { poi: p('r'), priority: 'rest', insertedBy: 'engine' }];
   const proposal = { plan: { sequence: [{ poi: p('a') }], dropped: [{ poi: p('c'), reason: '時間或分數排不進' }] }, changes: [{ poiId: 'b', action: 'cut', why: '要走路的站' }, { poiId: 'c', action: 'cut', why: '要走路的站' }] };
   assert.deepEqual(lostStops(proposal, remaining).map((l) => [l.poi.id, l.reason]), [['b', '要走路的站'], ['c', '時間或分數排不進']]);
+});
+
+test('現場套過改案的那天重掛兩種提示（一日遊晚回城還排了他勾的市區夜間站、他勾的站趕不上末班車；原話 #190）：這兩句是 trip.js 排完才掛的，整天重算後要再掛一次', () => {
+  // 小世界（test/fixtures/alloc-world.js）：海邊花火 19:00–20:30（海邊 20:00 的末班）→ 21:05 回到小鎮 → 他勾的深夜酒吧
+  const hours = (open, close) => Object.fromEntries(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((d) => [d, [[open, close]]]));
+  const eventsea = { ...AW.POIS.templesea, id: 'eventsea', name_zh: '海邊花火', category: 'event', dwellMin: 90 };
+  const barlate = { ...AW.POIS.barn1, id: 'barlate', name_zh: '深夜酒吧', hours: hours('21:00', '24:00') };
+  const awPois = { eventsea, barlate };
+  const awLegFn = makeLegFn({ walk: {}, settings, zoneLinks: { ...AW.LINKS, 'town|sea': { ...AW.LINKS['town|sea'], last: { sea: '20:00' } } } });
+  const awKb = { zones: AW.ZONES };
+  const awTrip = { id: 'aw', party: 1, homeBases: [{ poi: AW.HOME }], days: [{ date: '2026-08-15', type: 'normal', dayTrip: true, anchor: { poiId: 'eventsea' }, picks: [
+    { poiId: 'eventsea', priority: 'must', fixedWindow: { startMin: 19 * 60, endMin: 20 * 60 + 30, arriveEarlyMin: 30, afterMin: 0 } },
+    { poiId: 'barlate', priority: 'want', dwellMin: 30 },
+  ] }] };
+  const awCtx = { trip: awTrip, legFn: awLegFn, rules, settings, country: AW.COUNTRY, kb: awKb };
+  const planned = planTrip({ ...awCtx, pois: awPois, restPool: [] }).days[0];
+  const hintsOf = (plan) => plan.warnings.filter((w) => w.hint && (w.ruleId === 'day-trip-night' || w.ruleId === 'last-train')).map((w) => `${w.ruleId}｜${w.poiId}｜${w.msg}`).sort();
+  const expected = [
+    'day-trip-night｜barlate｜一日遊回到市區約 21:05（晚於 21:00），深夜酒吧 是你勾的，照排',
+    'last-train｜barlate｜去 深夜酒吧 趕不上 20:00 的末班車，海邊發車',
+    'last-train｜eventsea｜海邊花火 待到 20:30，回住宿趕不上 20:00 的末班車，海邊發車',
+  ];
+  assert.deepEqual(ids(planned.plan.sequence), ['eventsea', 'barlate']);
+  assert.deepEqual(hintsOf(planned.plan), expected, '引擎排的那一版：三條提示');
+  // 走完花火之後套改案（走過的前綴 1 站＋後面照原樣）：整天重算，三條提示都還在
+  const next = appliedPlan({ planned, sequence: planned.plan.sequence, appliedIndex: 1, lost: [], ...awCtx });
+  assert.equal(next.plan.applied, true);
+  assert.deepEqual(hintsOf(next.plan), expected);
+  assert.ok(!next.plan.warnings.some((w) => w.ruleId === 'last-train' && w.code === 'hard'), '他勾的站不出硬警告');
+  assert.equal(next.plan.complete, true);
+  // 過 restoreApplied（App 重開）也一樣
+  const snap = snapshotPlan(next.plan, 1, { packAt: null });
+  const restored = restoreApplied({ plans: { '2026-08-15': planned }, applied: { '2026-08-15': JSON.parse(JSON.stringify(snap)) }, packAt: null, pois: awPois, ...awCtx });
+  assert.deepEqual(hintsOf(restored.plans['2026-08-15'].plan), expected);
+  // 改案從第 0 站接上、只剩酒吧（花火沒去）：第一段的起點是他現在的位置、不判末班；沒有外地的站也就沒有晚回城這回事
+  const onlyBar = appliedPlan({ planned, sequence: planned.plan.sequence.slice(1), appliedIndex: 0, lost: [], ...awCtx });
+  assert.deepEqual(hintsOf(onlyBar.plan), []);
+});
+
+test('現場套過改案的那天：三餐照新序列重算（plan.meals；原話 #195、#196）、「今天沒排早餐」的提示重掛、早餐的推薦不出；快照帶得住他指定的早餐', () => {
+  // 小世界（_world.js）：FRI 的麵店說了改天去 → SAT、SUN 的早餐卡上掛著「或 麵店」
+  const trip = setBreakfast(UW.makeTrip(), UW.FRI, 'later', UW.noodle.id);
+  const planned = UW.planWorld(trip)[UW.SAT];
+  const wCtx = { trip, legFn: UW.legFn, rules: UW.rules, settings: UW.settings, country: UW.JP, kb: UW.kb };
+  assert.deepEqual([planned.plan.meals.breakfast, planned.plan.breakfastOffers.length], [UW.stand.id, 1]);
+  // 改案從第 0 站接上、把早餐拿掉：這天的早餐變成沒有、提示出來；推薦是對引擎那一版驗的，現場改過就不出（跟二選一同一個理由）
+  const without = appliedPlan({ planned, sequence: planned.plan.sequence.slice(1), appliedIndex: 0, lost: [], ...wCtx });
+  assert.deepEqual(without.plan.meals, { breakfast: null, lunch: null, dinner: null }, '不沿用引擎那一版（那一版還指著已經不在序列裡的站內店）');
+  assert.deepEqual(without.plan.warnings.filter((w) => w.ruleId === 'breakfast-slot').map((w) => [w.hint, w.msg, w.poiId]), [[true, '今天沒排早餐', undefined]]);
+  assert.deepEqual(without.plan.breakfastOffers, []);
+  // 序列沒變的改案（走過早餐之後套的）：早餐還是那一站、沒有提示
+  const same = appliedPlan({ planned, sequence: planned.plan.sequence, appliedIndex: 1, lost: [], ...wCtx });
+  assert.equal(same.plan.meals.breakfast, UW.stand.id);
+  assert.ok(!same.plan.warnings.some((w) => w.ruleId === 'breakfast-slot'));
+  // 快照：他指定的早餐（按過「或 X」）的標記與多繞幾分活過快照與還原；別的站那兩欄是 null；舊快照沒有這幾欄照樣讀得進來
+  const taken = UW.planWorld(takeBreakfastOffer(trip, UW.SAT, UW.noodle.id, planned.plan))[UW.SAT];
+  const b = taken.plan.sequence[0];
+  assert.deepEqual([b.poi.id, b.breakfast, typeof b.detourMin], [UW.noodle.id, true, 'number']);
+  const back = restorePlan(JSON.parse(JSON.stringify(snapshotPlan(taken.plan, 0))), UW.pois);
+  assert.deepEqual([back[0].breakfast, back[0].detourMin, back[1].breakfast], [true, b.detourMin, null]);
+  assert.deepEqual(back.map((s) => s.flexedMin ?? null), taken.plan.sequence.map((s) => s.flexedMin ?? null), '坐下來的地方併進去的等待分鐘也跟著存');
+  const restored = appliedPlan({ planned: taken, sequence: back, appliedIndex: 0, lost: [], ...wCtx });
+  assert.equal(restored.plan.meals.breakfast, UW.noodle.id);
+  assert.deepEqual(restorePlan({ stops: [{ poiId: UW.noodle.id, startMin: 545, endMin: 565, dwellMin: 20 }] }, UW.pois).map((s) => s.breakfast), [undefined]);
 });

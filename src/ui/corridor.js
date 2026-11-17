@@ -1,8 +1,9 @@
 // 走廊清單的畫面邏輯（T15；原話 #57、#124；DESIGN §1.9「走廊清單不是站」）：前半是純函式（可測），後半畫清單給規劃頁與現場頁共用；寫回在 app.js。
-// 升級成站＝加進那天的 picks（priority want）再重排（原話 #124「有興趣的話，應該是可以升級成大站」）；
+// 升級成站（原話 #124「有興趣的話，應該是可以升級成大站」）11-06 第二批起＝安插進它所在的那一段（原話 #192「不應該把原本的行程刪掉 應該是安插進來」；
+// 試算與選項在 ui/insert.js、engine/insert.js），不再是加進 picks 整天重排；
 // 「我進去了」只記在這支手機的 field.visited[poiId]（原話 #57「如果我有進去我再從那裡面填寫我有進去」；DESIGN §4 live），回國回灌進 KB my.visits[] 還沒接。
 import { el } from './dom.js';
-import { TEXT, CATEGORY } from './text.js';
+import { TEXT, CATEGORY, introOf } from './text.js';
 
 /** 這天第 legIndex 段（0＝住宿→第一站）會經過的店：plan.corridor 裡那段的 pois（[{ poi, distM }]），沒有就空陣列。 */
 export function corridorOfLeg(plan, legIndex) {
@@ -12,18 +13,6 @@ export function corridorOfLeg(plan, legIndex) {
 /** 這一段的長段提示（trip.js attachCorridor 的 leg-suggest）；沒有回 null。 */
 export function legSuggestOf(plan, legIndex) {
   return plan?.warnings?.find((w) => w.ruleId === 'leg-suggest' && w.legIndex === legIndex) ?? null;
-}
-
-/**
- * 升級成站：回那天要改的欄位——picks 多一筆 { poiId, priority: 'want' }（已經在就不重複）；
- * 之前按過「不去了」的那筆從 removed 拿掉（走廊清單本來就不列拒絕過的，這是保險：留著的話 trip.js 會當拒絕過）。不改傳入的 day。
- */
-export function upgradePick(day, poiId) {
-  const picks = day?.picks ?? [];
-  return {
-    picks: picks.some((p) => p.poiId === poiId) ? picks : [...picks, { poiId, priority: 'want' }],
-    removed: (day?.removed ?? []).filter((r) => r?.poiId !== poiId),
-  };
 }
 
 /** 「我進去了」：回 setField 用的更新——field.visited[poiId] = { date, at }（只存裝置；再按一次就蓋成新的時刻）。 */
@@ -73,23 +62,29 @@ export function corridorDisclosure({ key, state, button, box, build }) {
 }
 
 /**
- * 清單本體（規劃頁與現場頁共用）：每家一列——店名（進去過的打勾）、店型、進去約幾分、離路線幾公尺（沒有營業時間資料的多寫「營業時間沒查到」）；
- * 鍵：「升級成站」（upgrade 才有：規劃頁有、現場頁沒有，現場重排會把整天翻掉）、「我進去了」（按過就寫「進去過了」）。
- * 開合狀態在 corridorDisclosure：按「我進去了」重畫後清單還開著、列上有勾；升級會重排、清單收起、頂端出復原列。
+ * 清單本體（規劃頁與現場頁共用）：每家一列——店名（進去過的打勾）、店型、進去約幾分、離路線幾公尺（沒有營業時間資料的多寫「營業時間沒查到」）、
+ * 一行簡介（原話 #193「還有選項沒有簡介」；跟站卡、換一家清單同一個來源 introOf，沒有就不畫）；
+ * 鍵：「升級成站」（upgrade 才有：規劃頁有、現場頁沒有）、「我進去了」（按過就寫「進去過了」）。
+ * 升級成站＝安插進這一段（legIndex＝這份清單掛在第幾段，0＝住宿→第一站；app.js upgradeCorridor）：排得下就重排、清單收起、頂端出復原列；
+ * 排不下不重排，那一家底下展開一組選項——extra(poi) 回那一塊（規劃頁給，planner.js insertAskNode），沒有就不畫。
+ * 開合狀態在 corridorDisclosure：按「我進去了」、試算排不下都只重畫，清單還開著。
  */
-export function corridorListNode({ pois, date, state, actions, upgrade = false }) {
+export function corridorListNode({ pois, date, state, actions, upgrade = false, legIndex = 0, extra = null }) {
   const visited = state.field?.visited ?? {};
   return el('div', { class: 'corridor-list' }, [
     el('p', { class: 'muted small', text: TEXT.corridorTitle }),
     ...pois.map(({ poi, distM, open = true }) => {
       const seen = Boolean(visited[poi.id]);
+      const intro = introOf(poi);
       return el('div', { class: `corridor-item${seen ? ' visited' : ''}` }, [
         el('span', { class: 'name' }, [el('strong', { text: poi.name_zh }), ' ', el('span', { class: 'cat', text: CATEGORY[poi.category] ?? '' })]),
         el('span', { class: 'muted small', text: `${TEXT.corridorDwell(poi.dwellMin ?? state.settings?.defaultDwellMin ?? 60)}，${TEXT.corridorDist(distM)}${open === null ? `，${TEXT.openUnknown}` : ''}` }),
+        intro ? el('span', { class: 'muted small intro', text: intro }) : null,
         el('div', { class: 'actions' }, [
-          upgrade ? el('button', { class: 'btn', type: 'button', onclick: () => actions.upgradeCorridor(date, poi.id) }, TEXT.upgradeStop) : null,
+          upgrade ? el('button', { class: 'btn', type: 'button', onclick: () => actions.upgradeCorridor(date, poi.id, legIndex) }, TEXT.upgradeStop) : null,
           seen ? el('span', { class: 'muted small', text: TEXT.visitedDone }) : el('button', { class: 'btn quiet', type: 'button', onclick: () => actions.markVisited(date, poi.id) }, TEXT.visitedMark),
         ]),
+        extra ? extra(poi) : null,
       ]);
     }),
   ]);

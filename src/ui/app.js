@@ -1,11 +1,13 @@
 // 控制器：狀態、路由（hash）、重排、換站、設定。畫面各自一檔只負責畫與回呼。
-import { el, clear, todayStr } from './dom.js';
+import { el, clear, todayStr, dateLabel } from './dom.js';
 import { TEXT } from './text.js';
 import { loadRules } from '../rules/index.js';
 import { BUILTIN } from '../rules/builtin.js';
 import rulesJson from '../rules.json' with { type: 'json' };
 import { planTrip } from '../engine/trip.js';
 import { applySwap } from '../engine/swap.js';
+import { applyInsert, unpinDay as unpinTripDay, repinTrip, INSERT_DROP } from '../engine/insert.js';
+import { setBreakfast, clearBreakfast, takeBreakfastOffer, swapBreakfast, keepBreakfasts } from '../engine/breakfast.js';
 import { makeLegFn } from '../geo/matrix.js';
 import { importPack, loadLatestPack } from '../data/store.js';
 import { readPack } from '../data/pack.js';
@@ -18,8 +20,10 @@ import { renderBrief, briefEnv } from './brief.js';
 import { mergeField, pickFieldDate, catchUpFieldDate, planScrollDate } from './ratings.js';
 import { restoreApplied, withoutApplied } from './applied.js';
 import { snapshotTripEdits, applyTripEdits, overlayTripEdits, diffTripEdits } from './trip-edits.js';
-import { upgradePick, visitedPatch, visitedDates } from './corridor.js';
+import { visitedPatch, visitedDates, shortName } from './corridor.js';
+import { trialArgs, startInsert, chooseInsertOption, insertDoneText } from './insert.js';
 import { chooseOptionTrip, deferStopTrip, deferNotice, displacedPicks } from './choices.js';
+import { otherDayChanges, otherDaysText } from './other-days.js';
 import { emptyBrief, normalizeBrief, briefToMarkdown, briefFileName, looksLikeBrief, isBriefEmpty, themeOptions, briefMdName, briefSubmitMode, canSubmitBrief, briefEndpointFor } from '../data/brief.js';
 import { normalizeMemory, rememberFromBrief } from '../data/brief-memory.js';
 import { personsOf, cityNamesOf } from '../engine/persons.js';
@@ -28,16 +32,23 @@ const SETTINGS_KEY = 'trip-pilot:settings';
 const FIELD_KEY = 'trip-pilot:field';
 const BRIEF_KEY = 'trip-pilot:brief';
 const BRIEF_MEMORY_KEY = 'trip-pilot:brief-memory';
-const TRIP_EDITS_KEY = 'trip-pilot:trip-edits';   // 規劃頁的改動（T16b；ui/trip-edits.js）：整天的 picks／removed／swapped 與 deferred 快照
+const TRIP_EDITS_KEY = 'trip-pilot:trip-edits';   // 規劃頁的改動（T16b；ui/trip-edits.js）：整天的 picks／removed／swapped、釘住的順序 pinned、早餐不排的紀錄 breakfast 與整趟的 deferred 快照
 const BRIEF_SUBMITTED_KEY = 'trip-pilot:brief-submitted';   // 這份需求單上次交到桌機的哪個檔（{ file }）：檔名跟著城市與起日月份變，變了再交時要提醒舊名那份還在
 
 export const state = {
   trip: null, pois: {}, country: null, kb: null, legFn: null,
   rules: null, settings: null, plans: {}, pool: [],
   packRules: null, packMeta: null, packStatus: '',
-  undo: null,   // 最後一次「不去了」「升級成站」「或 B」「排到別天」的復原資料（一次性；kind 'remove'／'upgrade'／'choose'／'defer'；原話 #171、#181）
+  // 最後一次動作的復原資料（一次性；原話 #171、#181）：{ kind, dates, before, text }——before＝動作前整趟改動的快照（trip-edits.js snapshotTripEdits，JSON clone），
+  // 按「復原」整份蓋回去重排（undoLast）；text＝復原列上那一句（別天跟著變了也接在後面，alsoChanged）。
+  // kind：'remove' 不去了｜'swap' 換一家｜'insert' 升級成站（安插）｜'unpin' 讓引擎重排這天｜'choose' 或 B｜'defer' 排到別天｜'breakfast' 早餐的鍵。
+  // 現場頁按的早餐鍵另帶 nowIndex（那一刻走到第幾站）：現場頁只在還停在那一站時畫復原列。按「關閉」只收掉這一列、不復原（dismissUndo）
+  undo: null,
   notice: null,   // 不是動作的一句狀態 { text }：「旅程更新過了，上一版的改動已丟掉」「正在重排…」（下一個動作前都在，不搶 undo；二選一／排到別天那句改放 undo.text，原話 #181）
-  busy: false,    // 二選一／「排到別天」正在試排與重排（同步跑、桌機量到接近 1 秒）：先畫一句再算，算完前再按不理（T16 審查後）
+  busy: false,    // 試排與重排正在跑（二選一、排到別天、升級成站的試算、早餐的鍵；同步跑、桌機量到接近 1 秒）：先畫一句再算，算完前再按不理（T16 審查後）
+  // 升級成站排不下、正在問他的那組選項（原話 #194）：{ date, legIndex, poiId, trial, chosen }——trial＝這一輪的試算結果（engine/insert.js）、chosen＝前幾輪選過的選項。
+  // 只在記憶體；任何重排都清掉（選項是對那一份 plan 算的）。畫在走廊清單那一家底下（planner.js insertAskNode）
+  insertAsk: null,
   planScroll: false,   // 打開規劃頁那一刻要捲到當天那一塊（原話 #175）：進頁、載入旅程、隔天切到今天時設 true，render 畫完規劃頁就消耗；按鍵重畫不設；只在記憶體
   replanPending: false,   // 需求單頁改了會影響排程的東西（同行者的在場、體力、夜間站）還沒重排：離開需求單頁那一下補跑（T19 審查後）
   corridorOpen: {},   // 走廊清單哪幾段展開著（鍵 plan:日期:段／now:日期:段；只在記憶體、不存，重排就清；T15）
@@ -54,6 +65,7 @@ export const state = {
   briefUndo: null,       // 載入別份或清空前的那份（一次性「復原上一份」；空單不留）
   // 提交（#188）走哪條路看這兩樣（ui/brief.js briefEnv → data/brief.js briefSubmitMode）；需求單的入口也看它們（兩樣都沒有＝iPhone Safari，入口不出現）
   briefEndpoint: null,   // 同源的提交端點（桌機伺服器的 /brief）：null 還沒探測、true 會收、false 沒有或不收（probeBriefEndpoint）
+  briefUnreachable: false,   // briefEndpoint 是 false 的原因是「連不上」（伺服器沒開、逾時），不是它明講不收：下次按「提交」先用短逾時重探一次（submitBrief）
   savePicker: typeof globalThis.showSaveFilePicker === 'function',   // 瀏覽器有另存對話框（File System Access API）
   briefBusy: false,      // 正在提交：再按不理
   briefSubmitted: submittedOf(loadJSON(BRIEF_SUBMITTED_KEY, null)),   // 這份單子上次交到桌機的檔 { file }；載入別份、清空、復原就忘掉（那是另一份單子了）
@@ -133,12 +145,40 @@ function replan() {
   const visited = visitedDates(state.field.visited);
   // brief：旅程檔沒 persons 時，手機需求單的同行者（city／dates 對得上才算）直接生效（T19，engine/persons.js personsOf）
   const r = planTrip({ trip: state.trip, pois: state.pois, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, legFn: state.legFn, restPool: Object.values(state.pois), brief: state.brief, options: { visited } });
+  // 釘住順序的日子：排出來的那一條記回旅程檔（engine/insert.js repinTrip；11-12 審查）——按了「不去了」之後才排進來的站、被讓掉的引擎站都要記，
+  // 不然下一個動作會讓那一站自己換位置。沒有東西要記時回同一個物件；記了再重排結果相同（同一套組法），所以不用再排一次
+  // 每天引擎排的早餐也記回旅程檔（engine/breakfast.js keepBreakfasts；11-12 畫面審查）：下一次重排那一家還排得進就沿用——不記的話整趟每次重新分，
+  // 他在某一天按「不去了」「換一家」，別天的早餐會跟著換店。這一欄是引擎的備忘、不算他的改動（trip-edits.js diffTripEdits 不比它）；有別的改動時跟著快照存，重開 App 才接得上
+  const repinned = keepBreakfasts(repinTrip(state.trip, r.days), r.days);
+  if (repinned !== state.trip) { state.trip = repinned; saveTripEdits(); }
   state.plans = Object.fromEntries(r.days.map((d) => [d.date, d]));
   // 現場套過的改案（field.applied）活過重排與重開：打包相同就還原整條序列、整天重算；不同（手機更新了新打包）就丟掉並在那天警告一行
   const restored = restoreApplied({ plans: state.plans, applied: state.field.applied, packAt: state.packMeta?.generatedAt ?? null, pois: state.pois, trip: state.trip, legFn: state.legFn, rules: state.rules, settings: state.settings, country: state.country, kb: state.kb, visited });
   state.plans = restored.plans;
   if (restored.dropped.length) { state.field = mergeField(state.field, { applied: restored.applied }); saveJSON(FIELD_KEY, state.field); }
   state.corridorOpen = {};   // 重排後段的編號會變，展開的走廊清單全收起（「我進去了」只重畫不重排，照舊開著）
+  state.insertAsk = null;    // 升級成站還開著的那組選項是對重排前那一份 plan 算的，一起收掉
+}
+
+/** 動作前整趟改動的快照（一次性復原用；原話 #171、#181）：每天的 picks／removed／swapped／pinned／breakfast 與整趟的 deferred，JSON clone——之後怎麼改 state.trip 都不會動到它。 */
+function editsSnapshot() {
+  return JSON.parse(JSON.stringify(snapshotTripEdits(state.trip, packAtNow())));
+}
+
+/** 規劃頁的動作改完 state.trip 之後：動到的那幾天現場套過的改案清掉、存改動、整趟重排（不重畫；呼叫端自己畫或交給 afterPaint）。 */
+function commitTrip(dates) {
+  for (const date of dates) if (date) clearApplied(date);
+  saveTripEdits();
+  replan();
+}
+
+/**
+ * 動作前後，動到的那幾天（dates）以外別天的行程有沒有跟著變（ui/other-days.js；11-12 畫面審查）：有就回一句接在復原列後面的話「；別天跟著變了：8/15（六） 引擎排的 A 換成 B」，沒有回空字串。
+ * plansBefore＝動作前的 state.plans（重排之前先留著那個物件）。每個會整趟重排的動作都接：他只動了一天、別天卻變了，至少要講，不要就按「復原」。
+ */
+function alsoChanged(plansBefore, dates) {
+  const text = otherDaysText(otherDayChanges({ before: plansBefore, after: state.plans, dates }));
+  return text ? `；${text}` : '';
 }
 
 /** 他在規劃頁改了那天的勾選（不去了、換一家）：那天現場套過的改案清掉，回到引擎排。 */
@@ -173,8 +213,8 @@ function restoreTripEdits() {
 }
 
 /**
- * 規劃頁每個動作改完 state.trip 之後存一次（swapStop／removeStop／undoLast／upgradeCorridor／chooseOption／deferStop，重排之前）：
- * 整天的 picks／removed／swapped 與整趟的 deferred 快照，不是差分（跟 applied 一樣簡單）。跟打包那版一模一樣（不去了又復原）就把鍵刪掉：
+ * 規劃頁每個動作改完 state.trip 之後存一次（swapStop／removeStop／undoLast／升級成站套用／unpinDay／chooseOption／deferStop／早餐的三個動作，重排之前；多數走 commitTrip）：
+ * 整天的 picks／removed／swapped／pinned／breakfast 與整趟的 deferred 快照，不是差分（跟 applied 一樣簡單）。跟打包那版一模一樣（不去了又復原）就把鍵刪掉：
  * 不然下次更新打包會白講一句「上一版的改動已丟掉」。
  */
 function saveTripEdits() {
@@ -184,7 +224,7 @@ function saveTripEdits() {
 }
 
 /**
- * 設定頁「還原成打包版」（按兩次確認，settings.js）：鍵刪掉、days 的三個陣列與 deferred 放回打包那版（tripBase）、
+ * 設定頁「還原成打包版」（按兩次確認，settings.js）：鍵刪掉、days 的三個陣列、釘住的順序、早餐不排的紀錄與 deferred 放回打包那版（tripBase）、
  * 改過的那幾天現場套過的改案也清掉（那些改案是對改過的勾選套的，跟「不去了」「換一家」清掉那天的快照同一個理由；待確認）、整趟重排；復原列與狀態列那句都不再適用。
  */
 export function resetTripEdits() {
@@ -199,81 +239,194 @@ export function resetTripEdits() {
   replanAll();
 }
 
-export function swapStop(date, fromPoiId, toPoi) {
+/**
+ * 換一家。釘住順序的日子原位置換掉、其餘各站先後不動（engine/swap.js applySwap 會改寫那天的 pinned）。
+ * breakfast: true＝換的是早餐那一站（清單來自 engine/breakfast.js；planner.js toggleSwap 給）：走 swapBreakfast——新的那家標成他指定的早餐、排成第一站；
+ * 引擎先挑的早餐也能換，換了就變成他勾的（原話 #196；主控定的落地 D3）。
+ * 11-12 起跟「不去了」一樣留一次性的復原（原話 #171、#181 的同一套；之前換一家沒有，換錯了只能再換一次、原本那一家還不一定在清單上）：動手前先快照，
+ * 復原列寫「已把 8/14（五） 的 A 換成 B」，重排之後別天也跟著變了就接在後面（alsoChanged）。
+ */
+export function swapStop(date, fromPoiId, toPoi, { breakfast = false } = {}) {
   const day = state.trip.days.find((d) => d.date === date);
-  if (!day) return;
-  state.undo = null;   // 換了別家就不再提供上一次「不去了」的復原
+  if (!day || state.busy) return;
+  const before = editsSnapshot();
+  const plansBefore = state.plans;
+  // 兩家店名都用短的（括號裡的研究註記拿掉；跟安插那一句一樣）：這一句有兩個店名，帶註記的全名在手機上會多兩三行
+  const fromName = shortName(state.pois[fromPoiId]?.name_zh ?? fromPoiId);
   state.notice = null;
   if (!state.pois[toPoi.id]) state.pois[toPoi.id] = toPoi;
-  Object.assign(day, applySwap(day, fromPoiId, toPoi));
-  clearApplied(date);
-  saveTripEdits();
-  replanAll();
-}
-
-/** 不去了：他勾的站從 picks 拿掉；引擎插的站（insertedBy 'engine'）不在 picks，記進 removed 就是拒絕，trip.js 看到那天不再插同一種（priority 'rest' 恢復站／'filler' 填站；原話 #126、profile §2.4）。 */
-export function removeStop(date, poiId, insertedBy = null, priority = null) {
-  const day = state.trip.days.find((d) => d.date === date);
-  if (!day) return;
-  const pickIndex = (day.picks ?? []).findIndex((p) => p.poiId === poiId);
-  const pick = pickIndex >= 0 ? day.picks[pickIndex] : null;
-  const removedEntry = { poiId, at: new Date().toISOString(), ...(insertedBy ? { insertedBy } : {}), ...(priority ? { priority } : {}) };
-  day.picks = (day.picks ?? []).filter((p) => p.poiId !== poiId);
-  day.removed = [...(day.removed ?? []), removedEntry];   // 不算落選（原話 #91）
-  // 一次性的復原（原話 #171「如果我按不去了 也要一次性的恢復按鈕 進行第二次確認或反悔的機會」）：記住剛拿掉的，下一個動作前都能按「復原」
-  state.undo = { kind: 'remove', date, poiId, name: state.pois[poiId]?.name_zh ?? poiId, pick, pickIndex, removedEntry };
-  state.notice = null;
-  clearApplied(date);
-  saveTripEdits();
-  replanAll();
+  if (breakfast) state.trip = swapBreakfast(state.trip, date, toPoi.id, state.plans[date]?.plan);
+  else Object.assign(day, applySwap(day, fromPoiId, toPoi));
+  commitTrip([date]);
+  state.undo = { kind: 'swap', dates: [date], before, text: `${TEXT.undoSwapped(fromName, shortName(toPoi.name_zh ?? toPoi.id), dateLabel(date))}${alsoChanged(plansBefore, [date])}` };
+  render();
 }
 
 /**
- * 復原剛才的「不去了」（勾選站放回原位、removed 那筆拿掉）、「升級成站」（那天的 picks 與 removed 放回升級前的那兩個陣列）、
- * 或「或 B」「排到別天」（原話 #181：整趟的 picks／removed／swapped 與 deferred 放回動作前的快照，跟設定頁「還原成打包版」同一套；動到的那兩天現場改案清掉）；只對最後一次有效。
+ * 不去了：他勾的站從 picks 拿掉；引擎插的站（insertedBy 'engine'）不在 picks，記進 removed 就是拒絕，trip.js 看到那天不再插同一種（priority 'rest' 恢復站／'filler' 填站；原話 #126、profile §2.4）。
+ * 釘住順序的日子：那一站從順序裡跳過，其餘各站不動（engine/insert.js planPinnedDay 自己認，不用改 pinned）。
+ */
+export function removeStop(date, poiId, insertedBy = null, priority = null) {
+  const day = state.trip.days.find((d) => d.date === date);
+  if (!day || state.busy) return;
+  // 一次性的復原（原話 #171「如果我按不去了 也要一次性的恢復按鈕 進行第二次確認或反悔的機會」）：動手前先快照，下一個動作前都能按「復原」
+  const before = editsSnapshot();
+  const plansBefore = state.plans;
+  // via：那筆勾選是走廊清單升級進來的（picks[].via 'corridor'；engine/insert.js）就帶到 removed 那一筆——別天挑引擎插站時它照樣是「挑好名單才拿掉」，不然別天會跟著變（11-12 審查）。
+  // 釘住順序的日子上拒絕引擎插的站同理（記 INSERT_DROP，跟安插的選項裡選「不去」那一站同一個記號）：那天之前的日子挑好名單才拿掉、那天起照舊算插過的
+  const via = (day.picks ?? []).find((p) => p.poiId === poiId)?.via ?? (insertedBy === 'engine' && day.pinned ? INSERT_DROP : undefined);
+  const removedEntry = { poiId, at: new Date().toISOString(), ...(insertedBy ? { insertedBy } : {}), ...(priority ? { priority } : {}), ...(via ? { via } : {}) };
+  day.picks = (day.picks ?? []).filter((p) => p.poiId !== poiId);
+  day.removed = [...(day.removed ?? []), removedEntry];   // 不算落選（原話 #91）
+  state.notice = null;
+  commitTrip([date]);
+  state.undo = { kind: 'remove', dates: [date], before, text: `${TEXT.undoRemoved(state.pois[poiId]?.name_zh ?? poiId, dateLabel(date))}${alsoChanged(plansBefore, [date])}` };
+  render();
+}
+
+/** 復原列的「關閉」：把那一列收掉、不復原（之後就不能復原這一個動作了；旅程沒有動）。 */
+export function dismissUndo() {
+  if (!state.undo) return;
+  state.undo = null;
+  render();
+}
+
+/**
+ * 復原剛才那一個動作（不去了、換一家、升級成站、讓引擎重排這天、或 B、排到別天、早餐的鍵；原話 #171、#181）：整趟的改動放回動作前的快照
+ * （每天的 picks／removed／swapped／pinned／breakfast、引擎記著的早餐 engineBreakfast 與 deferred，跟設定頁「還原成打包版」同一套），動到的那幾天現場改案清掉、重排；只對最後一次有效。
+ * 快照帶著引擎記著的早餐，所以重排出來的就是動作前畫面上那一版：連別天跟著變的也一起回去。
+ * 11-06 第二批起每一種都走快照：之前「不去了」「升級成站」只放回那天的 picks 與 removed，帶不回釘住的順序。
  */
 export function undoLast() {
   const u = state.undo;
-  if (!u) return;
+  if (!u || state.busy) return;
   state.undo = null;
   state.notice = null;
-  if (u.kind === 'choose' || u.kind === 'defer') {
-    state.trip = overlayTripEdits(state.trip, JSON.parse(JSON.stringify(u.before)));
-    for (const date of u.dates) clearApplied(date);
-    saveTripEdits();
-    replanAll();
-    return;
-  }
-  const day = state.trip.days.find((d) => d.date === u.date);
-  if (!day) return;
-  if (u.kind === 'upgrade') Object.assign(day, u.before);
-  else {
-    day.removed = (day.removed ?? []).filter((r) => r !== u.removedEntry);
-    if (u.pick && !(day.picks ?? []).some((p) => p.poiId === u.poiId)) {
-      const picks = [...(day.picks ?? [])];
-      picks.splice(Math.min(u.pickIndex, picks.length), 0, u.pick);
-      day.picks = picks;
-    }
-  }
-  clearApplied(u.date);
-  saveTripEdits();
-  replanAll();
+  state.trip = overlayTripEdits(state.trip, JSON.parse(JSON.stringify(u.before)));
+  commitTrip(u.dates ?? []);
+  render();
 }
 
 /**
- * 走廊清單升級成站（原話 #124；T15）：加進那天的 picks（priority want）、那天現場套過的改案清掉、重排；它就不再是走廊清單、變成他勾的站（「不去了」照一般站走）。
- * 重排會動整天（10-16 審查：8/13 升級 Room-9 後指定站換位、他勾的珈巣多夢落到排不進），所以跟「不去了」一樣留一次性的復原（原話 #171）：
- * 升級前那天的 picks 與 removed 原封記著（upgradePick 回新陣列、不改舊的），按「復原」放回去重排。
+ * 走廊清單「升級成站」＝安插（11-06 第二批；原話 #192「順路站 升級成站時 不應該把原本的行程刪掉 應該是安插進來」、#194）：
+ * 把那家插進它所在的那一段（legIndex＝走廊清單掛在第幾段），原本那天畫面上的每一站都留著、先後不變，只是後面的時刻順延——不再整天重排
+ * （之前加進 picks 重跑搜尋：主控 11-06 在七天包試 49 次，40 次有原本的站不見、32 次其餘順序變了）。
+ * 先試算（engine/insert.js insertTrial，同步、跳選項時桌機量到最多 28.5 ms）：
+ * - 排得下 → 套（applyInsert：picks 加那家、那天釘住順序）、重排，頂端復原列講插在誰跟誰之間、後面順延幾分（一次性復原，原話 #171）；
+ * - 排不下 → 不動旅程，在那一家底下展開一組選項問他（state.insertAsk；pickInsertOption、cancelInsert）。
+ * 比照 chooseOption 先畫一句「正在試排…」再算。
  */
-export function upgradeCorridor(date, poiId) {
-  const day = state.trip.days.find((d) => d.date === date);
-  if (!day || !state.pois[poiId]) return;
-  state.undo = { kind: 'upgrade', date, poiId, name: state.pois[poiId]?.name_zh ?? poiId, before: { picks: day.picks ?? [], removed: day.removed ?? [] } };
+export function upgradeCorridor(date, poiId, legIndex = 0) {
+  if (state.busy) return;
+  const args = trialArgs(state, date, poiId, legIndex);
+  if (!args) return;
+  afterPaint(() => settleInsert(date, args, startInsert(args)), TEXT.trying);
+}
+
+/** 選項裡選了一個（那顆鍵帶著 engine 給的選項物件）：排得下就套；還排不下就換成下一輪的選項（最多三輪，ui/insert.js chooseInsertOption）。 */
+export function pickInsertOption(option) {
+  const ask = state.insertAsk;
+  if (state.busy || !ask) return;
+  const args = trialArgs(state, ask.date, ask.poiId, ask.legIndex);
+  if (!args) { state.insertAsk = null; render(); return; }
+  afterPaint(() => settleInsert(ask.date, args, chooseInsertOption(args, ask, option)), TEXT.trying);
+}
+
+/** 「算了，不插」：把那組選項收掉，旅程沒動過。 */
+export function cancelInsert() {
+  if (!state.insertAsk) return;
+  state.insertAsk = null;
+  render();
+}
+
+/** 試算之後走哪一步（step＝ui/insert.js startInsert／chooseInsertOption 的結果）：套進旅程檔重排，或把選項記進 state.insertAsk 等他選。 */
+function settleInsert(date, args, step) {
+  if (step.kind === 'ask') { state.insertAsk = { date, legIndex: args.legIndex, poiId: args.poi.id, ...step.ask }; return; }
+  state.insertAsk = null;
+  if (step.kind !== 'apply') return;
+  const before = editsSnapshot();
+  const plansBefore = state.plans;
+  const next = applyInsert(state.trip, date, step.result);
+  if (next === state.trip) return;   // 排不下的結果不套（不會發生；保險）
+  const text = insertDoneText(step.result, (id) => state.pois[id]?.name_zh ?? id, args.plan);   // args.plan＝試算用的那一份：後面是提早還是順延拿它比
+  state.trip = next;
+  commitTrip([date]);
+  state.undo = { kind: 'insert', dates: [date], before, text: `${text}${alsoChanged(plansBefore, [date])}` };   // 安插不動別天（engine/trip.js lateIds）；真的動到了照樣講
   state.notice = null;
-  Object.assign(day, upgradePick(day, poiId));
-  clearApplied(date);
-  saveTripEdits();
-  replanAll();
+}
+
+/** 「讓引擎重排這天」（釘住順序的日子日期下面那顆小鍵）：解除釘住、那天交回引擎整天重排；選項裡調過的「少待」跟著順序走、解除就不留。一次性復原。 */
+export function unpinDay(date) {
+  if (state.busy || !state.trip) return;
+  const next = unpinTripDay(state.trip, date);
+  if (next === state.trip) return;
+  afterPaint(() => {
+    const before = editsSnapshot();
+    const plansBefore = state.plans;
+    state.trip = next;
+    commitTrip([date]);
+    state.undo = { kind: 'unpin', dates: [date], before, text: `${TEXT.undoUnpinned(dateLabel(date))}${alsoChanged(plansBefore, [date])}` };
+    state.notice = null;
+  });
+}
+
+/**
+ * 早餐那一站的「吃飯店早餐」（mode 'hotel'）／「改天去」（mode 'later'）（原話 #196；主控定的落地 D4、D5）：那天不排早餐、也不提示；原定那家（那天的 plan.meals.breakfast）
+ * 記在旅程檔那天的 breakfast 上，後面的日子由引擎掛推薦（吃飯店早餐只推一次、改天去每天都推，原話 #197）。那天沒排到早餐時也能按「吃飯店早餐」（原定那家是 null）。
+ * 一次性復原；之後隨時可以按日期下面的「改回來」（breakfastBack）。nowIndex：從現場頁按的話帶那一刻走到第幾站（現場頁只在還停在那一站時畫復原列）。
+ */
+export function breakfastOff(date, mode, nowIndex = null) {
+  if (state.busy || !state.trip?.days.some((d) => d.date === date)) return;
+  const poiId = state.plans[date]?.plan?.meals?.breakfast ?? null;
+  const next = setBreakfast(state.trip, date, mode, poiId);
+  if (next === state.trip) return;
+  const L = TEXT.breakfast;
+  const name = poiId ? (state.pois[poiId]?.name_zh ?? null) : null;
+  // 原定那家是他自己勾的站（按了就從這天的勾選拿掉、記在 breakfast.pick）：吃飯店早餐那一句也把店名寫出來——之前只寫「早餐改成在飯店吃」，那一站無聲不見（11-12 畫面審查）
+  const picked = Boolean(poiId) && (state.trip.days.find((d) => d.date === date)?.picks ?? []).some((p) => p?.poiId === poiId);
+  const text = mode === 'later' && name ? L.undoLater(name, dateLabel(date)) : name && picked ? L.undoHotelPicked(name, dateLabel(date)) : L.undoHotel(dateLabel(date));
+  afterPaint(() => {
+    const before = editsSnapshot();
+    const plansBefore = state.plans;
+    state.trip = next;
+    commitTrip([date]);
+    state.undo = { kind: 'breakfast', dates: [date], before, text: `${text}${alsoChanged(plansBefore, [date])}`, nowIndex };
+    state.notice = null;
+  });
+}
+
+/** 日期下面的「改回來」：那天回到照常排早餐（engine/breakfast.js clearBreakfast：當初拿掉的勾選放回原位，除非那家已經排到別天）。 */
+export function breakfastBack(date) {
+  if (state.busy || !state.trip) return;
+  const next = clearBreakfast(state.trip, date);
+  if (next === state.trip) return;
+  afterPaint(() => {
+    const plansBefore = state.plans;
+    state.undo = null;
+    state.trip = next;
+    commitTrip([date]);
+    // 這個動作沒有復原列（再按一次早餐的鍵就回去了）；別天跟著變了的話用狀態列講一句
+    const also = otherDaysText(otherDayChanges({ before: plansBefore, after: state.plans, dates: [date] }));
+    if (also) state.notice = { text: also };
+  });
+}
+
+/**
+ * 按了早餐卡上的「或 X（8/13 沒去的）」、或沒有早餐站那天的「排進這天」（原話 #197）：X 變成那天的早餐（他指定的、排成第一站），原本記著它的那天標成已排走、不再推薦
+ * （engine/breakfast.js takeBreakfastOffer）。推薦掛出來之前引擎就驗過：其餘各站先後不變、沒有站因此排不進。跟二選一一樣留一次性復原（原話 #181）。
+ */
+export function takeBreakfast(date, poiId) {
+  if (state.busy || !state.trip) return;
+  const next = takeBreakfastOffer(state.trip, date, poiId, state.plans[date]?.plan);
+  if (next === state.trip) return;
+  afterPaint(() => {
+    const before = editsSnapshot();
+    const plansBefore = state.plans;
+    state.trip = next;
+    commitTrip([date]);
+    state.undo = { kind: 'breakfast', dates: [date], before, text: `${TEXT.breakfast.undoTaken(state.pois[poiId]?.name_zh ?? poiId, dateLabel(date))}${alsoChanged(plansBefore, [date])}` };
+    state.notice = null;
+  });
 }
 
 /** planTrip 的其他參數（順延試排用，跟 replanAll 同一份）。 */
@@ -303,7 +456,7 @@ export function chooseOption(date, fromPoiId, toPoi) {
     if (r.toDate) clearApplied(r.toDate);
     saveTripEdits();
     replan();
-    state.undo = { kind: 'choose', dates: [date, r.toDate].filter(Boolean), before, name, text: deferNotice(r.entry, name, displacedPicks({ before: plansBefore, after: state.plans, dates: [date, r.toDate] })) };
+    state.undo = { kind: 'choose', dates: [date, r.toDate].filter(Boolean), before, name, text: `${deferNotice(r.entry, name, displacedPicks({ before: plansBefore, after: state.plans, dates: [date, r.toDate] }))}${alsoChanged(plansBefore, [date, r.toDate])}` };
     state.notice = null;   // 那句改由復原列顯示；afterPaint 看到不是「正在重排…」就不放回本來那句（跟之前被 deferNotice 取代一樣）
   });
 }
@@ -322,24 +475,24 @@ export function deferStop(date, poiId) {
     if (r.toDate) clearApplied(r.toDate);
     saveTripEdits();
     replan();
-    state.undo = { kind: 'defer', dates: [date, r.toDate].filter(Boolean), before, name, text: deferNotice(r.entry, name, displacedPicks({ before: plansBefore, after: state.plans, dates: [date, r.toDate] })) };
+    state.undo = { kind: 'defer', dates: [date, r.toDate].filter(Boolean), before, name, text: `${deferNotice(r.entry, name, displacedPicks({ before: plansBefore, after: state.plans, dates: [date, r.toDate] }))}${alsoChanged(plansBefore, [date, r.toDate])}` };
     state.notice = null;
   });
 }
 
 /**
- * 先畫一句「正在重排…」（state.busy、state.notice）讓他知道按到了，下一個畫格再跑 work（同步的試排與重排），跑完重畫。
+ * 先畫一句「正在重排…」（state.busy、state.notice；升級成站的試算給 text「正在試排…」）讓他知道按到了，下一個畫格再跑 work（同步的試排與重排），跑完重畫。
  * requestAnimationFrame 之後再 setTimeout 0 才保證那句已經畫出來；沒有 rAF 的環境直接 setTimeout。work 丟錯那句也會清掉、busy 放開。
  */
-function afterPaint(work) {
+function afterPaint(work, text = TEXT.working) {
   state.busy = true;
   const before = state.notice;   // 本來就在的那句（例如「旅程更新過了，上一版的改動已丟掉」）work 沒換掉就放回去，不被「正在重排…」吃掉（10-16 審查）
-  state.notice = { text: TEXT.working };
+  state.notice = { text };
   render();
   const run = () => {
     try { work(); } finally {
       state.busy = false;
-      if (state.notice?.text === TEXT.working) state.notice = before ?? null;
+      if (state.notice?.text === text) state.notice = before ?? null;
       render();
     }
   };
@@ -531,14 +684,25 @@ export function clearBrief() {
 }
 
 // ---- 需求單「提交」（原話 #186、#188） ----
-const BRIEF_PROBE_MS = 4000;   // 探測端點最多等多久（桌機本機幾毫秒就回；經 tailscale 而桌機沒開時會掛著）
-const BRIEF_POST_MS = 8000;    // 送出最多等多久；超過當作沒交到，改走存檔
+/**
+ * 三個時限（毫秒；物件是為了測試調得短，平常不改）：
+ * probeMs＝探測端點最多等多久（桌機本機幾毫秒就回；經 tailscale 而桌機沒開時會掛著）；
+ * reprobeMs＝上次連不上、再按「提交」時重探一次最多等多久——要短，另存對話框只在按鍵那一下手勢後的幾秒內開得起來；
+ * postMs＝送出最多等多久，含讀完回應的本文；超過當作沒交到，改走存檔。
+ */
+export const BRIEF_TIMING = { probeMs: 4000, reprobeMs: 1500, postMs: 8000 };
 
-/** 有時限的 fetch（AbortSignal.timeout 在 Safari 15 還沒有，自己接計時器）。 */
-async function fetchWithin(ms, url, init) {
+/**
+ * 有時限的 fetch（AbortSignal.timeout 在 Safari 15 還沒有，自己接計時器）。read(res) 給了就在同一個時限內把本文也讀完、回 { res, body }——
+ * 之前計時器在標頭到的那一刻就停，標頭到了本文卻卡住時（經 tailscale 中途斷線）讀本文會一直等、提交卡在「提交中…」（上一批審查的第 2 條）。
+ */
+async function fetchWithin(ms, url, init, read = null) {
   const ctl = new AbortController();
   const timer = setTimeout(() => ctl.abort(), ms);
-  try { return await fetch(url, { ...init, signal: ctl.signal }); } finally { clearTimeout(timer); }
+  try {
+    const res = await fetch(url, { ...init, signal: ctl.signal });
+    return read ? { res, body: await read(res) } : res;
+  } finally { clearTimeout(timer); }
 }
 
 /** 需求單的入口（設定頁那顆、空白頁「先填需求單」）此刻出不出現：交得出去的環境才出現。 */
@@ -549,21 +713,24 @@ let briefProbing = null;   // 還沒回來的那次探測：submitBrief 在結�
  * 探測同源的提交端點（進 App 一次、每次進需求單頁一次），結果記在 state.briefEndpoint。頁面是桌機伺服器供應的（網址在 …/app/ 底下）才問，
  * 問相對網址 ../brief（data/brief.js briefEndpointFor）；GitHub Pages 上的頁面不問、直接算沒有。
  * 用 HEAD 不用 GET：service worker 對同源 GET 一律 cache-first、還把 200 存進快取（sw.js），GET 探測第一次成功之後伺服器關了它照樣回「收」；非 GET 的請求 SW 不攔。
- * 認 X-Trip-Pilot-Brief 標頭，不是只看 200（有的主機對什麼路徑都回 200）。
+ * 認 X-Trip-Pilot-Brief 標頭，不是只看 200（有的主機對什麼路徑都回 200）。拿到標頭後把本文讀完（HEAD 沒有本文、立刻回）：不讀的話 Chrome 的網路紀錄會把這筆記成「收到 200 之後被取消」。
+ * 連不上（沒有回應、逾時）另外記 state.briefUnreachable：那不是伺服器說不收，下次按「提交」會先重探一次（submitBrief）。
  * 入口因此從沒有變有（或反過來）、而且現在畫著入口的那頁（設定頁、沒旅程的空白頁）才重畫；需求單頁的畫面不看這個結果，重畫只會把打字中的焦點踢掉。
  */
-export function probeBriefEndpoint() {
+export function probeBriefEndpoint(ms = BRIEF_TIMING.probeMs) {
   const run = (async () => {
     const url = briefEndpointFor(globalThis.location?.pathname);
     let ok = false;
+    let unreachable = false;
     if (url) {
       try {
-        const res = await fetchWithin(BRIEF_PROBE_MS, url, { method: 'HEAD', cache: 'no-store' });
+        const { res } = await fetchWithin(ms, url, { method: 'HEAD', cache: 'no-store' }, (r) => r.text());
         ok = res.ok && res.headers.get('x-trip-pilot-brief') === 'accepts';
-      } catch { ok = false; }
+      } catch { ok = false; unreachable = true; }
     }
     const shown = briefEntryShown();
     state.briefEndpoint = ok;
+    state.briefUnreachable = unreachable;
     if (briefEntryShown() !== shown && (state.route === '#/settings' || (!state.trip && state.route !== '#/brief'))) render();
     return ok;
   })();
@@ -576,18 +743,20 @@ export function probeBriefEndpoint() {
 /**
  * 送到同源端點：POST ../brief?name=<名字>，本文是需求單文字。回 { ok: true, file, history }（file＝伺服器實際寫的「trips/<名字>.brief.md」；
  * history＝這次換下來的舊檔搬去哪，沒換掉東西是 null）或 { ok: false, reason, gone }——
- * reason 是 text.js 的中文（伺服器回的代碼在 submitErrors 找得到就用那句，不然講狀態碼）；gone＝這個端點不能用了（連不上、逾時、404／405、不收、不認這個來源），之後當它不在。
+ * reason 是 text.js 的中文（伺服器回的代碼在 submitErrors 找得到就用那句，不然講狀態碼）；gone＝這個端點不能用了（連不上、逾時、404／405、不收、不認這個來源），之後當它不在；
+ * lost＝其中「連不上或逾時」那一種（含標頭到了、本文在時限內沒來）——不是伺服器明講不收，下次按「提交」先重探一次。
  */
 async function postBrief(name, text) {
   const E = TEXT.brief.submitErrors;
   const url = briefEndpointFor(globalThis.location?.pathname);
   if (!url) return { ok: false, gone: true, reason: E.offline };
   let res;
+  let raw;
   try {
-    res = await fetchWithin(BRIEF_POST_MS, `${url}?name=${encodeURIComponent(name)}`, { method: 'POST', headers: { 'Content-Type': 'text/markdown; charset=utf-8' }, body: text, cache: 'no-store' });
-  } catch { return { ok: false, gone: true, reason: E.offline }; }
+    ({ res, body: raw } = await fetchWithin(BRIEF_TIMING.postMs, `${url}?name=${encodeURIComponent(name)}`, { method: 'POST', headers: { 'Content-Type': 'text/markdown; charset=utf-8' }, body: text, cache: 'no-store' }, (r) => r.text()));
+  } catch { return { ok: false, gone: true, lost: true, reason: E.offline }; }
   let data = null;
-  try { data = await res.json(); } catch { data = null; }
+  try { data = JSON.parse(raw); } catch { data = null; }
   if (res.ok && data?.ok === true && typeof data.file === 'string' && data.file) return { ok: true, file: data.file, history: typeof data.history === 'string' && data.history ? data.history : null };
   if (res.ok) return { ok: false, gone: true, reason: E.offline };   // 回 200 卻不是這支伺服器的答案（別的東西接了這個網址）：當它不在
   const code = typeof data?.error === 'string' ? data.error : '';
@@ -656,6 +825,12 @@ export async function submitBrief() {
     state.briefCopyText = null;
     // 探測還沒回來（剛開頁面就按）：等它，最多 BRIEF_PROBE_MS。只有桌機伺服器供應的頁面會等——別處的探測不發請求、當下就有答案，(b) 的對話框前面仍然沒有 await
     if (state.briefEndpoint === null && briefProbing) await briefProbing;
+    // 上次是連不上（伺服器沒開、逾時），不是它明講不收：先用短逾時重探一次，探到就走伺服器——之前連不上一次之後這次開頁就不再試，伺服器恢復了再按仍直接跳另存、
+    // 也不講為什麼（上一批審查的第 1 條）。還是連不上就把原因帶進狀態句。伺服器明講不收的（404／405、不收、不認這個來源）照舊不再問
+    if (state.briefEndpoint === false && state.briefUnreachable) {
+      await probeBriefEndpoint(BRIEF_TIMING.reprobeMs);
+      if (state.briefEndpoint !== true && state.briefUnreachable) failed = L.submitErrors.offline;
+    }
     if (briefSubmitMode(briefEnv(state)) === 'server') {
       state.briefStatus = L.submitting;
       render();
@@ -666,7 +841,7 @@ export async function submitBrief() {
         result = { via: 'server', file: r.file, history: r.history, renamedFrom: before && before !== r.file ? before : null };
         state.briefSubmitted = { file: r.file };
         saveJSON(BRIEF_SUBMITTED_KEY, state.briefSubmitted);
-      } else { failed = r.reason; if (r.gone) state.briefEndpoint = false; }
+      } else { failed = r.reason; if (r.gone) { state.briefEndpoint = false; state.briefUnreachable = r.lost === true; } }
     }
     let pickerFailed = false;
     if (!result && state.savePicker) {
@@ -703,7 +878,7 @@ export function render() {
   const root = document.getElementById('app');
   if (!root) return;
   clear(root);
-  const actions = { swapStop, removeStop, undoLast, upgradeCorridor, markVisited, chooseOption, deferStop, dismissNotice, resetTripEdits, saveDevice, setField, replanAll, updateFromUrl, importFile, setBrief, submitBrief, exportBrief, copyBrief, importBrief, clearBrief, undoBrief };
+  const actions = { swapStop, removeStop, undoLast, dismissUndo, upgradeCorridor, pickInsertOption, cancelInsert, unpinDay, breakfastOff, breakfastBack, takeBreakfast, markVisited, chooseOption, deferStop, dismissNotice, resetTripEdits, saveDevice, setField, replanAll, updateFromUrl, importFile, setBrief, submitBrief, exportBrief, copyBrief, importBrief, clearBrief, undoBrief };
   const view = !state.trip && !WITHOUT_TRIP.has(state.route) ? renderEmpty : (VIEWS[state.route] ?? renderPlanner);
   root.append(el('main', { class: 'view' }, view({ state, actions })));
   root.append(tabBar());

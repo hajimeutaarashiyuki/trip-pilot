@@ -10,7 +10,7 @@ import { mkdtemp, mkdir, writeFile, readFile, readdir, rm } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { createPackServer } from '../../tools/serve-packs.mjs';
-import { state, submitBrief, probeBriefEndpoint, setBrief, clearBrief, render, replanAll } from '../../src/ui/app.js';
+import { state, submitBrief, probeBriefEndpoint, setBrief, clearBrief, render, replanAll, BRIEF_TIMING } from '../../src/ui/app.js';
 import { briefEnv } from '../../src/ui/brief.js';
 import { briefToMarkdown, normalizeBrief, canSubmitBrief, briefSubmitMode, emptyBrief } from '../../src/data/brief.js';
 import { TEXT } from '../../src/ui/text.js';
@@ -98,6 +98,7 @@ function filled() {
 function reset() {
   state.brief = filled();
   state.briefEndpoint = null;
+  state.briefUnreachable = false;
   state.briefStatus = '';
   state.briefCopyText = 'x';
   state.briefBusy = false;
@@ -252,10 +253,15 @@ test('(a) 沒成功就接著走存檔、狀態句最前面講原因：伺服器�
   assert.deepEqual(r, { via: 'picker', file: FILE });
   assert.equal(picker.written, expectedText());
   assert.equal(state.briefStatus, `沒交到桌機（桌機的伺服器沒回應），改成存檔。已存成 ${FILE}；請放在 trip-pilot 的 trips 資料夾，再跟 Claude 說一聲`);
-  assert.equal(state.briefEndpoint, false, '之後不再當它在：下一次直接開另存');
+  assert.equal(state.briefEndpoint, false);
+  assert.equal(state.briefUnreachable, true, '記下是「連不上」，不是伺服器說不收');
+  // 再按一次：先重探一次（伺服器還是沒開）——不直接 POST；狀態句照樣講原因，他按取消也不是一片空白
   page.calls = [];
-  await submitBrief();
-  assert.deepEqual(page.calls, [], '第二次沒再去打伺服器');
+  picker = fakePicker({ cancel: true });
+  r = await submitBrief();
+  assert.deepEqual(page.calls, ['HEAD /brief'], '第二次先重探，沒探到就不送');
+  assert.deepEqual(r, { via: 'cancelled' });
+  assert.equal(state.briefStatus, '沒交出去：桌機的伺服器沒回應');
 
   reset();
   const off = await startServer(t, { acceptBriefs: false });
@@ -266,6 +272,12 @@ test('(a) 沒成功就接著走存檔、狀態句最前面講原因：伺服器�
   assert.deepEqual(r, { via: 'cancelled' });
   assert.equal(state.briefStatus, '沒交出去：桌機的伺服器現在不收需求單');
   assert.equal(state.briefEndpoint, false);
+  assert.equal(state.briefUnreachable, false, '伺服器明講不收：不算連不上');
+  page.calls = [];
+  picker = fakePicker();
+  await submitBrief();
+  assert.deepEqual(page.calls, [], '明講不收的：再按不重探、直接走存檔');
+  assert.equal(state.briefStatus, `已存成 ${FILE}；請放在 trip-pilot 的 trips 資料夾，再跟 Claude 說一聲`);
   assert.deepEqual(await tree(off.trips), []);
 
   reset();
@@ -278,6 +290,97 @@ test('(a) 沒成功就接著走存檔、狀態句最前面講原因：伺服器�
   assert.equal(state.briefEndpoint, true, '端點還在，只是這一份它不收');
   assert.equal(page.downloads.length, 1);
   assert.deepEqual(await tree(tiny.trips), []);
+});
+
+test('伺服器連不上一次之後又開了：同一頁再按「提交」先用短逾時重探、探到就走伺服器，寫進 trips（上一批審查：之前這次開頁就不再試，恢復了仍直接跳另存）', async (t) => {
+  reset();
+  const root = await mkdtemp(path.join(tmpdir(), 'trip-pilot-submit-'));
+  const trips = path.join(root, 'trips');
+  await mkdir(path.join(root, 'packs'));
+  await mkdir(trips);
+  const open = async (port = 0) => {
+    const server = createPackServer({ dir: path.join(root, 'packs'), briefDir: trips });
+    await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
+    return server;
+  };
+  const shut = (server) => { server.closeAllConnections(); return new Promise((resolve) => server.close(resolve)); };
+  let server = await open();
+  const { port } = server.address();
+  t.after(async () => { await shut(server); await rm(root, { recursive: true, force: true }); });
+  openPage(`http://127.0.0.1:${port}/app/#/brief`);
+  assert.equal(await probeBriefEndpoint(), true);
+  // 伺服器關掉 → 提交失敗、退到另存
+  await shut(server);
+  let picker = fakePicker();
+  let r = await submitBrief();
+  assert.equal(r.via, 'picker');
+  assert.deepEqual([state.briefEndpoint, state.briefUnreachable], [false, true]);
+  assert.deepEqual(await tree(trips), []);
+  // 伺服器再開（同一個埠）→ 同一頁再按：重探到了，直接寫進 trips，不再跳另存
+  server = await open(port);
+  page.calls = [];
+  picker = fakePicker();
+  r = await submitBrief();
+  assert.deepEqual(r, { via: 'server', file: `trips/${FILE}`, history: null, renamedFrom: null });
+  assert.deepEqual(page.calls, ['HEAD /brief', `POST /brief?name=${encodeURIComponent('2026-08-仙台')}`]);
+  assert.equal(picker.opened, 0);
+  assert.deepEqual([state.briefEndpoint, state.briefUnreachable], [true, false]);
+  assert.equal(await readFile(path.join(trips, FILE), 'utf8'), expectedText());
+  assert.equal(state.briefStatus, `已交到 trips/${FILE}，跟 Claude 說一聲就開始排；之後要改，改完再按一次提交，舊的會留一份`);
+  // 頁面是 service worker 的快取開的、伺服器一開始就沒開（探測連不上）：按「提交」也先重探，狀態句講原因
+  reset();
+  await shut(server);
+  openPage(`http://127.0.0.1:${port}/app/#/brief`);
+  assert.equal(await probeBriefEndpoint(), false);
+  assert.equal(state.briefUnreachable, true);
+  page.calls = [];
+  r = await submitBrief();
+  assert.deepEqual([r.via, page.calls], ['download', ['HEAD /brief']]);
+  assert.equal(state.briefStatus, `沒交到桌機（桌機的伺服器沒回應），改成存檔。已存成 ${FILE}；請放在 trip-pilot 的 trips 資料夾，再跟 Claude 說一聲`);
+  server = await open(port);   // 給 t.after 關
+});
+
+test('送出的時限涵蓋讀回應的本文：標頭到了、本文卡住不來——時限一到就當沒交到、改走存檔，不會卡在「提交中…」（上一批審查的第 2 條）；探測逾時也算連不上', async (t) => {
+  reset();
+  const hung = [];
+  const stalled = http.createServer((req, res) => {
+    req.resume();
+    if (req.method === 'HEAD') { res.writeHead(200, { 'X-Trip-Pilot-Brief': 'accepts', 'Content-Type': 'application/json' }); res.end(); return; }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.write('{"ok":true,"file":"trips/');   // 半截 JSON，之後不再送、也不結束
+    hung.push(res);
+  });
+  await new Promise((resolve) => stalled.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => { stalled.closeAllConnections(); stalled.close(resolve); }));
+  const saved = { ...BRIEF_TIMING };
+  t.after(() => Object.assign(BRIEF_TIMING, saved));
+  Object.assign(BRIEF_TIMING, { postMs: 300, reprobeMs: 200, probeMs: 300 });
+  openPage(`http://127.0.0.1:${stalled.address().port}/app/#/brief`);
+  assert.equal(await probeBriefEndpoint(), true);
+  const started = Date.now();
+  // 沒在時限內結束就讓測試紅（不是整個測試檔掛著）：等最多 5 秒
+  const r = await Promise.race([submitBrief(), new Promise((resolve) => { setTimeout(() => resolve('卡住了'), 5000).unref(); })]);
+  assert.notEqual(r, '卡住了', '提交卡在讀回應的本文、沒有在時限內結束');
+  const took = Date.now() - started;
+  assert.ok(took >= 250 && took < 3000, `時限 300 ms：實際 ${took} ms`);
+  assert.equal(hung.length, 1, '標頭真的送到了、本文卡住');
+  assert.deepEqual(r, { via: 'download', file: FILE, pickerFailed: false });
+  assert.equal(state.briefBusy, false, '沒有卡在提交中');
+  assert.equal(state.briefStatus, `沒交到桌機（桌機的伺服器沒回應），改成存檔。已存成 ${FILE}；請放在 trip-pilot 的 trips 資料夾，再跟 Claude 說一聲`);
+  assert.deepEqual([state.briefEndpoint, state.briefUnreachable], [false, true]);
+  // 探測：伺服器收了連線卻不回（經 tailscale、桌機睡著）——時限到就算連不上
+  const silent = http.createServer(() => {});
+  await new Promise((resolve) => silent.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => { silent.closeAllConnections(); silent.close(resolve); }));
+  reset();
+  openPage(`http://127.0.0.1:${silent.address().port}/app/#/brief`);
+  const t0 = Date.now();
+  assert.equal(await probeBriefEndpoint(), false);
+  assert.ok(Date.now() - t0 < 3000);
+  assert.deepEqual([state.briefEndpoint, state.briefUnreachable], [false, true]);
+  const t1 = Date.now();
+  await submitBrief();
+  assert.ok(Date.now() - t1 < 3000, '再按「提交」的重探用短逾時，不會久等');
 });
 
 test('(b) 另存對話框（沒有端點）：建議檔名 <名字>.brief.md、id 讓瀏覽器記住資料夾、類型 Markdown；寫進去的就是需求單文字；按取消不算錯也不留字；開不起來或寫不進去改下載', async () => {

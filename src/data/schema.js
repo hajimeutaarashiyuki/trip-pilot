@@ -6,6 +6,7 @@ import walkTable from '../derive/walkFactor.json' with { type: 'json' };
 import recoveryTable from '../derive/recovery.json' with { type: 'json' };
 import dwellTable from '../derive/dwell.json' with { type: 'json' };
 import daylightTable from '../derive/daylight.json' with { type: 'json' };
+import mealsTable from '../derive/meals.json' with { type: 'json' };   // 只拿三餐的鍵來驗 meals 欄位；店型→能當哪一餐的推導在讀的時候做（rules/_slots.js servesMeal），不在 normalizePoi 裡算
 import { parseHoursText } from '../derive/hours.js';
 import { prepNeededOf } from './country.js';   // 要準備的恢復站型的打包待辦從國家層 recoveryTypes 來（T20），不再寫死在 derive/recovery.json
 
@@ -39,6 +40,34 @@ export const RESEARCH_FIELDS = Object.freeze({
   unlockWhen: { ok: (v) => typeof v === 'string' && v.trim() !== '', expect: '要寫解鎖條件的一句話' },
   researchNote: { ok: (v) => typeof v === 'string', expect: '要寫一句話' },
 });
+
+/**
+ * 能當哪一餐的知識庫欄位 meals（選填；2026-11-06，原話 #195「早中晚餐的換一間 應該要推薦對應餐廳吧 怎麼會爐端燒的換一間 推薦我咖啡廳 這可以當晚餐嗎 如果可以那也應該在簡介裡提及」）。
+ * 形狀：物件，鍵只有 breakfast／lunch／dinner（MEALS_FIELD.keys，出自 derive/meals.json 的 slots），值是 true 或一句給他看的說明（非空字串）；沒列的那一餐＝不能當。
+ *   例 { "breakfast": "モーニング 7:30–11:00，厚片吐司套餐", "lunch": true }；{}＝明講不是吃正餐的地方（咖啡專門店、甜點攤、整座商場）。
+ * - true：吃的類本來就是正餐、沒有要另外交代的。
+ * - 一句說明：供應什麼、有什麼限制（「拿坡里義大利麵、牛肉燴飯，點餐到 20:30」「只有六、日、假日有午餐」）。畫面接在「可以當晚餐：」後面顯示，所以寫內容、不寫「可以當晚餐」這種空話。
+ *   不是吃的類（咖啡廳、酒吧、祭典攤位）要寫說明、不要只寫 true（原話 #195「如果可以那也應該在簡介裡提及」；tools/kb-check.mjs 會列進「先補這些」）。
+ * - 整個欄位沒寫（或 null）＝研究還沒標：引擎照店型推導（derive/meals.json：food 甜點除外＝午餐晚餐、酒場型的 bar＝晚餐、咖啡廳不算、舊旗標 meal: true 照舊；預設）。
+ * 誰讀：rules/_slots.js servesMeal（全引擎唯一的讀法）→ 規則 meal-slots、分配器 engine/allocate.js、換一家 engine/swap.js、每天的 plan.meals、畫面。
+ * normalizePoi 原樣帶進打包檔（不丟未知欄位），只驗形狀：看不懂的記警告 meals-bad、值不改（讀的那邊把看不懂的值當「不能當那一餐」、整個欄位不是物件當沒寫）。
+ */
+export const MEALS_FIELD = Object.freeze({
+  keys: Object.freeze([...(Array.isArray(mealsTable.slots) ? mealsTable.slots : ['breakfast', 'lunch', 'dinner'])]),
+  expect: '要寫物件：鍵是 breakfast／lunch／dinner，值是 true 或一句說明；{}＝不是吃正餐的地方',
+});
+
+/** meals 欄位哪裡看不懂：回每個問題一句人話的陣列，沒問題回空陣列。沒寫（undefined）與 null 不算問題。 */
+export function mealsFieldProblems(v) {
+  if (v === undefined || v === null) return [];
+  if (typeof v !== 'object' || Array.isArray(v)) return [`meals 的值看不懂：${JSON.stringify(v)}（${MEALS_FIELD.expect}）`];
+  const out = [];
+  for (const [k, x] of Object.entries(v)) {
+    if (!MEALS_FIELD.keys.includes(k)) out.push(`meals 有看不懂的鍵 ${JSON.stringify(k)}（只收 ${MEALS_FIELD.keys.join('／')}）`);
+    else if (!(x === true || (typeof x === 'string' && x.trim() !== ''))) out.push(`meals.${k} 的值看不懂：${JSON.stringify(x)}（要寫 true 或一句說明；不能當這一餐就不要列這個鍵）`);
+  }
+  return out;
+}
 
 /** 自由文字的 category → 規範店型。回傳 { key, matched } ；沒命中 key='other'、matched=null。 */
 export function classifyCategory(raw, table = DERIVE.category) {
@@ -164,6 +193,8 @@ export function normalizePoi(raw, { derive = DERIVE, country = null } = {}) {
     const v = raw[field];
     if (v !== undefined && v !== null && !spec.ok(v)) warnings.push({ code: 'research-field-bad', poiId: poi.id, field, msg: `${field} 的值看不懂：${JSON.stringify(v)}（${spec.expect}）` });
   }
+  // 能當哪一餐（MEALS_FIELD）：同樣原樣帶過、只驗形狀——鍵寫錯字（diner）、值寫成數字或空字串的，讀的那邊會靜靜當成不能當那一餐，要讓打包與 kb-check 看得到
+  for (const msg of mealsFieldProblems(raw.meals)) warnings.push({ code: 'meals-bad', poiId: poi.id, field: 'meals', msg });
 
   poi.my = raw.my && typeof raw.my === 'object' ? raw.my : {};
   poi.source = raw.source ?? null;

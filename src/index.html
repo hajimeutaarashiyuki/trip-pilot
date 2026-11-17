@@ -41,7 +41,8 @@
   p { margin: 4px 0; }
   .muted { color: var(--muted); }
   .small { font-size: 14px; }
-  .version { position: fixed; left: 0; right: 0; bottom: calc(var(--tabs) + env(safe-area-inset-bottom)); text-align: center; font-size: 11px; opacity: .6; pointer-events: none; }
+  /* 版本那一行跟著頁面內容排在最後（main.js 把它接在 #app 後面）：之前是 fixed 貼在分頁列上方，捲動時壓在內容上（需求單頁尾的「提交」最明顯；11-06 第二批改） */
+  .version { text-align: center; font-size: 11px; opacity: .6; margin: 20px 0 0; }
 
   .btn { font: inherit; font-size: 15px; line-height: 1.5; padding: 8px 14px; border-radius: 10px; border: 1px solid var(--accent); background: transparent; color: var(--accent); }
   .btn.primary { background: var(--accent); color: var(--accent-fg); }
@@ -49,6 +50,7 @@
   .btn.quiet.on { border-color: var(--accent); color: var(--accent); }
   .btn.alt { display: block; width: 100%; text-align: left; margin-top: 6px; border-color: var(--line); color: var(--fg); background: var(--bg-elevated); white-space: normal; line-height: 1.5; }
   .btn.alt .intro { display: block; font-size: 14px; color: var(--muted); margin-top: 2px; }   /* 換一家清單每家下面一行簡介，整段不截（原話 #177）；button 裡只能放 span，用 block 換行 */
+  .btn.alt .intro.adds { color: var(--warn); }   /* 安插的選項：選了會多出來的黃字（今天沒排晚餐那種） */
   .btn.huge { width: 100%; font-size: 20px; padding: 16px; margin: 12px 0; }
   .btn.wide { display: block; width: 100%; }
   .btn.star { padding: 10px 8px; }
@@ -57,6 +59,9 @@
   /* 復原列貼在視窗頂端：「升級成站」「不去了」的鍵在長頁深處（8/17 捲到 13,000px），列在頁首會看不到（10-16 審查） */
   .undo-bar { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 8px; background: var(--rest); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; margin: 8px 0 12px; font-size: 14px; }
   .undo-bar .btn { white-space: nowrap; flex: none; }
+  /* 復原列右邊的兩顆鍵「復原」「關閉」（11-12）：短句並排、長句疊成一欄（planner.js undoBarStacked：並排時文字欄變窄，長句會多好幾行）。兩顆鍵後果相反，中間留寬一點免得按錯 */
+  .undo-bar .keys { display: flex; align-items: center; gap: 10px; flex: none; }
+  .undo-bar .keys.stack { flex-direction: column; align-items: stretch; }
   .undo-bar.notice { background: var(--bg-elevated); }   /* 不是動作的一句狀態（「旅程更新過了」「正在重排…」）：同一種 sticky 列，底色淡一階跟復原列分開；二選一／排到別天那句 10-24 起放復原列（原話 #181） */
   /* 二選一（T16）：店名下一行「或 [B]」，B 是小鍵、旁邊一句來源；排不進清單每條尾巴一顆「排到別天」 */
   .btn.sm { padding: 6px 10px; font-size: 14px; }
@@ -65,7 +70,10 @@
   .dropped li { margin: 4px 0; }
   .dropped li .btn { margin-left: 6px; vertical-align: middle; }
   .status { margin-top: 8px; }
-  .edits .btn { margin-left: 8px; vertical-align: middle; }   /* 設定頁「本機改動：N 天有改」行尾的「還原成打包版」（T16b） */
+  /* 一行小字＋行尾一顆小鍵：設定頁「本機改動：N 天有改」的「還原成打包版」（T16b）；規劃頁日期下面的「這天照你調過的順序排」「早餐在飯店吃」（.day-note）與「今天沒排早餐」旁的那顆 */
+  .edits .btn, .day-note .btn, .warn-list li .btn, .ask-head .btn { margin-left: 8px; vertical-align: middle; }   /* .ask-head：升級排不下那組選項的提示行，選項多的時候行尾多一顆「算了，不插」 */
+  .day-note { margin: 4px 0; }
+  .day-note .intro { display: block; }   /* 「8/13 沒去的 X 這天早上可以去」下面那家的說明與簡介，各自一行 */
   .actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 6px; }
   .row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .row.top { margin-bottom: 8px; }
@@ -87,6 +95,8 @@
   .big-line { font-size: 19px; font-weight: 600; }
   .cat { font-size: 12px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; }
   .cat.item { color: var(--accent); border-color: var(--accent); margin-right: 6px; }
+  .tags { display: inline-flex; align-items: center; gap: 6px; }   /* 早餐那一站：店型旁再一個「早餐」小標（原話 #196） */
+  .cat.meal { color: var(--accent); border-color: var(--accent); }
   .leg { margin: 6px 0 0; }
   .leg a { white-space: nowrap; display: inline-block; color: var(--accent); text-decoration: none; margin-left: 8px; padding: 4px 6px; }
   /* 走廊清單（T15）：移動那行旁一顆小鍵「經過 N 家」；長段（leg-suggest）改成整行提示鍵——提示不是警告，用主色、虛線框，不用黃字 */
@@ -99,8 +109,12 @@
   .corridor-item { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; padding: 8px 0 6px; border-top: 1px solid var(--line); }
   .corridor-item .name { flex: 1 1 100%; min-width: 0; }
   .corridor-item.visited .name strong::after { content: ' ✓'; color: var(--accent); }
+  .corridor-item .intro { flex: 1 1 100%; }   /* 每家一行簡介，整段不截（原話 #193） */
   .corridor-item .actions { flex: 1 1 100%; margin-top: 4px; }
   .corridor-item .actions .btn { padding: 4px 10px; font-size: 14px; }
+  /* 升級成站排不下時，那一家底下的那組選項（原話 #194）：一句為什麼、每個選項一顆鍵（沿用換一家清單的 .btn.alt）、最後「算了，不插」 */
+  .insert-ask { flex: 1 1 100%; min-width: 0; margin-top: 8px; padding-top: 6px; border-top: 1px dashed var(--line); }
+  .insert-ask .warn-line { font-weight: 400; }
   .btn.text { border: 0; padding: 6px 8px; margin-left: -8px; border-radius: 8px; font-size: 14px; color: var(--accent); text-align: left; background: transparent; }   /* 現場頁單手按：文字鍵也要有 30px 左右的高度（10-16 實測 0 padding 只有 21px）；負邊距讓文字跟卡上其他行對齊 */
   .corridor-now { margin: 2px 0; }
   .warn-list { margin: 6px 0 0; padding-left: 18px; color: var(--warn); font-size: 14px; }
@@ -115,7 +129,7 @@
   .group { margin: 12px 0; }
   .field { display: block; margin: 12px 0; }
   .field span { display: block; color: var(--muted); font-size: 14px; }
-  .field input[type=number], .field input[type=time] { font: inherit; width: 100%; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg-elevated); color: var(--fg); }
+  .field input[type=number], .field input[type=time], .field input[type=url] { font: inherit; width: 100%; padding: 10px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg-elevated); color: var(--fg); }   /* url：設定頁「打包檔網址」（之前沒列到，比其他輸入框小一截） */
   .field.row input[type=checkbox] { width: 24px; height: 24px; }
   .sheet { position: fixed; left: 0; right: 0; bottom: 0; background: var(--bg-elevated); border-top: 1px solid var(--line); border-radius: 16px 16px 0 0; padding: 16px max(var(--gutter), env(safe-area-inset-left)) max(16px, env(safe-area-inset-bottom)); box-shadow: 0 -8px 24px rgba(0,0,0,.15); }
   .stars { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 10px 0; }

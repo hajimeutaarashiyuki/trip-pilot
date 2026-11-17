@@ -95,6 +95,21 @@ test('候選池的 B（source pool）：同店型、繞路 ≤ swapDetourMaxMin�
   assert.deepEqual(choiceView(run(one, { 街: S, 甲: A }, [cafe('乙')]).days[0].plan), [['甲', '乙', 'pool']]);
 });
 
+test('二選一不看這一站是不是哪一餐（11-06 第二批，換一家改成「正餐只列能當那一餐的店」之後）：知識庫標了能當午餐的咖啡廳剛好是那天的午餐，B 照樣是同店型的咖啡廳、不必也能當午餐；研究判可略過、不是一個地點的不當 B', () => {
+  // 甲標了能當午餐，排在 11:00–11:40（落在午餐放寬後的時窗 10:30 起）→ planTrip 會把它算成那天的午餐
+  const lunchCafe = cafe('甲', { meals: { lunch: '拿坡里義大利麵套餐' } });
+  const plan = { ...mkPlan([S, lunchCafe]), meals: { breakfast: null, lunch: '甲', dinner: null } };
+  assert.deepEqual(propose(plan, [cafe('乙')]), [['甲', '乙', 'pool', 5]], '乙沒標 meals（不能當午餐）照樣是 B：問的是這一類今天去哪一家');
+  assert.deepEqual(propose(plan, [poi('食堂', { category: 'food', walkFactor: 0, recovery: true })]), [], '能當午餐的食堂不是同店型，不當 B');
+  assert.deepEqual(propose(plan, [cafe('乙', { researchSkip: '查證結果：這趟不用去' })]), [], '研究判可略過的不當 B');
+  assert.deepEqual(propose(plan, [cafe('乙', { notAStop: true })]), [], '不是一個地點的條目不當 B');
+  // 透過 planTrip（plan.meals 是引擎掛的）：結果一樣
+  const trip = mkTrip([day('2026-08-13', { picks: [{ poiId: '街', priority: 'must' }, { poiId: '甲', priority: 'want' }] })]);
+  const planned = run(trip, { 街: S, 甲: lunchCafe }, [cafe('乙')]).days[0].plan;
+  assert.deepEqual(choiceView(planned), [['甲', '乙', 'pool']]);
+  assert.ok(planned.meals && 'lunch' in planned.meals && 'dinner' in planned.meals && 'breakfast' in planned.meals, 'planTrip 排完每天的 plan 帶 meals');
+});
+
 test('A 不是④層就不出：must、指定站、主行程、引擎插的、有固定時段；不是同類上限那三類也不出', () => {
   assert.deepEqual(propose(mkPlan([S, A]), [cafe('乙')]), [['甲', '乙', 'pool', 5]], '對照組');
   assert.deepEqual(propose(mkPlan([S, [A, { priority: 'must' }]]), [cafe('乙')]), [], 'must');

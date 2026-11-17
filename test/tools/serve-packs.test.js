@@ -414,11 +414,12 @@ test('寫檔失敗（同名的是個資料夾）回 500 write-failed、不留半
   assert.deepEqual(await tree(dirs.trips), ['fine.brief.md']);
 });
 
-test('parseArgs：開機排程只帶 --log 時其餘都是檔首預設（packs、dist、trips 相對於 app/tools/）；--no-briefs 關掉；旗標沒接值丟錯', () => {
+test('parseArgs：開機排程只帶 --log 時其餘都是檔首預設（packs、頁面的發布副本 packs/app、trips 相對於 app/tools/）；--no-briefs 關掉；旗標沒接值丟錯', () => {
   const d = parseArgs(['--log', 'D:\\x\\packs-server.log']);
   assert.equal(d.port, 18810);
   assert.equal(d.dir, path.resolve(TOOLS, '../../packs'));
-  assert.equal(d.appDir, path.resolve(TOOLS, '../dist'));
+  assert.equal(d.appDir, path.resolve(TOOLS, '../../packs/app'), '頁面讀發布副本，不讀開發中隨時會重建的 app/dist');
+  assert.notEqual(d.appDir, path.resolve(TOOLS, '../dist'));
   assert.equal(d.briefDir, path.resolve(TOOLS, '../../trips'));
   assert.equal(d.logFile, 'D:\\x\\packs-server.log');
   assert.equal(typeof d.acceptBriefs, 'boolean');
@@ -429,6 +430,25 @@ test('parseArgs：開機排程只帶 --log 時其餘都是檔首預設（packs�
   assert.deepEqual([o.port, o.dir, o.appDir, o.briefDir], [18812, tmp, path.join(tmp, 'dist'), path.join(tmp, 'trips')]);
   assert.equal(parseArgs(['--dir', '../packs']).dir, path.resolve(TOOLS, '../packs'), '相對路徑相對於 tools/（一直是這樣）');
   for (const argv of [['--briefs'], ['--app', '--no-briefs'], ['--port'], ['--log']]) assert.throws(() => parseArgs(argv), /後面要接一個值/, argv.join(' '));
+});
+
+test('頁面的資料夾還沒建（發布副本還沒放）：/app/ 與底下每個檔都回 404、/app 照樣轉到 app/，不退回別的資料夾；打包檔與需求單照常', async (t) => {
+  const { root, dirs } = await makeRoot();
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const missing = path.join(dirs.packs, 'app');   // packs/app：還不存在
+  const server = createPackServer({ dir: dirs.packs, appDir: missing, briefDir: dirs.trips });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }));
+  const { port } = server.address();
+  for (const target of ['/app/', '/app/index.html', '/app/sw.js', '/trip-pilot/app/']) assert.equal((await raw(port, 'GET', target)).status, 404, target);
+  assert.equal((await raw(port, 'GET', '/app')).status, 302);
+  assert.ok(!(await raw(port, 'GET', '/app/')).text.includes('Trip Pilot'), '沒有拿 dist 的頁面頂替');
+  assert.equal((await raw(port, 'GET', '/pack.json')).status, 200);
+  assert.equal((await raw(port, 'GET', '/brief')).status, 200);
+  // 建好之後不用重啟就供應
+  await mkdir(missing);
+  await writeFile(path.join(missing, 'index.html'), '<!doctype html><title>Trip Pilot</title>');
+  assert.equal((await raw(port, 'GET', '/app/')).status, 200);
 });
 
 /** 直接執行這支（開機排程與 .bat 的啟動方式），等它印出埠號。stop 可以重複叫。 */
@@ -490,4 +510,13 @@ test('直接執行（node tools/serve-packs.mjs …）起得來：打包檔、�
   assert.ok(!existsSync(path.join(dirs.trips, 'nope.brief.md')));
   assert.ok(await logHas(logFile, /需求單：不收/), '--no-briefs 啟動時 log 講明不收');
   await b.stop();
+
+  // 頁面的資料夾還沒建（發布副本 packs/app 還沒放）：啟動時 log 講一行、/app/ 回 404，伺服器照樣起得來
+  const c = runCli(['--port', '0', '--dir', dirs.packs, '--app', path.join(dirs.packs, 'app'), '--briefs', dirs.trips, '--log', logFile, '--no-briefs']);
+  t.after(c.stop);
+  const port3 = await c.ready;
+  assert.equal((await raw(port3, 'GET', '/app/')).status, 404);
+  assert.equal((await raw(port3, 'GET', '/pack.json')).status, 200);
+  assert.ok(await logHas(logFile, /頁面：.+ 裡沒有 index\.html，http:\/\/127\.0\.0\.1:\d+\/app\/ 會回 404/), '啟動時講一行，不退回 dist');
+  await c.stop();
 });

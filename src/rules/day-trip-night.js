@@ -4,7 +4,8 @@
 // 回城時刻＝最後一個外地站結束＋回據點的車程（rules/_slots.js returnToTownMin）；市區＝站的區不在 day.away 裡；夜間站＝bar／food 且落在夜間時段。
 // 放在整天層級：序列裡有這種站，這一天就不成立（'no'），搜尋會選沒有它的那條——引擎插的站是 optional，拿掉不算落選；每個搜尋節點只問一次，不用每個候選問一次。
 // 不管的情況：不是一日遊；現場改案（day.resumed）——按「累了」找地方坐是他要的，不是引擎主動排；降速策略釘的「現在就去坐」（fixedWindow.pinned）同理。
-// 當地（外地）的夜間站不歸這條管，趕不趕得上末班車由 last-train 管。day.away 選填，不列進 reads。
+// 當地（外地）的夜間站不歸這條管，趕不趕得上末班車由 last-train 管（引擎插的趕不上就不插；他勾的照排、掛提示）。day.away 選填，不列進 reads。
+// 順路站（engine/trip.js insertOnTheWay）是排完才貪婪插的、不經過搜尋：它自己重算整天（evaluateSequence），插了之後這條規則不成立的那一家跳過（11-06 審查後補；之前只看每一站的硬規則，擋不到）。
 import { minToHm } from '../engine/time.js';
 import { lateTownNightStops } from './_slots.js';
 

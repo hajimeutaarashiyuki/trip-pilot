@@ -1,10 +1,11 @@
 // 二選一與順延（T16；DESIGN §6.3.2；profile §7「二選一與順延」、總則 6；原話 #119「兩間店都可以的情況下，那程式給我二選一的選項，然後我選一間，到了 17 號就會自動排進另一間」、
 // #121 二選一是調整工具不是關卡：整趟排好、他只改不順眼的；#138 出現過但沒選的可以再出現，去過的不再出現）。
 // 純函式：proposeChoices 只看排好的序列、不進分數與時刻（planTrip 排完七天才掛 plan.choices）；defer 用 planTrip 試排、回新的 trip（不改傳入的）。
-import { swapCandidates, swapDetourMin } from './swap.js';
+import { swapCandidates, swapDetourMin, applySwap } from './swap.js';
 import { openIntervals } from './time.js';
 import { SAME_TYPE_CATEGORIES } from '../rules/_helpers.js';
 import { planTrip } from './trip.js';
+import { repinFromPlan } from './insert.js';   // 釘住順序的日子（原話 #192；days[].pinned）：順延進來的站排在哪個位置要記回那天的順序
 
 /**
  * 二選一的 B 要過的門：跟引擎插站的 engineMayInsert 同四條（curated:false 挖寶型、他評 ≤2 星、落選兩次、unlockWhen 未達不出），
@@ -19,9 +20,12 @@ export function choiceEligible(p) {
   return true;
 }
 
-/** 序列裡會出二選一的站 A（④品項層）：他勾的（不是引擎插的）、不是 must、不是指定站、不是主行程、沒有固定時段，店型在同類上限的那三類（vintage／record／cafe）。 */
+/**
+ * 序列裡會出二選一的站 A（④品項層）：他勾的（不是引擎插的）、不是 must、不是指定站、不是主行程、沒有固定時段，店型在同類上限的那三類（vintage／record／cafe）。
+ * 他指定當早餐的那一站（stop.breakfast；engine/breakfast.js）不出：早餐卡有自己的「換一家」（只列能當早餐的店），二選一問的是「這一類今天去哪一家」，兩個放在同一張卡上會打架。
+ */
 export function isChoiceStop(s) {
-  return Boolean(s?.poi) && !s.insertedBy && s.priority !== 'must' && !s.designated && !s.isAnchor && !s.fixedWindow && SAME_TYPE_CATEGORIES.includes(s.poi.category);
+  return Boolean(s?.poi) && !s.insertedBy && !s.breakfast && s.priority !== 'must' && !s.designated && !s.isAnchor && !s.fixedWindow && SAME_TYPE_CATEGORIES.includes(s.poi.category);
 }
 
 /** 去過的店不再出現（原話 #138）：知識庫 my.visits 非空。 */
@@ -42,7 +46,8 @@ function openAtSlot(b, a, date) {
  * 1. 那天排不進的同類勾選站（plan.dropped 裡同 category、priority 不是 must、**A 的時段它要有開**——跟候選池同一道門，查不到營業時間就當有開）——他兩家都想去、今天只塞得下一家（profile §7 的定義）。
  *    不套繞路門檻：兩家都是他勾的，按了之後整天重排，不是把 B 塞進 A 的位置（10-16 實作時的判斷：仙台包 8/13 火星之庭離 Elbe 27 分、離珈巣多夢 19 分，套了就不會出；待確認）。
  *    時段那道門是 10-16 審查後加的：B 因營業時間排不進（09:30 關、A 排 09:50）也出「或 B」、畫面寫「今天只塞得下一家」，按了 B 還是排不進、A 又被順延走，這天那一類從一家變零家。
- * 2. 候選池：swapCandidates 的結果（繞路 ≤ settings.swapDetourMaxMin、那個時段有開或查不到）再過濾同 category（餐段放寬那條不適用，咖啡廳只配咖啡廳）、
+ * 2. 候選池：swapCandidates 的結果（繞路 ≤ settings.swapDetourMaxMin、那個時段有開或查不到；一律照同店型列——傳 meal: null，咖啡廳只配咖啡廳，
+ *    這一站剛好是那天的某一餐也不改列「能當那一餐的店」；不是一個地點、研究判可略過、還沒解鎖、挖寶型的 swapCandidates 自己就不列）再過濾同 category、
  *    choiceEligible、不在 exclude（任何一天勾過的、按過「不去了」的、任何一天序列裡出現過的——含引擎插的、按過「我進去了」的）、知識庫沒去過的。
  * 每個 A 最多一個 B：來源 (1) 優先，同來源取繞路最小的；一個 B 只配給一個 A（繞路最小的那個）。沒配到的 A 不出（照引擎）。
  */
@@ -61,7 +66,9 @@ export function proposeChoices({ plan, date, pool = [], legFn, settings = {}, ex
     // 這天已經有同店型的勾選站排不進（他這類今天已經想去三家、只塞得下兩家）就不再從候選池拿第四家來問：問了也只是把他勾的擠掉（10-16 審查的 high：8/13 Elbe 或 FLAT WHITE 按下去珈巣多夢落到排不進；主控覆核定的，推導自原話 #121 二選一是調整工具不是關卡）
     const droppedSameType = (plan.dropped ?? []).some((d) => d?.poi && d.poi.category === cat && d.priority !== 'must' && d.poi.id !== s.poi.id);
     if (!pool.length || droppedSameType) return;
-    for (const c of swapCandidates({ plan, stopId: s.poi.id, pool, legFn, date, settings })) {
+    // meal: null＝不管這一站是不是哪一餐，一律照「同店型」列（咖啡廳只配咖啡廳）：二選一問的是「這一類今天去哪一家」，不是「這一餐吃哪裡」。
+    // 不給的話，知識庫標了能當午餐的咖啡廳剛好是那天的午餐時，換一家會改列能當午餐的店（餐廳、居酒屋），濾完同店型只剩也能當午餐的咖啡廳，B 會平白變少（11-06 第二批）。
+    for (const c of swapCandidates({ plan, stopId: s.poi.id, pool, legFn, date, settings, meal: null })) {
       if (c.poi.category !== cat || c.open === false || !choiceEligible(c.poi) || exclude.has(c.poi.id) || visitedInKb(c.poi)) continue;
       pairs.push({ slot, a: s, b: c.poi, source: 'pool', detourMin: c.detourMin });
     }
@@ -101,9 +108,11 @@ export function defer({ trip, pois, poiId, fromDate, chosenPoiId = null, baselin
   const pri = priority ?? pickPriority(trip, fromDate, poiId) ?? 'want';
   const base = withoutDeferredPick(trip, poiId);
   const candidates = poi ? deferCandidateDays({ trip: base, poi, fromDate, baseline }) : [];
-  const placed = (date, trial) => {
+  // 排到釘住順序的日子（days[].pinned；engine/insert.js）：那天不搜尋，planTrip 會試每個位置、挑排得下而且分數最高的插（排不下就落在排不進清單，下面的迴圈當作這天排不進、換下一天試）。
+  // 排定之後把試排出來的先後記回那天的 pinned（repinFromPlan）——不記的話每次重排都重新挑位置，他調過的順序裡會有一站自己換位置。沒釘住的日子 repinFromPlan 原樣回。
+  const placed = (date, trial, plan) => {
     const entry = { poiId, chosenPoiId, fromDate, toDate: date, status: 'placed', at };
-    return { trip: withDeferredEntry(withoutPick(trial, fromDate, poiId), entry), entry, toDate: date };
+    return { trip: withDeferredEntry(withoutPick(repinFromPlan(trial, date, plan), fromDate, poiId), entry), entry, toDate: date };
   };
   // 那天重排前就排不進的（baseline 那天的 plan.dropped）：試排後還在不算被它擠掉；baseline 沒那天的 plan 就看不出來、當沒擠
   const baselinePlan = (date) => (baseline?.days ?? []).find((x) => x?.date === date)?.plan ?? null;
@@ -116,12 +125,39 @@ export function defer({ trip, pois, poiId, fromDate, chosenPoiId = null, baselin
     const before = baselinePlan(date);
     const was = new Set((before?.dropped ?? []).map((x) => x.poi.id));
     const displaces = Boolean(before) && plan.dropped.some((x) => !was.has(x.poi.id));
-    if (!displaces) return placed(date, trial);
-    fallback ??= { date, trial };
+    if (!displaces) return placed(date, trial, plan);
+    fallback ??= { date, trial, plan };
   }
-  if (fallback) return placed(fallback.date, fallback.trial);
+  if (fallback) return placed(fallback.date, fallback.trial, fallback.plan);
   const entry = { poiId, chosenPoiId, fromDate, toDate: null, status: 'unplaced', at };
   return { trip: withDeferredEntry(base, entry), entry, toDate: null };
+}
+
+/**
+ * 釘住順序的日子（days[].pinned；engine/insert.js）按「換一家」之前先試算（11-12 審查；主控 11-06 定的落地 A2：釘住之後那天的動作「都在這條順序上做，不再把整天翻掉」）。
+ * pinnedSwapCheck({ trip, date, fromPoiId, plan, pois, planArgs }) → (toPoi) → true＝可以列。
+ * 每一家真的換過去排那一天一次（applySwap＋planTrip 只排那天；跟他按下去之後走的是同一條路），下面都成立才是 true：
+ * 換進來的那家排在原位置、原本的每一站（他勾的、引擎插的）都還在而且先後不變、沒有站因此多掉進排不進清單。原本排不進、換了之後跟著排得進來的站不算壞事。
+ * 之前沒有這一步：換進來的店停得比較久、或跟別站同類時，排在前面的引擎站會被無聲拿掉、他勾的站落到排不進清單
+ * （六個打包檔 817 次換一家裡 24 次：20 次引擎站不見、3 次他勾的站排不進、1 次換進來的那家自己排不進）。
+ * plan＝那天現在排好的 plan（沒釘住就回一個永遠 true 的函式——沒釘住的日子換了本來就整天重排）；pois＝{ [id]: poi }；planArgs＝planTrip 的其他參數
+ * （rules、settings、country、kb、legFn、restPool、brief、options）。純函式，不改傳入的。engine/swap.js swapCandidates 的 check 吃這個函式。
+ */
+export function pinnedSwapCheck({ trip, date, fromPoiId, plan, pois = {}, planArgs = {} }) {
+  const day = (trip?.days ?? []).find((d) => d?.date === date);
+  if (!day || !plan?.pinned || !Array.isArray(plan.sequence)) return () => true;
+  const before = plan.sequence.map((s) => s.poi.id);
+  const wasDropped = new Set((plan.dropped ?? []).map((x) => x.poi.id));
+  return (toPoi) => {
+    if (!toPoi?.id) return false;
+    const trial = { ...trip, days: trip.days.map((d) => (d.date === date ? applySwap(d, fromPoiId, toPoi) : d)) };
+    const r = planTrip({ ...planArgs, trip: trial, pois: pois[toPoi.id] ? pois : { ...pois, [toPoi.id]: toPoi }, options: { ...(planArgs.options ?? {}), onlyDates: [date] } });
+    const p = r.days.find((x) => x.date === date)?.plan;
+    if (!p) return false;
+    const want = before.map((id) => (id === fromPoiId ? toPoi.id : id));
+    const kept = p.sequence.map((s) => s.poi.id).filter((id) => want.includes(id));
+    return kept.join('\n') === want.join('\n') && !(p.dropped ?? []).some((x) => !wasDropped.has(x.poi.id));
+  };
 }
 
 /**

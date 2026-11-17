@@ -1,25 +1,28 @@
 // 桌機上的 Trip Pilot 伺服器（開機自啟，埠 18810）。三件事：
 //   1. 打包檔：手機（tailscale 連回桌機）按「更新」來這裡抓 pack.json。只讀 packs/，只有 GET／HEAD。
-//   2. 頁面：GET /app/ 供應 dist/ 的 PWA（index.html、sw.js、manifest、icons）。他在桌機開 http://127.0.0.1:18810/app/#/brief 填需求單
+//   2. 頁面：GET /app/ 供應 PWA 的發布副本（index.html、sw.js、manifest、icons）。他在桌機開 http://127.0.0.1:18810/app/#/brief 填需求單
 //      （原話 #186：需求單在電腦上填），頁面跟下面的 /brief 同源，不用跨來源打本機
 //      （11-06 主控實測：從 GitHub Pages 的頁面打 http://127.0.0.1，Chrome 156 會卡在「允許連線區域網路」的權限提示）。
+//      發布副本在 packs/app/（DEFAULT_APP_DIR；packs/ 不進版控），不是 app/dist：開發中重建 dist 不會把半成品送到他的瀏覽器。
+//      要換版就建置到那裡：在 app/ 跑 node tools/build.mjs --out ../packs/app。資料夾不存在時 /app/ 回 404、啟動時 log 一行，不退回 dist。
 //   3. 需求單：POST /brief?name=<名字> 把頁面「提交」的文字寫成 trips/<名字>.brief.md（原話 #188「需求單在網頁輸出成一份MD檔到 trip-pilot 資料夾」）。
 //      同名舊檔內容不同：先搬到 trips/_brief-history/<名字>-<YYYYMMDD-HHmmss>.brief.md 再寫（他提交後手改過的不會被蓋掉、要再提交也行）；內容相同就不動。
 //      整支只有這裡會寫檔：檔首 ACCEPT_BRIEFS 是開關，命令列 --no-briefs 只關這一次。只收同源頁面（或 curl 這類不是瀏覽器的）送來的，別的網站的頁面寫不進來。
 // 掛法：tailscale serve --bg --set-path /trip-pilot http://127.0.0.1:18810
 //   → 手機用 https://<桌機>.ts.net/trip-pilot/pack.json；App 在 GitHub Pages，所以打包檔要給 CORS（tailnet 內才連得到，開 * 沒關係），/app/ 的靜態檔沿用同一組標頭；/brief 不給。
-// 用法：node tools/serve-packs.mjs [--dir <packs>] [--port 18810] [--log <檔>] [--app <dist>] [--briefs <trips>] [--no-briefs]
+// 用法：node tools/serve-packs.mjs [--dir <packs>] [--port 18810] [--log <檔>] [--app <頁面資料夾>] [--briefs <trips>] [--no-briefs]
 //   --log：開機排程沒有 stdout，寫到檔。資料夾給相對路徑的話相對於 app/tools/（--dir 一直是這樣）。開機排程的命令列只帶 --log，其餘走檔首預設。
 // 測試：createPackServer({ dir, appDir, briefDir, … }) 回一個還沒 listen 的 http.Server（test/tools/serve-packs.test.js）；這支被 import 時不會自己開埠。
 import http from 'node:http';
 import { stat, readFile, appendFile, writeFile, rename, mkdir } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // === 需修改 ===
 const DEFAULT_PORT = 18810;          // 2026-10-10 查過 WinNAT 排除區與其他專案的 DEFAULT_PORT（18765／18801／18802）
 const DEFAULT_DIR = '../../packs';   // 相對於 app/tools/：專案根目錄的 packs/（打包工具的預設輸出處）
-const DEFAULT_APP_DIR = '../dist';   // 相對於 app/tools/：建置出來的 PWA（npm run build）
+const DEFAULT_APP_DIR = '../../packs/app';   // 相對於 app/tools/：PWA 的發布副本（node tools/build.mjs --out ../packs/app 建到這裡）。不指 ../dist：那是開發中隨時會重建的
 const DEFAULT_BRIEF_DIR = '../../trips';   // 相對於 app/tools/：專案根目錄的 trips/，需求單寫成 <名字>.brief.md
 const ACCEPT_BRIEFS = true;          // 收不收需求單（POST /brief 會寫檔）。false＝整支唯讀；--no-briefs 是只關這一次
 const BRIEF_MAX_BYTES = 256 * 1024;  // 需求單本文上限（現有的 trips/2026-08-sendai-test.brief.md 是 3,676 bytes）
@@ -42,7 +45,7 @@ const NO_STORE = { 'Cache-Control': 'no-store' };
 const NEVER_STORED = { Vary: '*' };
 const BRIEF_ALLOW = { Allow: 'GET, HEAD, POST, OPTIONS' };
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]']);
-// /app/ 底下每一段路徑只收英數開頭與結尾、中間可以有 . _ -：dist 裡的檔都符合；..、反斜線、冒號（磁碟代號、資料流）、開頭的點、結尾的點都進不來
+// /app/ 底下每一段路徑只收英數開頭與結尾、中間可以有 . _ -：建置出來的檔都符合；..、反斜線、冒號（磁碟代號、資料流）、開頭的點、結尾的點都進不來
 const APP_SEGMENT = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/;
 const DEVICE_NAME = /^(con|prn|aux|nul|com[0-9]|lpt[0-9])$/i;   // Windows 的裝置名：接了副檔名還是可能被當成裝置
 const BRIEF_ERRORS = {
@@ -121,7 +124,7 @@ async function exists(file) {
 }
 
 /**
- * 建伺服器（還沒 listen）。dir＝packs 資料夾；appDir＝dist（null 就不供應 /app/）；briefDir＝需求單寫到哪（null 或 acceptBriefs false 就不收）；
+ * 建伺服器（還沒 listen）。dir＝packs 資料夾；appDir＝頁面的資料夾（建置產物；null 或資料夾不存在就是 /app/ 回 404）；briefDir＝需求單寫到哪（null 或 acceptBriefs false 就不收）；
  * log(line)＝每個請求一行；now()＝現在時間（測試釘住歷史檔名用）。路徑都先 resolve 成絕對路徑。
  */
 export function createPackServer({ dir, appDir = null, briefDir = null, acceptBriefs = ACCEPT_BRIEFS, briefMaxBytes = BRIEF_MAX_BYTES, log = () => {}, now = () => new Date() } = {}) {
@@ -158,7 +161,8 @@ export function createPackServer({ dir, appDir = null, briefDir = null, acceptBr
     return sendFile(req, res, file, NEVER_STORED);
   }
 
-  // 頁面：/app/ → dist/index.html，/app/<檔> → dist/<檔>；/app（沒斜線）轉到 app/——相對轉址，帶不帶 /trip-pilot 前綴都落在對的地方（頁面裡的 ./sw.js、../brief 都靠這個斜線）
+  // 頁面：/app/ → <appDir>/index.html，/app/<檔> → <appDir>/<檔>；/app（沒斜線）轉到 app/——相對轉址，帶不帶 /trip-pilot 前綴都落在對的地方（頁面裡的 ./sw.js、../brief 都靠這個斜線）。
+  // 資料夾還沒建（發布副本還沒放）就是每個檔都 404，不退回別的資料夾
   function serveApp(req, res, rest, search) {
     if (req.method !== 'GET' && req.method !== 'HEAD') return plain(req, res, 405);
     if (!appRoot) return plain(req, res, 404, CORS, 'not found');
@@ -294,7 +298,8 @@ if (isMain) {
     const at = `http://127.0.0.1:${server.address().port}`;
     const t = new Date().toISOString();
     log(`${t} packs 伺服器 ${at}/pack.json ← ${o.dir}`);
-    log(`${t} 頁面 ${at}/app/ ← ${o.appDir}`);
+    // 發布副本的資料夾不存在：講一行（/app/ 會回 404），不退回 dist——半成品不該送到他的瀏覽器
+    log(existsSync(path.join(o.appDir, 'index.html')) ? `${t} 頁面 ${at}/app/ ← ${o.appDir}` : `${t} 頁面：${o.appDir} 裡沒有 index.html，${at}/app/ 會回 404（在 app/ 跑 node tools/build.mjs --out <那個資料夾> 建一份）`);
     log(o.acceptBriefs ? `${t} 需求單 POST ${at}/brief → ${o.briefDir}` : `${t} 需求單：不收（ACCEPT_BRIEFS 關著或帶了 --no-briefs）`);
   });
 }

@@ -3,9 +3,11 @@
 // 10-16 審查後加：品牌字不算店型請求、研究註記（首選／備案）、比較條目不進池、固定時段日只看空檔、抵達日有夜間站、留池理由最後重算。
 // 11-06 研究註記搬成知識庫欄位（researchRank／researchSkip／notAStop；原話 #191 其餘照預設）：有欄位照欄位、整個欄位沒有才退回店名字樣；
 // 小世界夾具（test/fixtures/alloc-world.js）留著店名字樣版＝還沒欄位化的知識庫，欄位版在這個檔裡另組（FIELD_POIS）、兩版分出來要一模一樣。
+// 11-06 第二批：需求單點名的店不看「不主動排」的門（檔尾三條）；點名卻排不了的進 briefUnmatched 並講原因。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { allocateTrip, poolEligible, levelOf, briefTextMatches, isCategoryRequest, regionZonesFor, zoneGraph, walkCircle, openWithin, researchSaysSkip, researchRank, comparisonEntry, freeIntervals, ALLOC_DEFAULTS } from '../../src/engine/allocate.js';
+import { allocateTrip, poolEligible, poolGatesOf, NAMED_BYPASS, NAMED_CATEGORY_BYPASS, levelOf, briefTextMatches, isCategoryRequest, regionZonesFor, zoneGraph, walkCircle, openWithin, researchSaysSkip, researchRank, comparisonEntry, freeIntervals, ALLOC_DEFAULTS } from '../../src/engine/allocate.js';
+import { planTrip } from '../../src/engine/trip.js';
 import { researchNameHints } from '../../src/rules/_helpers.js';
 import { loadRules } from '../../src/rules/index.js';
 import { BUILTIN } from '../../src/rules/builtin.js';
@@ -329,11 +331,12 @@ test('驗證丟了品項落點的那家：第二輪換同品項的另一家（re
   assert.equal(r.report.verify.dropped.length, 0);
 });
 
-test('一日遊只拿主行程那一區（夜間站可回據點圈）；活動只跟著主行程也是活動的那天', () => {
+test('一日遊只拿主行程那一區（夜間站與回城後的晚餐可回據點圈，細節在 allocate-daytrip.test.js）；活動只跟著主行程也是活動的那天', () => {
   const r = run();
   const d15 = ids(dayOf(r, '2026-08-15'));
   assert.ok(d15.includes('templesea'));
-  for (const id of d15) assert.ok(POIS[id].zoneId === 'sea' || POIS[id].category === 'bar', `${id} 不該在一日遊那天`);
+  const slotOf = (id) => r.report.days.find((d) => d.date === '2026-08-15').picks.find((p) => p.poiId === id)?.slot;
+  for (const id of d15) assert.ok(POIS[id].zoneId === 'sea' || POIS[id].category === 'bar' || (POIS[id].category === 'food' && slotOf(id) === 'dinner'), `${id} 不該在一日遊那天`);
   assert.ok(d15.includes('cafesea') && d15.includes('foodsea'), '海邊的喫茶與食堂跟著一日遊');
   assert.match(r.unplaced.find((u) => u.poiId === 'evente').reason, /活動只跟著主行程也是活動的那天/);
 });
@@ -411,4 +414,164 @@ test('沒有國家層餐段時吃的一天最多 2 家、夜間站仍一家；�
   // 一日遊卻沒寫主行程＝不知道往哪個方向：退回據點圈照普通日分（總則 0 永遠排得出來；推導）
   assert.deepEqual(r.report.days.find((d) => d.date === '2026-08-15').regionZones.sort(), ['hill', 'town']);
   assert.ok(ids(dayOf(r, '2026-08-15')).every((id) => ['town', 'hill'].includes(POIS[id].zoneId)));
+});
+
+// ── 11-06 第二批：需求單點名的店不看「不主動排」的門（總則 3：沒有硬排除清單、點名的一律排）──
+test('poolGatesOf：一家店卡在哪幾道門；沒卡回空陣列；poolEligible 就是一道都沒卡；點名蓋得過的是不主動排的那五道，排不了的兩道蓋不過', () => {
+  assert.deepEqual(poolGatesOf(POIS.cafe1), []);
+  assert.deepEqual(poolGatesOf(POIS.gatecurated), ['curated']);
+  assert.deepEqual(poolGatesOf(POIS.gaterating), ['rating']);
+  assert.deepEqual(poolGatesOf(POIS.gatelosses), ['losses']);
+  assert.deepEqual(poolGatesOf(POIS.gateunlock), ['unlock']);
+  assert.deepEqual(poolGatesOf(POIS.gateskip), ['skip']);
+  assert.deepEqual(poolGatesOf(POIS.foodvs), ['notAStop']);
+  assert.deepEqual(poolGatesOf({ id: 'x', category: 'spot' }), ['category']);
+  assert.deepEqual(poolGatesOf({ id: 'x', name_zh: '甲 vs 乙', category: 'daytrip', curated: false, unlockWhen: '下次' }), ['category', 'curated', 'unlock', 'notAStop'], '可以同時卡好幾道');
+  assert.deepEqual(poolGatesOf(null), []);
+  assert.equal(poolEligible(null), false);
+  assert.equal(poolEligible({ name_zh: '沒有 id' }), false);
+  assert.deepEqual([...NAMED_BYPASS].sort(), ['curated', 'losses', 'rating', 'skip', 'unlock']);
+  assert.ok(!NAMED_BYPASS.has('category') && !NAMED_BYPASS.has('notAStop'));
+  // 店型那一道門只有坐下來的地方被點名時蓋得過（11-11）；交通、會場、一日遊摘要蓋不過
+  assert.deepEqual([...NAMED_CATEGORY_BYPASS], ['spot']);
+});
+
+test('需求單點名的店被候選池的門擋住時照點名那一層排（挖寶型、未解鎖、研究判可略過、≤2 星、落選兩次）、理由欄寫明哪道門被點名蓋過；研究標備案的吃的站被點名也排當一餐；沒被點名的照舊不進池', () => {
+  const brief = { persons: [{ isMe: true, go: { designated: ['挖寶倉庫', '下次再說', '踩雷店', '落選兩次', '查證結果：無貨'], mustEat: ['保底食堂'] }, buy: { own: [] } }], errands: [] };
+  const r = run({ brief });
+  const picks = r.report.days.flatMap((d) => d.picks.map((p) => ({ ...p, date: d.date })));
+  const pickOf = (id) => picks.find((p) => p.poiId === id);
+  for (const [id, gate] of [['gatecurated', '挖寶型的店'], ['gateunlock', '還沒到解鎖條件'], ['gaterating', '你評過 2 星以下'], ['gatelosses', '落選過兩次'], ['gateskip', '研究判這趟可略過']]) {
+    const p = pickOf(id);
+    assert.ok(p, `${id} 被點名：排進去`);
+    assert.deepEqual([p.level, p.priority], [2, 'want'], id);
+    assert.match(p.why, /^需求單點名「.+」（.+，點名照排）$/, id);
+    assert.ok(p.why.includes(gate), `${id} 的理由欄寫「${gate}」：${p.why}`);
+  }
+  // 可略過的那一筆是藥妝（購物類）、被點名後不是品項落點：照購物類只落在購物日（離境日）
+  assert.equal(pickOf('gateskip').date, '2026-08-16');
+  // 研究標備案的吃的站：沒被點名時「不主動排當一餐」，被點名就照排、佔一個餐段
+  const back = pickOf('foodback');
+  assert.ok(back && ['lunch', 'dinner'].includes(back.slot), '保底食堂被點名：排當一餐');
+  assert.equal(back.why, '需求單點名「保底食堂」', '它本來就過得了門，理由欄不加註');
+  assert.equal(r.report.pool.byLevel[2], 6);
+  assert.deepEqual(r.report.briefUnmatched, []);
+  // 寫進旅程檔的 picks 跟一般的 ② 一樣（沒有多的欄位）
+  assert.deepEqual(r.days.flatMap((d) => d.picks).find((p) => p.poiId === 'gatecurated'), { poiId: 'gatecurated', priority: 'want' });
+  // 沒被點名：五家照舊連池都不進、備案照舊不排
+  const plain = run();
+  for (const id of ['gatecurated', 'gateunlock', 'gaterating', 'gatelosses', 'gateskip']) assert.ok(!plain.days.some((d) => ids(d).includes(id)) && !plain.unplaced.some((u) => u.poiId === id), `${id} 沒被點名不進池`);
+  assert.equal(plain.unplaced.find((u) => u.poiId === 'foodback').reason, '研究標備案／保底的吃的站不主動排當一餐');
+  // 需求單要買的（④）不算點名：對到挖寶型的店照舊不進池
+  const buy = run({ brief: { persons: [{ isMe: true, go: {}, buy: { own: ['挖寶倉庫'] } }], errands: [] } });
+  assert.ok(!buy.days.some((d) => ids(d).includes('gatecurated')) && !buy.unplaced.some((u) => u.poiId === 'gatecurated'));
+});
+
+test('點名卻排不了的列進「對不上」並講原因：不是一個地點的條目、分配器不分的站型（交通、會場、一日遊摘要）、他按過「不去了」；同一句也對到排得了的店就不列', () => {
+  const guide = { ...POIS.street1, id: 'guidex', name_zh: '海邊一日遊攻略', name_local: 'guidex', category: 'daytrip' };
+  const hall = { ...POIS.street1, id: 'hallx', name_zh: '國際會議中心', name_local: 'hallx', category: 'venue' };
+  const bus = { ...POIS.street1, id: 'busx', name_zh: '循環巴士一日券', name_local: 'busx', category: 'logistics' };
+  const compare = { ...POIS.foodvs, id: 'foodvs3', name_zh: '整天食堂 vs 晚餐食堂', name_local: 'foodvs3' };
+  const trip = { ...TRIP, days: TRIP.days.map((d, i) => (i === 1 ? { ...d, removed: [{ poiId: 'cafe3' }] } : d)) };
+  const brief = { persons: [{ isMe: true, go: { designated: ['食堂甲 vs 食堂乙', '海邊一日遊攻略', '國際會議中心', '循環巴士一日券', '喫茶三', '整天食堂'], mustEat: [] }, buy: { own: [] } }], errands: [] };
+  const r = allocateTrip({ trip, pois: { ...POIS, guidex: guide, hallx: hall, busx: bus, foodvs3: compare }, kb: KB, country: COUNTRY, settings, rules, legFn, brief, options: { verify: false } });
+  const by = Object.fromEntries(r.report.briefUnmatched.map((b) => [b.text, b]));
+  assert.deepEqual(Object.keys(by).sort(), ['喫茶三', '海邊一日遊攻略', '國際會議中心', '循環巴士一日券', '食堂甲 vs 食堂乙'].sort(), '「整天食堂」也對到比較條目，但對得到排得了的那家食堂，不列');
+  assert.ok(r.report.days.some((d) => d.picks.some((p) => p.poiId === 'foodx' && p.level === 2)), '整天食堂照②排');
+  assert.equal(by['食堂甲 vs 食堂乙'].reason, '對到「食堂甲 vs 食堂乙（站內比較吃）」，是比較或彙整的條目，不是一個可以排的地點，沒排');
+  assert.equal(by['海邊一日遊攻略'].reason, '對到「海邊一日遊攻略」，是一日遊的摘要條目，不是一個地點，沒排');
+  assert.equal(by['國際會議中心'].reason, '對到「國際會議中心」，是會場，那天有固定時段才排，沒排');
+  assert.equal(by['循環巴士一日券'].reason, '對到「循環巴士一日券」，是交通或資訊的條目，不是一站，沒排');
+  assert.equal(by['喫茶三'].reason, '對到「喫茶三」，你按過「不去了」，沒排');
+  assert.deepEqual(by['喫茶三'].poiIds, ['cafe3']);
+  for (const id of ['foodvs', 'guidex', 'hallx', 'busx', 'cafe3']) assert.ok(!r.days.some((d) => ids(d).includes(id)) && !r.unplaced.some((u) => u.poiId === id), `${id} 不排、也不在留池清單（在對不上清單）`);
+  // 不是一個地點、又剛好未解鎖：只講排不了的那個原因（未解鎖是點名蓋得過的）
+  const locked = { ...POIS.foodvs, id: 'foodvs2', name_zh: '麵店甲 vs 麵店乙', name_local: 'foodvs2', unlockWhen: '吃無可吃' };
+  const r2 = allocateTrip({ trip: TRIP, pois: { ...POIS, foodvs2: locked }, kb: KB, country: COUNTRY, settings, rules, legFn, brief: { persons: [{ isMe: true, go: { designated: ['麵店甲 vs 麵店乙'] }, buy: { own: [] } }], errands: [] }, options: { verify: false } });
+  assert.deepEqual(r2.report.briefUnmatched.map((b) => b.reason), ['對到「麵店甲 vs 麵店乙」，是比較或彙整的條目，不是一個可以排的地點，沒排']);
+});
+
+test('需求單點名「坐下來的地方」照點名那一層排（11-11；總則 3 點名的一律排）：②、want、理由欄寫明，不再列進對不上；沒被點名的照舊不進池；排進去之後單日引擎不會把同一家再當坐下來的候選加一次', () => {
+  const bench = { ...POIS.street1, id: 'spotx', name_zh: '河邊長椅', name_local: 'spotx', category: 'spot', recovery: true, walkFactor: 0, dwellMin: 30 };
+  const pois = { ...POIS, spotx: bench };
+  const brief = { persons: [{ isMe: true, go: { designated: ['河邊長椅'], mustEat: [] }, buy: { own: [] } }], errands: [] };
+  const r = run({ pois, brief });
+  const hit = r.report.days.flatMap((d) => d.picks.map((p) => ({ ...p, date: d.date }))).find((p) => p.poiId === 'spotx');
+  assert.ok(hit, '被點名：排進去');
+  assert.deepEqual([hit.level, hit.priority, hit.slot], [2, 'want', null]);
+  assert.equal(hit.why, '需求單點名「河邊長椅」（坐下來的地方，點名照排）');
+  assert.deepEqual(r.report.briefUnmatched, []);
+  assert.deepEqual(r.days.find((d) => d.date === hit.date).picks.find((p) => p.poiId === 'spotx'), { poiId: 'spotx', priority: 'want' }, '寫進旅程檔的 pick 跟一般的 ② 一樣');
+  assert.ok(!r.report.verify.dropped.some((d) => d.poiId === 'spotx'), '單日引擎驗證沒有丟它');
+  // 排進去之後它是他勾的站：帶整個知識庫當引擎可插的來源去排，那一天的序列裡它只出現一次、不是引擎插的
+  const trip = { ...TRIP, days: TRIP.days.map((d) => ({ ...d, picks: r.days.find((x) => x.date === d.date).picks })) };
+  const planned = planTrip({ trip, pois, rules, settings, country: COUNTRY, kb: KB, legFn, restPool: Object.values(pois) });
+  const stops = planned.days.flatMap((d) => d.plan.sequence).filter((s) => s.poi.id === 'spotx');
+  assert.equal(stops.length, 1);
+  assert.equal(stops[0].insertedBy, null);
+  // 沒被點名：照舊連池都不進（引擎每天自己視情況排）
+  const plain = run({ pois });
+  assert.ok(!plain.days.some((d) => ids(d).includes('spotx')) && !plain.unplaced.some((u) => u.poiId === 'spotx'));
+  assert.equal(plain.report.pool.eligible + 1, r.report.pool.eligible, '點名之後池子多它一家');
+  // 被點名、又卡在點名蓋不過的門（他按過「不去了」）：照舊不排、進對不上
+  const removedTrip = { ...TRIP, days: TRIP.days.map((d, i) => (i === 1 ? { ...d, removed: [{ poiId: 'spotx' }] } : d)) };
+  const gone = run({ trip: removedTrip, pois, brief, options: { verify: false } });
+  assert.deepEqual(gone.report.briefUnmatched.map((b) => b.reason), ['對到「河邊長椅」，你按過「不去了」，沒排']);
+});
+
+// ── 11-06 第二批：「這家店能不能當午餐／晚餐」接到共用尺 rules/_slots.js servesMeal（知識庫欄位 meals 優先、沒欄位照店型推導；原話 #195）──
+const mealWorld = (over) => ({ gardeng: POIS.gardeng, ...over });
+const mealDay = [{ date: '2026-08-13', type: 'normal', anchor: { poiId: 'gardeng' }, picks: [] }];
+const mealRun = (pois, days = mealDay) => allocateTrip({ trip: { id: 'm', party: 1, homeBases: [{ poi: HOME }], days }, pois, kb: KB, country: COUNTRY, settings, rules, legFn, options: { verify: false } });
+const slotOf = (r, id) => r.report.days.flatMap((d) => d.picks).find((p) => p.poiId === id)?.slot;
+const placed = (r, id) => r.days.some((d) => ids(d).includes(id));
+
+test('分配器分午餐晚餐照 meals 欄位：只標午餐的整天食堂不會被分成晚餐、只標晚餐的不會被分成午餐；沒有欄位的照舊（推導出來就是原本的判法）', () => {
+  // 兩家整天都開的食堂：沒標時一家午餐一家晚餐
+  const plain = mealRun(mealWorld({ a: { ...POIS.foodx, id: 'a', name_zh: '甲食堂' }, b: { ...POIS.foodx, id: 'b', name_zh: '乙食堂' } }));
+  assert.deepEqual([slotOf(plain, 'a'), slotOf(plain, 'b')].sort(), ['dinner', 'lunch']);
+  // 兩家都只標午餐：一家當午餐，另一家不會因為晚餐的位子還空著就被分成晚餐
+  const lunchOnly = { lunch: true };
+  const both = mealRun(mealWorld({ a: { ...POIS.foodx, id: 'a', name_zh: '甲食堂', meals: lunchOnly }, b: { ...POIS.foodx, id: 'b', name_zh: '乙食堂', meals: lunchOnly } }));
+  assert.deepEqual([slotOf(both, 'a'), slotOf(both, 'b')].filter(Boolean), ['lunch']);
+  const left = both.unplaced.find((u) => ['a', 'b'].includes(u.poiId));
+  assert.equal(left?.reason, '餐段對不上（已有的那餐佔了、另一餐它沒開或時窗外）');
+  // 一家只標晚餐、一家只標午餐：各就各位，不看誰先被挑
+  const split = mealRun(mealWorld({ a: { ...POIS.foodx, id: 'a', name_zh: '甲食堂', meals: { dinner: '晚場才有定食' } }, b: { ...POIS.foodx, id: 'b', name_zh: '乙食堂', meals: lunchOnly } }));
+  assert.deepEqual([slotOf(split, 'a'), slotOf(split, 'b')], ['dinner', 'lunch']);
+});
+
+test('吃的類標了 {}（整座商場、甜點攤）或只標早餐：不是午餐晚餐的候選——可以當一站、不佔餐段；真正的食堂照樣分到午餐晚餐', () => {
+  const mall = { ...POIS.foodx, id: 'mall', name_zh: '車站商場', meals: {}, dwellMin: 135 };
+  const morning = { ...POIS.foodx, id: 'morning', name_zh: '朝市食堂', meals: { breakfast: '7:30 起的海鮮丼' }, hours: Object.fromEntries(['mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun'].map((d) => [d, [['07:30', '15:00']]])) };
+  const r = mealRun(mealWorld({ mall, morning, foodl: POIS.foodl, foodd: POIS.foodd }));
+  assert.deepEqual([slotOf(r, 'foodl'), slotOf(r, 'foodd')], ['lunch', 'dinner']);
+  for (const id of ['mall', 'morning']) {
+    assert.equal(placed(r, id), true, `${id} 照一般的站分進去`);
+    assert.equal(slotOf(r, id), null, `${id} 不是午餐也不是晚餐`);
+  }
+  // 只有它們、沒有別的食堂：餐段就是空著（不會拿商場或早餐店湊數）
+  const only = mealRun(mealWorld({ mall, morning }));
+  assert.deepEqual([slotOf(only, 'mall'), slotOf(only, 'morning')], [null, null]);
+  // 沒標的甜點攤照舊（推導：店型對照表「甜點」對到的不算一餐）
+  const sweet = mealRun(mealWorld({ foodsweet: POIS.foodsweet }));
+  assert.equal(slotOf(sweet, 'foodsweet'), null);
+});
+
+test('咖啡廳、酒吧不會被分配器分成一餐（就算知識庫標了能當午餐／晚餐）：咖啡廳走同類配額、酒吧走夜間站；骨架裡吃的站照它能當的那一餐佔位', () => {
+  const lunchCafe = { ...POIS.cafe1, id: 'lunchcafe', name_zh: '洋食喫茶', meals: { lunch: '拿坡里義大利麵套餐', dinner: '拿坡里義大利麵套餐' } };
+  const izakaya = { ...POIS.barn1, id: 'izakaya', name_zh: '站前居酒屋', categoryRaw: '居酒屋', meals: { dinner: '爐端燒與鄉土料理' } };
+  const r = mealRun(mealWorld({ lunchcafe: lunchCafe, izakaya, foodx: POIS.foodx }));
+  assert.equal(slotOf(r, 'lunchcafe'), null, '咖啡廳照一般的站');
+  assert.equal(slotOf(r, 'izakaya'), 'night', '酒吧照夜間站');
+  assert.equal(slotOf(r, 'foodx'), 'lunch', '午餐的位子沒有被咖啡廳佔掉');
+  // 骨架：指定站是只標晚餐的食堂 → 它佔晚餐，分配器只再補午餐；沒標的指定食堂照舊先佔午餐
+  const dinnerOnly = { ...POIS.foodx, id: 'kaiseki', name_zh: '只開晚上的料亭', meals: { dinner: '晚間套餐' } };
+  const skeletonDay = (id) => [{ date: '2026-08-13', type: 'normal', anchor: { poiId: 'gardeng' }, designated: [id], picks: [] }];
+  const a = mealRun(mealWorld({ kaiseki: dinnerOnly, foodx: POIS.foodx, foodd: POIS.foodd }), skeletonDay('kaiseki'));
+  assert.equal(slotOf(a, 'foodx'), 'lunch', '晚餐被骨架的料亭佔了，整天食堂補午餐');
+  assert.equal(placed(a, 'foodd'), false, '晚餐食堂沒位子');
+  const b = mealRun(mealWorld({ foodx: POIS.foodx, foodl: POIS.foodl, foodd: POIS.foodd }), skeletonDay('foodx'));
+  assert.equal(slotOf(b, 'foodd'), 'dinner');
+  assert.equal(placed(b, 'foodl'), false, '沒標的指定食堂先佔午餐（照舊）');
 });

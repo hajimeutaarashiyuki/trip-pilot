@@ -188,3 +188,21 @@ test('corridorExclude：勾過／拒絕過 ∪ 任何一天引擎插過的；pla
   assert.ok(r2[0].plan.sequence.some((s) => s.poi.id === '近33' && s.insertedBy === 'engine'));
   assert.deepEqual(r2[1].plan.corridor, []);
 });
+
+test('samePlace：同一個地點在知識庫寫成兩筆時，其中一筆是今天的站、或已經在 exclude 裡（別天勾過），另一筆也不列；知識庫沒有這個欄位時照舊', () => {
+  const twin = shop('A-twin', 38.2603, 140.875, { samePlace: 'A' });   // 離住宿→A 那段 33 m
+  const other = shop('other', 38.2606, 140.872);
+  // A 是今天的站：它的另一筆不列，別家照列
+  assert.deepEqual(idsOf(corridorFor({ plan: seqOf(A), home, pool: [twin, other], legFn, settings, day }), 0), ['other']);
+  // 反方向指也算（欄位寫在站的那一筆上）
+  const stopSide = { ...A, samePlace: 'plain-twin' };
+  const plainTwin = shop('plain-twin', 38.2603, 140.875);
+  assert.deepEqual(idsOf(corridorFor({ plan: seqOf(stopSide), home, pool: [plainTwin, other], legFn, settings, day }), 0), ['other']);
+  // 別天勾過的（exclude）那一筆的另一筆也不列
+  const picked = shop('picked', 38.2603, 140.875);
+  const pickedTwin = shop('picked-twin', 38.2606, 140.872, { samePlace: 'picked' });
+  assert.deepEqual(corridorFor({ plan: seqOf(A), home, pool: [picked, pickedTwin], legFn, settings, day, exclude: new Set(['picked']) }), []);
+  assert.deepEqual(idsOf(corridorFor({ plan: seqOf(A), home, pool: [picked, pickedTwin], legFn, settings, day }), 0), ['picked', 'picked-twin'], '都沒被排除時兩筆照列');
+  // 沒有 samePlace 欄位的知識庫：結果跟以前一樣
+  assert.deepEqual(idsOf(corridorFor({ plan: seqOf(A), home, pool: [shop('近33', 38.2603, 140.875), other], legFn, settings, day }), 0), ['近33', 'other']);
+});
