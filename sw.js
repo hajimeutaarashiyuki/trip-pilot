@@ -3,7 +3,7 @@
 // 只管自己範圍裡的 App 殼（index.html、manifest、圖示）：之前對同源的 GET 一律 cache-first、拿到 200 就存，頁面改由桌機伺服器供應（/app/）之後，
 // 同源的打包檔（../pack.json）與需求單端點（../brief）也會被攔——伺服器那邊靠 Vary: * 讓 cache.put 失敗才沒存住，每次留一筆沒接住的錯（11-06 上一批審查）。
 // 現在殼以外的請求這裡不接手（沒呼叫 respondWith＝照瀏覽器平常的方式走網路），打包檔與 /brief 不會進快取。
-const VERSION = "202611242302-7da503e5";
+const VERSION = "202611250202-2f36d8e9";
 const CACHE = `trip-pilot-${VERSION}`;
 const PRECACHE = ['./', './index.html', './manifest.webmanifest'];
 // 殼：範圍根（導覽）、index.html、manifest、icons/ 底下的 png。相對於註冊的範圍（GitHub Pages 是 /trip-pilot/、桌機伺服器是 /app/ 或 /trip-pilot/app/）
