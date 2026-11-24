@@ -11,9 +11,11 @@ export default {
     const missing = ctx.day.designated.filter((id) => !placed.has(id));
     return missing.length * ctx.params.missMin;
   },
+  // 黃字寫店名（day.designatedNames：engine/trip.js 給的 id → 店名）；沒有才退回 id。之前一律印 id——平常指定站都排得進所以看不到，
+  // 11-24 起他把指定的站換掉之後這一句會出現（對抗審查：「指定的 1 站今天排不進：utah」）。
   warn(ctx) {
     const placed = new Set(ctx.sequence.map((s) => s.poi.id));
     const missing = ctx.day.designated.filter((id) => !placed.has(id));
-    return `指定的 ${missing.length} 站今天排不進：${missing.join('、')}`;
+    return `指定的 ${missing.length} 站今天排不進：${missing.map((id) => ctx.day.designatedNames?.[id] ?? id).join('、')}`;
   },
 };

@@ -676,7 +676,7 @@ test('早餐的換一家清單（breakfastSwapCandidates）：每一家都真的
   const twin = eat('站內店的另一筆', { samePlace: stand.id });
   const far = eat('太遠');
   const pool = [...pool3, gated, twin, far, eat('不固定', { closeRisk: 'irregular' }), eat('備案', { researchRank: 'backup' })];
-  const legFn = makeLeg({ 'home|站內店': 6, 'home|麵包店': 8, 'home|太遠': 25, '太遠|街區A': 25 });
+  const legFn = makeLeg({ 'home|站內店': 6, 'home|麵包店': 8, 'home|太遠': 30, '太遠|街區A': 30 });   // 30 分：超過換一家清單自己的門檻（breakfastSwapWalkMaxMin 25；見下一條測試）
   const list = (exclude = []) => breakfastSwapCandidates({ plan: d.plan, day: d.day, home, pool, legFn, rules, settings, country: JP, kb, exclude });
   const all = list();
   const cur = d.plan.meals.breakfast;
@@ -691,6 +691,32 @@ test('早餐的換一家清單（breakfastSwapCandidates）：每一家都真的
   const narrowed = list([...others, stand.id]);
   assert.ok(!narrowed.some((c) => others.includes(c.poi.id) || c.poi.id === stand.id || c.poi.id === twin.id));
   assert.deepEqual(breakfastSwapCandidates({ plan: d.plan, day: d.day, home, pool, legFn, rules, settings, country: BASE_COUNTRY, kb }), [], '沒有早餐段就沒有清單');
+});
+
+test('早餐的換一家清單離住宿的門檻比引擎替他挑的寬（settings.breakfastSwapWalkMaxMin 預設 25；引擎自己挑的仍是 breakfastWalkMaxMin 12）：離住宿 13–25 分的店引擎不排、清單列得到（原話 #196、#198 的推導）', () => {
+  // 原話 #198「可抽菸店家 都是可接受的」收進來的兩家老喫茶離住宿估 13 分與 21 分：引擎的門檻 12 分擋掉、之前清單用同一道門，App 裡哪裡都看不到
+  assert.deepEqual([settings.breakfastWalkMaxMin, settings.breakfastSwapWalkMaxMin], [12, 25]);
+  const near13 = eat('走十三分的喫茶'); const near21 = eat('走二十一分的喫茶'); const far26 = eat('走二十六分的'); const ride = eat('要搭車的');
+  const pool = [noodle, near13, near21, far26, ride];
+  // 這幾家都不順路（去第一站要多繞很多）：只能靠「離住宿走路幾分」這一條
+  // 第一站晚開（11:00 才開）：早上有空，早餐排進來不會害別的站晚——清單的其餘幾道門照舊
+  const lateA = mk('晚開的街區', { hours: daily('11:00', '23:00') });
+  const legs = makeLeg({ 'home|走十三分的喫茶': 13, '走十三分的喫茶|晚開的街區': 13, 'home|走二十一分的喫茶': 21, '走二十一分的喫茶|晚開的街區': 21, 'home|走二十六分的': 26, '走二十六分的|晚開的街區': 26 }, { 'home|要搭車的': 10 });
+  const trip = tripOf([{ date: THU, picks: want(lateA.id, lunch.id, B.id, dinner.id) }]);
+  const pois = Object.fromEntries([...WORLD, lateA, ...pool].map((p) => [p.id, p]));
+  const d = planTrip({ trip, pois, rules, settings, country: JP, kb, legFn: legs, restPool: [noodle] }).days[0];
+  assert.equal(d.plan.meals.breakfast, noodle.id, `引擎排了住宿旁邊的那一家：${ids(d.plan).join('→')}`);
+  const list = (s = settings) => breakfastSwapCandidates({ plan: d.plan, day: d.day, home, pool, legFn: legs, rules, settings: s, country: JP, kb, exclude: [] }).map((c) => [c.poi.id, c.walkMin]);
+  assert.deepEqual(list(), [[near13.id, 13], [near21.id, 21]], '25 分以內的列得到（多繞少的在前）；26 分的、要搭車的不列');
+  assert.deepEqual(list({ ...settings, breakfastSwapWalkMaxMin: 20 }), [[near13.id, 13]], '門檻可調');
+  assert.deepEqual(list({ ...settings, breakfastSwapWalkMaxMin: 30 }).map((x) => x[0]), [near13.id, near21.id, far26.id]);
+  const { breakfastSwapWalkMaxMin: _gone, ...old } = settings;
+  assert.deepEqual(list(old), list(), '設定裡沒有這個鍵（舊打包檔）：照預設 25');
+  // 引擎自己挑的門檻不動：只有這幾家可挑時一家都不排（12 分以內沒有店、也都不順路）
+  const engine = planTrip({ trip, pois, rules, settings, country: JP, kb, legFn: legs, restPool: [near13, near21, far26, ride] }).days[0];
+  assert.equal(engine.plan.meals.breakfast, null, `引擎不替他挑 13 分以外的：${ids(engine.plan).join('→')}`);
+  assert.deepEqual(breakfastOptions({ sequence: rest(d.plan), complete: true, pool: [near13, near21], day: d.day, home, legFn: legs, rules, settings, country: JP, kb }).map((o) => o.poi.id), []);
+  assert.deepEqual(breakfastOptions({ sequence: rest(d.plan), complete: true, pool: [near13, near21], day: d.day, home, legFn: legs, rules, settings: { ...settings, breakfastWalkMaxMin: 15 }, country: JP, kb }).map((o) => o.poi.id), [near13.id], '引擎的門檻是另一個鍵');
 });
 
 test('整趟一起排時的其他保證：能當早餐的店不被當成填站或恢復站插進別的時段；引擎排的早餐不佔每天 8 站與引擎插站的名額；只試排某幾天（onlyDates）不出錯', () => {
@@ -807,4 +833,91 @@ test('沿用上一版引擎挑的早餐（11-12 畫面審查；assignBreakfasts 
   const held = { ...threeDays, days: threeDays.days.map((d) => (d.date === FRI ? { ...d, engineBreakfast: alone } : d)) };
   assert.notEqual(only(held), alone, 'FRI 記著那一家：只排 THU 時不拿它');
   assert.ok(only(held));
+});
+
+// ---- 11-24 傍晚主控裁決（甲4、甲5；都是推導）----
+const { swapInPlace, swapBreakfastTrip, breakfastSwapCheck } = await import('../../src/engine/choices.js');
+const { breakfastSwapsInPlace } = await import('../../src/engine/breakfast.js');
+const { pinEntriesOf } = await import('../../src/engine/insert.js');
+const { mealAssignments } = await import('../../src/rules/_slots.js');
+const planOf = (trip, pool, date) => run(trip, pool).days.find((d) => d.date === date);
+
+test('早餐那一站是他勾的站自己落在早餐時段（甲4）：早餐的換一家先把那天照畫面釘住、原位置換掉——同一天引擎排的站不動、其餘各站先後不變；引擎排的早餐照舊不釘住；清單上的候選先真的排一次', () => {
+  // 原話 #192「順路站 升級成站時 不應該把原本的行程刪掉 應該是安插進來」的類推（推導）：他只換早餐這一站，別的站不該跟著動。
+  // THU：他勾的晨間食堂（只開早上）→ 只開到 11:30 的街區 → 12:00 才開的街區，後兩站之間的空檔引擎填了咖啡廳。FRI：引擎排的早餐
+  const morning = eat('晨間食堂', { hours: daily('07:00', '10:30'), meals: { breakfast: '定食到十點半' } });
+  const early = mk('只開早上的街區', { hours: daily('09:00', '11:30') }); const noon = mk('中午才開的街區', { hours: daily('12:00', '23:00') });
+  const gap = mk('空檔咖啡廳', { category: 'cafe', walkFactor: 0, recovery: true, cafeLike: true, meals: {}, dwellMin: 70 });
+  const slow = eat('慢慢吃的早餐', { dwellMin: 170 });
+  const pool = [morning, early, noon, gap, noodle, stand, slow];
+  const trip = tripOf([{ date: THU, picks: want(morning.id, early.id, noon.id) }, { date: FRI, picks: want(A.id, lunch.id) }]);
+  const base = run(trip, pool);
+  const thu = base.days[0].plan; const fri = base.days[1].plan;
+  assert.deepEqual([ids(thu), thu.meals.breakfast, breakfastKind(breakfastOfPlan(thu)), thu.dropped], [[morning.id, early.id, gap.id, noon.id], morning.id, 'picked', []]);
+  assert.equal(thu.sequence.find((s) => s.poi.id === gap.id).insertedBy, 'engine');
+  assert.deepEqual([breakfastSwapsInPlace(thu), breakfastSwapsInPlace(fri), breakfastKind(breakfastOfPlan(fri)), breakfastSwapsInPlace(null), breakfastSwapsInPlace({ sequence: [], meals: {} })], [true, false, 'engine', false, false]);
+  const free = [noodle, stand].find((p) => p.id !== fri.meals.breakfast);
+  // 換：THU 先釘住再原位置換掉
+  const next = swapBreakfastTrip({ trip, date: THU, toPoi: free, plan: thu, at: AT });
+  const day = next.days[0];
+  assert.deepEqual(day.pinned.sequence.map((e) => [e.poiId, e.insertedBy ?? null]), [[free.id, null], [early.id, null], [gap.id, 'engine'], [noon.id, null]], '那天釘住：畫面上那一版，早餐那一筆原位置換成新的');
+  assert.deepEqual(day.pinned.sequence.slice(1), pinEntriesOf(thu.sequence, THU).slice(1), '其餘各筆照畫面記著（引擎排的咖啡廳照原樣）');
+  assert.deepEqual(day.picks, [{ poiId: free.id, priority: 'want', breakfast: true }, ...want(early.id, noon.id)]);
+  assert.deepEqual(day.swapped, [{ from: morning.id, to: free.id, at: AT, breakfast: true }]);
+  assert.equal(trip.days[0].pinned, undefined, '不改傳入的');
+  const after = run(next, pool);
+  assert.deepEqual([ids(after.days[0].plan), after.days[0].plan.meals.breakfast, after.days[0].plan.pinned, after.days[0].plan.dropped], [[free.id, early.id, gap.id, noon.id], free.id, true, []]);
+  assert.deepEqual(times(after.days[1].plan.sequence), times(fri.sequence), '別天逐站、逐時刻不變');
+  // 引擎排的早餐（FRI）照舊：那一筆本來就不進搜尋，不用釘
+  const friNext = swapBreakfastTrip({ trip, date: FRI, toPoi: free, plan: fri, at: AT });
+  assert.equal(friNext.days[1].pinned, undefined);
+  assert.deepEqual(friNext.days[1], swapBreakfast(trip, FRI, free.id, fri, AT).days[1]);
+  assert.equal(swapBreakfastTrip({ trip, date: THU, toPoi: null, plan: thu }), trip);
+  // 清單先試排：吃 170 分的那一家排在原位置，後面只開到 11:30 的街區就排不進——不列；一般的那一家照列
+  const check = breakfastSwapCheck({ trip, date: THU, plan: thu, pois: Object.fromEntries(pool.map((p) => [p.id, p])), planArgs: { rules, settings, country: JP, kb, legFn: flat, restPool: pool } });
+  assert.deepEqual([check(free), check(slow), check(null)], [true, false, false]);
+  const blind = run(swapBreakfastTrip({ trip, date: THU, toPoi: slow, plan: thu, at: AT }), pool).days[0].plan;
+  assert.ok(blind.dropped.some((x) => x.poi.id === early.id), '說不列的那一家真的選下去：那一站排不進');
+  // 不用試的幾種（引擎排的早餐、那天已經釘住、沒有早餐）：回永遠放行的函式
+  const friCheck = breakfastSwapCheck({ trip, date: FRI, plan: fri, pois: {}, planArgs: {} });
+  assert.deepEqual([friCheck(slow), friCheck(null), breakfastSwapCheck({ trip, date: THU, plan: { ...thu, pinned: true }, pois: {}, planArgs: {} })(slow), breakfastSwapCheck({ trip, date: THU, plan: null })(slow)], [true, true, true, true]);
+  // 清單的估法跟著改：這種早餐照原位置試（不是排成第一站），填站身上的空檔限制不擋
+  const listed = breakfastSwapCandidates({ plan: thu, day: base.days[0].day, home, pool, legFn: flat, rules, settings, country: JP, kb, exclude: [fri.meals.breakfast, A.id, lunch.id] }).map((c) => c.poi.id);
+  assert.ok(listed.includes(free.id) && !listed.includes(slow.id) && !listed.includes(fri.meals.breakfast), listed.join('、'));
+});
+
+test('換進來的店剛好也能當早餐（甲5）：那筆勾選記 breakfast: false，配早餐時跳過它——那天原本的早餐（引擎排的）繼續是早餐；換掉的就是早餐那一站、那天沒有早餐、換進來的店不能當早餐都不記', () => {
+  // 早餐咖啡：能當早餐、待 40 分——排在引擎排的早餐（待 20 分）後面時，跟早餐時段重疊得比較多
+  const bfCafe = mk('早餐咖啡', { category: 'cafe', walkFactor: 0, recovery: true, cafeLike: true, dwellMin: 40, hours: daily('07:00', '22:00'), meals: { breakfast: '早上有吐司套餐' } });
+  const pool = [noodle, bfCafe];
+  const trip = tripOf([{ date: THU, picks: want(A.id, lunch.id, B.id) }]);
+  const base = planOf(trip, pool, THU);
+  assert.deepEqual([ids(base.plan).slice(0, 2), base.plan.meals.breakfast, base.day.notBreakfast], [[noodle.id, A.id], noodle.id, undefined]);
+  const pois = Object.fromEntries([...pool, ...WORLD].map((p) => [p.id, p]));
+  const next = swapInPlace({ trip, date: THU, fromPoiId: A.id, toPoi: bfCafe, plan: base.plan, pois, at: AT });
+  assert.deepEqual(next.days[0].picks[0], { poiId: bfCafe.id, priority: 'want', via: 'swap', breakfast: false });
+  const after = planOf(next, pool, THU);
+  assert.deepEqual([ids(after.plan).slice(0, 2), after.plan.meals.breakfast, after.day.notBreakfast], [[noodle.id, bfCafe.id], noodle.id, [bfCafe.id]], '引擎排的那一家還是這天的早餐');
+  assert.deepEqual(hinted(after.plan), []);
+  // 對照——沒有那個記號（之前的做法）：早餐卡被換進來的那一家搶走
+  const unmarked = { ...next, days: next.days.map((d) => ({ ...d, picks: d.picks.map(({ breakfast: _b, ...p }) => p) })) };
+  assert.equal(planOf(unmarked, pool, THU).plan.meals.breakfast, bfCafe.id);
+  // 尺本身：day.notBreakfast 裡的站不配早餐，午餐晚餐照常算；沒有那個鍵跟以前一樣
+  const seq = after.plan.sequence;
+  assert.equal(mealAssignments({ sequence: seq, day: { ...after.day, notBreakfast: [noodle.id, bfCafe.id] }, settings, country: JP }).meals.breakfast, null);
+  assert.equal(mealAssignments({ sequence: seq, day: { ...after.day, notBreakfast: undefined }, settings, country: JP }).meals.breakfast, bfCafe.id);
+  assert.equal(mealAssignments({ sequence: seq, day: after.day, settings, country: JP }).meals.lunch, lunch.id);
+  // 不記的幾種：換進來的店不能當早餐；這天沒有早餐（他說吃飯店）；換掉的就是早餐那一站（他勾的站當早餐）
+  assert.equal('breakfast' in swapInPlace({ trip, date: THU, fromPoiId: A.id, toPoi: C, plan: base.plan, pois, at: AT }).days[0].picks[0], false);
+  const hotel = setBreakfast(trip, THU, 'hotel', noodle.id, AT);
+  assert.equal('breakfast' in swapInPlace({ trip: hotel, date: THU, fromPoiId: A.id, toPoi: bfCafe, plan: planOf(hotel, pool, THU).plan, pois, at: AT }).days[0].picks[0], false);
+  const morning = eat('晨間食堂', { hours: daily('07:00', '10:30'), meals: { breakfast: '定食' } });
+  const own = tripOf([{ date: THU, picks: want(morning.id, lunch.id, B.id) }]);
+  const ownPlan = planOf(own, [morning, bfCafe], THU).plan;
+  assert.equal(ownPlan.meals.breakfast, morning.id);
+  const swapped = swapInPlace({ trip: own, date: THU, fromPoiId: morning.id, toPoi: bfCafe, plan: ownPlan, pois: { ...pois, [morning.id]: morning }, at: AT });
+  assert.equal('breakfast' in swapped.days[0].picks[0], false, '換掉的就是早餐那一站：新的那一家頂的就是早餐的位置');
+  assert.equal(planOf(swapped, [morning, bfCafe], THU).plan.meals.breakfast, bfCafe.id);
+  // 沒給 plan（不知道這天有沒有早餐）：不記
+  assert.equal('breakfast' in swapInPlace({ trip, date: THU, fromPoiId: A.id, toPoi: bfCafe, pois, at: AT }).days[0].picks[0], false);
 });

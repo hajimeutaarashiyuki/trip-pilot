@@ -129,12 +129,15 @@
   .opt .opt-note.adds { color: var(--warn); }
   .opt .opt-intro { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; font-size: 14px; color: var(--muted); }
   .insert-ask.many .opt-intro { -webkit-line-clamp: 1; line-clamp: 1; }
+  .insert-ask .ask-more { display: block; width: 100%; min-height: 44px; margin-top: 4px; }   /* 「這站不去」有 6 個以上：前 4 個以外收在這顆「再列 N 站」後面，按了展開（11-24） */
   .btn.text { border: 0; padding: 6px 8px; margin-left: -8px; border-radius: 8px; font-size: 14px; color: var(--accent); text-align: left; background: transparent; }   /* 現場頁單手按：文字鍵也要有 30px 左右的高度（10-16 實測 0 padding 只有 21px）；負邊距讓文字跟卡上其他行對齊 */
   .corridor-now { margin: 2px 0; }
   .warn-list { margin: 6px 0 0; padding-left: 18px; color: var(--warn); font-size: 14px; }
   .warn-list li.hint { color: var(--muted); }
   .dropped summary { color: var(--muted); font-size: 14px; cursor: pointer; }
   .swap-list { margin-top: 8px; }
+  .swap-list .cat { margin-left: 6px; white-space: nowrap; }   /* 換一家清單：別天已經排了的店，店名後的小標「8/15（六）已排」 */
+  .nb { white-space: nowrap; }   /* 不從中間斷行的一小塊（換一家清單的「· 多繞 N 分」） */
   .proposal { border-top: 1px solid var(--line); padding: 8px 0; }
   .resync summary { color: var(--muted); font-size: 14px; cursor: pointer; margin-top: 8px; }
   .list { margin-top: 6px; }

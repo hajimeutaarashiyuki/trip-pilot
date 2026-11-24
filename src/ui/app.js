@@ -5,11 +5,11 @@ import { loadRules } from '../rules/index.js';
 import { BUILTIN } from '../rules/builtin.js';
 import rulesJson from '../rules.json' with { type: 'json' };
 import { planTrip, breakfastLaterDays } from '../engine/trip.js';
-import { chooseDay } from '../engine/choices.js';
+import { swapInPlace, swapBreakfastTrip } from '../engine/choices.js';
 import { applyInsert, unpinDay as unpinTripDay, repinTrip, INSERT_DROP } from '../engine/insert.js';
-import { setBreakfast, clearBreakfast, takeBreakfastOffer, swapBreakfast, keepBreakfasts } from '../engine/breakfast.js';
+import { setBreakfast, clearBreakfast, takeBreakfastOffer, keepBreakfasts } from '../engine/breakfast.js';
 import { makeLegFn } from '../geo/matrix.js';
-import { importPack, loadLatestPack } from '../data/store.js';
+import { importPack, loadLatestPack, loadPack } from '../data/store.js';
 import { readPack } from '../data/pack.js';
 import * as demo from '../demo/sendai.js';
 import { renderPlanner } from './planner.js';
@@ -23,9 +23,9 @@ import { snapshotTripEdits, applyTripEdits, overlayTripEdits, diffTripEdits } fr
 import { visitedPatch, visitedDates, shortName } from './corridor.js';
 import { trialArgs, startInsert, chooseInsertOption, insertDoneText } from './insert.js';
 import { chooseOptionTrip, deferStopTrip, deferNotice, displacedPicks } from './choices.js';
-import { otherDayChanges, otherDaysText } from './other-days.js';
+import { otherDayChanges, otherDaysText, addedWarnings } from './other-days.js';
 import { planArgsOf } from './plan-args.js';
-import { hasLaterDay } from './meals.js';
+import { hasLaterDay, elsewhereOf } from './meals.js';
 import { emptyBrief, normalizeBrief, briefToMarkdown, briefFileName, looksLikeBrief, isBriefEmpty, themeOptions, briefMdName, briefSubmitMode, canSubmitBrief, briefEndpointFor } from '../data/brief.js';
 import { normalizeMemory, rememberFromBrief } from '../data/brief-memory.js';
 import { personsOf, cityNamesOf } from '../engine/persons.js';
@@ -177,10 +177,25 @@ function commitTrip(dates) {
 /**
  * 動作前後，動到的那幾天（dates）以外別天的行程有沒有跟著變（ui/other-days.js；11-12 畫面審查）：有就回一句接在復原列後面的話「；別天跟著變了：8/15（六） 引擎排的 A 換成 B」，沒有回空字串。
  * plansBefore＝動作前的 state.plans（重排之前先留著那個物件）。每個會整趟重排的動作都接：他只動了一天、別天卻變了，至少要講，不要就按「復原」。
+ * 換一家把別天的店挪過來的那一句另外寫（swapStop：那家原本那一天的事緊接在前半句後面，不掛「別天跟著變了」）。
  */
 function alsoChanged(plansBefore, dates) {
   const text = otherDaysText(otherDayChanges({ before: plansBefore, after: state.plans, dates }));
   return text ? `；${text}` : '';
+}
+
+/**
+ * 換一家、「或 B」之後這天多出幾句黃字與提示（ui/other-days.js addedWarnings）：有就回接在復原列最後的「；這天多 N 句提醒」，沒有回空字串（主控 11-24 傍晚定：只寫句數，黃字本身在那天看得到）。
+ * named＝那一句裡另有別的日期（挪店、A 順延到別天、別天跟著變了）：「這天」會讀成那一天，改寫這天的日期。
+ */
+function moreWarnings(plansBefore, date, fromPoiId, toPoiId, named) {
+  const n = addedWarnings(plansBefore[date]?.plan, state.plans[date]?.plan, { [toPoiId]: fromPoiId });
+  return n ? `；${TEXT.moreWarnings(n, named ? dateLabel(date) : null)}` : '';
+}
+
+/** 重排之後掉進排不進清單的勾選站（ui/choices.js displacedPicks 的結果）：接在復原列後面的「；擠掉了 8/13（四） 的 X、…」，沒有回空字串。換一家與「讓引擎重排這天」共用。 */
+function squeezedNote(list) {
+  return list.length ? `；${TEXT.displacedNote(list.map((x) => TEXT.displacedOne(dateLabel(x.date), shortName(x.poi.name_zh ?? x.poi.id))).join('、'))}` : '';
 }
 
 /** 他在規劃頁改了那天的勾選（不去了、換一家）：那天現場套過的改案清掉，回到引擎排。 */
@@ -242,38 +257,57 @@ export function resetTripEdits() {
 }
 
 /**
- * 換一家。釘住順序的日子原位置換掉、其餘各站先後不動（engine/swap.js applySwap 會改寫那天的 pinned）。
- * 那一天怎麼改走 engine/choices.js chooseDay（11-17）：新的那一家不在當天的勾選裡就是 applySwap（A 的那筆換成 B）；它本來就是當天的勾選（清單會列當天勾了但排不進的店）
- * 就把 A 的那筆拿掉、留它自己那筆——之前一律 applySwap，A 的那筆被改成 B、B 原本那筆還在，同一家店同一天排兩次
- * （公務版 8/13 把珈巣多夢換成當天排不進的喫茶 Elbe：序列裡出現兩個 Elbe；11-17 量的，待套用版三包畫出來的候選裡各有 2、4、6 筆是這種）。
- * breakfast: true＝換的是早餐那一站（清單來自 engine/breakfast.js；planner.js toggleSwap 給）：走 swapBreakfast——新的那家標成他指定的早餐、排成第一站；
- * 引擎先挑的早餐也能換，換了就變成他勾的（原話 #196；主控定的落地 D3）。
- * 11-12 起跟「不去了」一樣留一次性的復原（原話 #171、#181 的同一套；之前換一家沒有，換錯了只能再換一次、原本那一家還不一定在清單上）：動手前先快照，
- * 復原列寫「已把 8/14（五） 的 A 換成 B」，重排之後別天也跟著變了就接在後面（alsoChanged）。
+ * 換一家（原話 #90、#91）。一律原位置換掉、其餘各站先後不動，那天從此照他調過的順序排（engine/choices.js swapInPlace；11-24 主控定，原話 #192 的類推）：
+ * 沒釘住的日子先照畫面上這一版釘住——之前是整天重新搜尋，選的那一家不保證排進去、同一天別的勾選站也可能被擠掉（11-17 畫面審查）。
+ * 清單上的每一家都先試排過（ui/meals.js swapListOf），所以從清單選的一定排得進；日期下面會出現「這天照你調過的順序排」＋「讓引擎重排這天」。
+ * 選的是別天已經排了的店（清單上帶小標「8/15（六）已排」的）＝把它挪過來：它原本那天的勾選拿掉（不是「不去了」，不留拒絕紀錄）。
+ * 它原本那天不整天重排（11-24 傍晚主控裁決甲1；原話 #192 的類推，推導、待收口）：那家在那天的行程裡（他勾的、引擎排的）就先把那天照畫面上這一版釘住、原位置拿掉那一筆——
+ * 那天其餘各站與先後不變，這天與那天以外逐站逐時刻不變；引擎不替那天補站（可能少一餐、多一句提示），要補由他按那天的「讓引擎重排這天」。
+ * 那家在那天只是「勾了沒排進」（畫面上沒有站要動）：只拿掉勾選；重排出來別天逐站相同就不釘住，不相同（少了那筆勾選，那天搜出來的不一樣）才照畫面釘住再排一次。
+ * 新的那一家本來就是當天的勾選（當天勾了但排不進的）就留它自己那筆、把 A 的那筆拿掉。
+ * breakfast: true＝換的是早餐那一站（清單來自 engine/breakfast.js；planner.js toggleSwap 給）：走 engine/choices.js swapBreakfastTrip——新的那家標成他指定的早餐；
+ * 引擎先挑的早餐也能換，換了就變成他勾的、排成第一站（原話 #196；主控定的落地 D3）；早餐是他勾的站自己落在早餐時段時也原位置換掉、把那天釘住（甲4）。
+ * 跟「不去了」一樣留一次性的復原（原話 #171「對了 如果我按不去了 也要一次性的恢復按鈕 進行第二次確認或反悔的機會」的同一套）：動手前先快照整趟，
+ * 按「復原」兩天一起回去、兩天都回到原本釘不釘住的樣子。
  */
 export function swapStop(date, fromPoiId, toPoi, { breakfast = false } = {}) {
   const day = state.trip.days.find((d) => d.date === date);
   if (!day || state.busy) return;
-  const before = editsSnapshot();
-  const plansBefore = state.plans;
-  // 兩家店名都用短的（括號裡的研究註記拿掉；跟安插那一句一樣）：這一句有兩個店名，帶註記的全名在手機上會多兩三行
-  const fromName = shortName(state.pois[fromPoiId]?.name_zh ?? fromPoiId);
-  state.notice = null;
-  if (!state.pois[toPoi.id]) state.pois[toPoi.id] = toPoi;
-  if (breakfast) state.trip = swapBreakfast(state.trip, date, toPoi.id, state.plans[date]?.plan);
-  else Object.assign(day, chooseDay(day, fromPoiId, toPoi));
-  commitTrip([date]);
-  // 復原列看重排的結果寫（11-17 畫面審查；之前不看結果一律寫「換成」、只比別天）：
-  // - 選的那一家排進去了才寫「已把 A 換成 B」；重排之後它還是排不進（今天沒開、撞到必去或主行程）就寫「已把 A 拿掉，但 B 今天排不進」。
-  //   沒釘住的日子換了之後整天重新搜尋，引擎會讓他剛選的那一家先排（engine/core.js chosenPullOf），所以排不進是少數。
-  // - 當天別的勾選站因此落到排不進清單（重新搜尋換了一組站）：接「擠掉了 8/13（四） 的 X」，跟二選一同一句（displacedPicks；B 自己不算在裡面）。
-  const toName = shortName(toPoi.name_zh ?? toPoi.id);
-  const placed = (state.plans[date]?.plan?.sequence ?? []).some((s) => s.poi.id === toPoi.id);
-  const lead = placed ? TEXT.undoSwapped(fromName, toName, dateLabel(date)) : TEXT.undoSwapUnplaced(fromName, toName, dateLabel(date));
-  const squeezed = displacedPicks({ before: plansBefore, after: state.plans, dates: [date] }).filter((x) => x.poi.id !== toPoi.id);
-  const squeezedText = squeezed.length ? `；${TEXT.displacedNote(squeezed.map((x) => TEXT.displacedOne(dateLabel(x.date), shortName(x.poi.name_zh ?? x.poi.id))).join('、'))}` : '';
-  state.undo = { kind: 'swap', dates: [date], before, text: `${lead}${squeezedText}${alsoChanged(plansBefore, [date])}` };
-  render();
+  state.undo = null;   // 上一個動作的復原列先收掉，只留「正在重排…」那一句
+  afterPaint(() => {
+    const before = editsSnapshot();
+    const plansBefore = state.plans; const tripBefore = state.trip;
+    // 兩家店名都用短的（括號裡的研究註記拿掉；跟安插那一句一樣）：這一句有兩個店名，帶註記的全名在手機上會多兩三行
+    const fromName = shortName(state.pois[fromPoiId]?.name_zh ?? fromPoiId);
+    state.notice = null;
+    if (!state.pois[toPoi.id]) state.pois[toPoi.id] = toPoi;
+    // 選的那一家現在在別天的哪裡（挪走之前先問；必去、指定、主行程、固定時段的站引擎不挪，也就不講）
+    const where = breakfast ? null : elsewhereOf(state, date)(toPoi);
+    const moved = where && !where.locked ? where : null;
+    const dates = [date, moved?.date].filter(Boolean);
+    const plan = plansBefore[date]?.plan;
+    // 換、重排，回別天跟著變了什麼（那家自己從原本那天不見了不算；ui/other-days.js）。都從動作前的旅程檔做起，第二次不疊在第一次上
+    const swap = (pinIdle) => {
+      state.trip = breakfast ? swapBreakfastTrip({ trip: tripBefore, date, toPoi, plan })
+        : swapInPlace({ trip: tripBefore, date, fromPoiId, toPoi, plan, pois: state.pois, baseline: { days: Object.values(plansBefore) }, pinIdle });
+      commitTrip(dates);
+      return otherDayChanges({ before: plansBefore, after: state.plans, dates: [date], moved });
+    };
+    let changes = swap(false);
+    if (moved?.how === 'dropped' && changes.length && !state.trip.days.find((d) => d.date === moved.date)?.pinned) changes = swap(true);
+    // 復原列看重排的結果寫（11-17 畫面審查；之前不看結果一律寫「換成」；11-24 傍晚主控定的短寫法）：
+    // - 選的那一家排進去了才寫「已把 A 換成 B」；它還是排不進（不是從清單選的：今天沒開、原位置待不下）就寫「已把 A 拿掉，但 B 今天排不進」。
+    // - 它原本在別天：緊接一個括號「（從 8/12（三）挪過來）」「（原本勾在 8/13（四）、那天沒排進）」，店名不寫第二次；那天因此多出的提示、排進來的站接在後面
+    //   「；8/12（三） 今天沒排晚餐」。那天變成釘住由那天日期下面那一行表示，這裡不重複講。這天與那天以外照理不會變，萬一變了照舊接「別天跟著變了：…」。
+    // - 當天別的勾選站因此落到排不進清單：接「擠掉了 8/13（四） 的 X」，跟二選一同一句（displacedPicks；B 自己不算在裡面）。從清單選的不會有（試排過）。
+    // - 這天因此多出黃字：最後接「；這天多 N 句提醒」。
+    const toName = shortName(toPoi.name_zh ?? toPoi.id);
+    const placed = (state.plans[date]?.plan?.sequence ?? []).some((s) => s.poi.id === toPoi.id);
+    const lead = `${placed ? TEXT.undoSwapped(fromName, toName, dateLabel(date)) : TEXT.undoSwapUnplaced(fromName, toName, dateLabel(date))}${moved ? TEXT.swapMovedFrom(moved.how, dateLabel(moved.date)) : ''}`;
+    const squeezed = displacedPicks({ before: plansBefore, after: state.plans, dates: [date] }).filter((x) => x.poi.id !== toPoi.id);
+    const also = otherDaysText(changes, 2, moved?.date ?? null);
+    state.undo = { kind: 'swap', dates, before, text: `${lead}${squeezedNote(squeezed)}${also ? `；${also}` : ''}${moreWarnings(plansBefore, date, fromPoiId, toPoi.id, Boolean(moved || also))}` };
+  });
 }
 
 /**
@@ -283,19 +317,21 @@ export function swapStop(date, fromPoiId, toPoi, { breakfast = false } = {}) {
 export function removeStop(date, poiId, insertedBy = null, priority = null) {
   const day = state.trip.days.find((d) => d.date === date);
   if (!day || state.busy) return;
-  // 一次性的復原（原話 #171「如果我按不去了 也要一次性的恢復按鈕 進行第二次確認或反悔的機會」）：動手前先快照，下一個動作前都能按「復原」
-  const before = editsSnapshot();
-  const plansBefore = state.plans;
-  // via：那筆勾選是走廊清單升級進來的（picks[].via 'corridor'；engine/insert.js）就帶到 removed 那一筆——別天挑引擎插站時它照樣是「挑好名單才拿掉」，不然別天會跟著變（11-12 審查）。
-  // 釘住順序的日子上拒絕引擎插的站同理（記 INSERT_DROP，跟安插的選項裡選「不去」那一站同一個記號）：那天之前的日子挑好名單才拿掉、那天起照舊算插過的
-  const via = (day.picks ?? []).find((p) => p.poiId === poiId)?.via ?? (insertedBy === 'engine' && day.pinned ? INSERT_DROP : undefined);
-  const removedEntry = { poiId, at: new Date().toISOString(), ...(insertedBy ? { insertedBy } : {}), ...(priority ? { priority } : {}), ...(via ? { via } : {}) };
-  day.picks = (day.picks ?? []).filter((p) => p.poiId !== poiId);
-  day.removed = [...(day.removed ?? []), removedEntry];   // 不算落選（原話 #91）
-  state.notice = null;
-  commitTrip([date]);
-  state.undo = { kind: 'remove', dates: [date], before, text: `${TEXT.undoRemoved(state.pois[poiId]?.name_zh ?? poiId, dateLabel(date))}${alsoChanged(plansBefore, [date])}` };
-  render();
+  state.undo = null;
+  afterPaint(() => {
+    // 一次性的復原（原話 #171「如果我按不去了 也要一次性的恢復按鈕 進行第二次確認或反悔的機會」）：動手前先快照，下一個動作前都能按「復原」
+    const before = editsSnapshot();
+    const plansBefore = state.plans;
+    // via：那筆勾選是走廊清單升級進來的（picks[].via 'corridor'；engine/insert.js）就帶到 removed 那一筆——別天挑引擎插站時它照樣是「挑好名單才拿掉」，不然別天會跟著變（11-12 審查）。
+    // 釘住順序的日子上拒絕引擎插的站同理（記 INSERT_DROP，跟安插的選項裡選「不去」那一站同一個記號）：那天之前的日子挑好名單才拿掉、那天起照舊算插過的
+    const via = (day.picks ?? []).find((p) => p.poiId === poiId)?.via ?? (insertedBy === 'engine' && day.pinned ? INSERT_DROP : undefined);
+    const removedEntry = { poiId, at: new Date().toISOString(), ...(insertedBy ? { insertedBy } : {}), ...(priority ? { priority } : {}), ...(via ? { via } : {}) };
+    day.picks = (day.picks ?? []).filter((p) => p.poiId !== poiId);
+    day.removed = [...(day.removed ?? []), removedEntry];   // 不算落選（原話 #91）
+    state.notice = null;
+    commitTrip([date]);
+    state.undo = { kind: 'remove', dates: [date], before, text: `${TEXT.undoRemoved(state.pois[poiId]?.name_zh ?? poiId, dateLabel(date))}${alsoChanged(plansBefore, [date])}` };
+  });
 }
 
 /** 復原列的「關閉」：把那一列收掉、不復原（之後就不能復原這一個動作了；旅程沒有動）。 */
@@ -315,10 +351,11 @@ export function undoLast() {
   const u = state.undo;
   if (!u || state.busy) return;
   state.undo = null;
-  state.notice = null;
-  state.trip = overlayTripEdits(state.trip, JSON.parse(JSON.stringify(u.before)));
-  commitTrip(u.dates ?? []);
-  render();
+  afterPaint(() => {
+    state.notice = null;
+    state.trip = overlayTripEdits(state.trip, JSON.parse(JSON.stringify(u.before)));
+    commitTrip(u.dates ?? []);
+  });
 }
 
 /**
@@ -369,7 +406,12 @@ function settleInsert(date, args, step) {
   state.notice = null;
 }
 
-/** 「讓引擎重排這天」（釘住順序的日子日期下面那顆小鍵）：解除釘住、那天交回引擎整天重排；選項裡調過的「少待」跟著順序走、解除就不留。一次性復原。 */
+/**
+ * 「讓引擎重排這天」（釘住順序的日子日期下面那顆小鍵）：解除釘住、那天交回引擎整天重排；選項裡調過的「少待」跟著順序走、解除就不留。一次性復原。
+ * 整天重新搜尋之後有他勾的站掉進排不進清單（照他調過的順序排得下、交回引擎卻排不進：用到留白的、換進來的那一家），復原列接「；X 排不進了」
+ * （11-24 傍晚主控裁決甲6；對抗審查量七天包「換了再讓引擎重排」100 次裡 4 次、試走版 52 次裡 5 次，之前只寫「已讓引擎重排」。
+ * 不沿用換一家那句「擠掉了 8/13（四） 的 X」：這裡沒有誰擠它，是交回引擎之後它排不進；日期前面剛寫過，也不重複）。
+ */
 export function unpinDay(date) {
   if (state.busy || !state.trip) return;
   const next = unpinTripDay(state.trip, date);
@@ -379,7 +421,8 @@ export function unpinDay(date) {
     const plansBefore = state.plans;
     state.trip = next;
     commitTrip([date]);
-    state.undo = { kind: 'unpin', dates: [date], before, text: `${TEXT.undoUnpinned(dateLabel(date))}${alsoChanged(plansBefore, [date])}` };
+    const fell = displacedPicks({ before: plansBefore, after: state.plans, dates: [date] }).map((x) => shortName(x.poi.name_zh ?? x.poi.id));
+    state.undo = { kind: 'unpin', dates: [date], before, text: `${TEXT.undoUnpinned(dateLabel(date))}${fell.length ? `；${TEXT.otherDays.dropped(fell.join('、'))}` : ''}${alsoChanged(plansBefore, [date])}` };
     state.notice = null;
   });
 }
@@ -459,7 +502,8 @@ export function takeBreakfast(date, poiId) {
 }
 
 /**
- * 二選一選了 B（原話 #119「我選一間，到了 17 號就會自動排進另一間」；T16）：那天的 picks 把 A 換成 B（換這一站的邏輯，換掉的不算落選）、A 順延到別天
+ * 二選一選了 B（原話 #119「我選一間，到了 17 號就會自動排進另一間」；T16）：那天把 A 原位置換成 B（換這一站的邏輯，換掉的不算落選；11-24 起沒釘住的日子也先照畫面上這一版釘住，
+ * 跟換一家同一條路——engine/choices.js swapInPlace；卡上的「或 B」畫之前就試排過，選了一定排得進）、A 順延到別天
  * （engine/choices.js defer：主題日優先、再其餘 normal 日由早到晚，每天用引擎試排，排得進就定案；全排不進就先留在候選池），兩天現場套過的改案清掉、整趟重排；
  * 頂端一句「A 已排到 8/17」或「A 先留在候選池（別天排不進）」，重排擠掉了別的勾選站就接「擠掉了 8/13 的 X」（displacedPicks）——這句放在復原列上（state.undo.text）。
  * 跟「不去了」一樣有一次性復原（原話 #181）：試排前整趟的 picks／removed／swapped 與 deferred 先快照（snapshotTripEdits，JSON clone），按「復原」整份蓋回去重排（undoLast）。
@@ -480,10 +524,11 @@ export function chooseOption(date, fromPoiId, toPoi) {
     if (r.toDate) clearApplied(r.toDate);
     saveTripEdits();
     replan();
-    // 選的那一家（B）重排之後自己排不進：另外講「B 今天排不進」，不寫成「擠掉了 B」（11-17；引擎會讓他剛選的那一家先排，排不進是今天沒開、撞到必去或主行程）
+    // 選的那一家（B）重排之後自己排不進：另外講「B 今天排不進」，不寫成「擠掉了 B」（11-17）。卡上的「或 B」都試排過、不會這樣；不經過卡直接叫動作（B 今天沒開）時照實講
     const placed = (state.plans[date]?.plan?.sequence ?? []).some((s) => s.poi.id === toPoi.id);
     const squeezed = displacedPicks({ before: plansBefore, after: state.plans, dates: [date, r.toDate] }).filter((x) => !(x.date === date && x.poi.id === toPoi.id));
-    state.undo = { kind: 'choose', dates: [date, r.toDate].filter(Boolean), before, name, text: `${deferNotice(r.entry, name, squeezed, placed ? null : shortName(toPoi.name_zh ?? toPoi.id))}${alsoChanged(plansBefore, [date, r.toDate])}` };
+    // 最後接「；8/13（四） 多 N 句提醒」（這天因此多出的黃字；那一句講的是 A 排到哪一天、沒有這天的日期，所以寫日期）
+    state.undo = { kind: 'choose', dates: [date, r.toDate].filter(Boolean), before, name, text: `${deferNotice(r.entry, name, squeezed, placed ? null : shortName(toPoi.name_zh ?? toPoi.id))}${alsoChanged(plansBefore, [date, r.toDate])}${moreWarnings(plansBefore, date, fromPoiId, toPoi.id, true)}` };
     state.notice = null;   // 那句改由復原列顯示；afterPaint 看到不是「正在重排…」就不放回本來那句（跟之前被 deferNotice 取代一樣）
   });
 }
@@ -537,10 +582,18 @@ export function markVisited(date, poiId) {
   setField(visitedPatch(state.field, date, poiId, new Date().toISOString()));
 }
 
-/** 收一份打包檔 JSON：格式不對在 readPack 丟；先寫進 IndexedDB（手機是真相）再載入畫面。 */
+/**
+ * 收一份打包檔 JSON：格式不對在 readPack 丟；先寫進 IndexedDB（手機是真相）再載入畫面。
+ * 載入的是存進去之後讀回來的那一份（data/store.js loadPack；11-24 傍晚主控裁決乙1）——跟重開頁面是同一條讀取的路，「剛按完更新」與「重開之後」記憶體裡的資料逐筆相同。
+ * 之前這裡直接拿打包檔載入（POI 是打包檔的先後），重開頁面卻是從 IndexedDB 讀回來（POI 是 id 的排序），兩邊排出來的行程與清單會不一樣（對抗審查第 1 項）。
+ * 寫得進去卻讀不回來（照理不會）就退回拿打包檔載入，不讓這一次更新白按。
+ */
 export async function applyPackJson(json, { persist = true } = {}) {
-  const result = readPack(json);
-  if (persist) await importPack(json);
+  let result = readPack(json);
+  if (persist) {
+    const { tripId } = await importPack(json);
+    result = (await loadPack(tripId).catch(() => null)) ?? result;
+  }
   loadFromPack(result);
   state.packStatus = TEXT.updated(result.pack.trip.name ?? result.pack.trip.id, result.pack.meta?.generatedAt);
   render();

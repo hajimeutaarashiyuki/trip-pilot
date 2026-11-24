@@ -16,6 +16,11 @@ const { state } = app;
 const realFetch = globalThis.fetch;
 const URL_ = 'http://127.0.0.1:1/pack.json';
 const OFFLINE = '更新失敗：連不上桌機，或這台裝置沒有網路。這台裝置裡原本的旅程還在。';
+/** 等先畫一句再算的動作（app.js afterPaint；11-24 起「不去了」也是）跑完。 */
+async function settle() {
+  for (let i = 0; i < 400 && state.busy; i += 1) await new Promise((resolve) => setTimeout(resolve, 5));
+  assert.equal(state.busy, false, '動作沒有跑完');
+}
 
 function load() {
   dom.storage.clear();
@@ -105,7 +110,7 @@ test('其他的錯照舊帶原文：HTTP 狀態碼、不是打包檔；句尾不
 
 test(`打包檔比 App 新（版本 ${PACK_VERSION + 1}；App 認到 ${PACK_VERSION}）：不收，那一句讀得通；原本的旅程、規劃頁的改動（localStorage）都還在；一樣新或比較舊的照收到讀檔那一步`, async () => {
   load();
-  app.removeStop(THU, B.id);   // 先留一筆本機改動
+  app.removeStop(THU, B.id); await settle();   // 先留一筆本機改動
   const edits = dom.storage.get('trip-pilot:trip-edits');
   assert.ok(edits, '有本機改動');
   const seq = idsOf(state.plans[THU].plan);

@@ -34,6 +34,28 @@ export function readPack(json) {
   return { pack, pois, warnings };
 }
 
+/**
+ * 手機裡存的一趟還原成 readPack 那種 { pack, pois }（data/store.js loadPack／loadLatestPack 用；純函式）。
+ * record＝trips 那一筆（旅程物件，外加資料層自己放的 cityId、city、country、zones、walk、rules、packMeta、poiOrder）；cityPois＝pois 表裡同一個城市的每一筆。
+ * POI 的先後照 record.poiOrder（這一包每筆 POI 的 id，照打包檔的先後；store.js importPack 記的），也只拿名單上的（11-24 傍晚主控裁決乙1）：
+ * - pois 表是一筆一筆存的，用索引整批讀回來是 id 的排序（IndexedDB 照主鍵排）。引擎幾個「取前幾家」同分時照池子的先後，所以之前「剛按完更新」
+ *   （打包檔的先後）與「重開頁面之後」（id 的排序）排出來的行程、換一家清單、走廊清單會不一樣——對抗審查在真瀏覽器量到公務版 8/15 重開之後自己變了
+ *   （引擎排的 TRUE VINTAGE. 換成 Room-9）、七天包 45 份換一家清單 10 份不同。桌機的工具與量測一直用的是打包檔的先後。
+ * - 匯入只寫不刪：舊包有、新包沒有的店會留在表裡（10-27 的包有一筆「作並溫泉 日歸溫泉」，之後知識庫拿掉了）。照名單拿，它就不會在重開之後跑回知識庫裡。
+ *   主控原本寫的是「每筆 POI 存序號、每一筆都有序號才排」：手機裡那一筆舊的沒有序號，會變成永遠不排，所以改成把名單記在旅程那一筆上（推導）。
+ * 沒有名單（上一版 App 存的資料）就原樣給——同城的每一筆、id 的排序，跟以前一樣；等他下次按「更新」才有名單。名單上有、表裡沒有的 id 跳過（照理不會有：同一個交易寫的）。
+ * 區、連結、步行矩陣、國家層、規則都整包存在旅程那一筆裡，讀回來鍵的先後原樣，跟讀取的順序無關。
+ */
+export function packFromStore(record, cityPois = []) {
+  const { cityId, city, country, zones, walk, rules, packMeta, poiOrder, ...trip } = record;
+  let pois = cityPois;
+  if (Array.isArray(poiOrder)) {
+    const byId = new Map(cityPois.map((p) => [p.id, p]));
+    pois = poiOrder.map((id) => byId.get(id)).filter(Boolean);
+  }
+  return { pack: { meta: packMeta, city: city ?? { id: cityId }, country, zones, walk, trip, rules }, pois };
+}
+
 /** 兩個打包檔誰新：generatedAt 字串比對（ISO 8601 可以直接比）。 */
 export function isNewer(a, b) {
   return String(a?.meta?.generatedAt ?? '') > String(b?.meta?.generatedAt ?? '');

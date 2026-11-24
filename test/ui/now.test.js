@@ -35,6 +35,20 @@ test('fieldPool：當日區域內、扣掉今天排了的、別天排了的、�
   assert.deepEqual(fieldPool(stateOf(noAdjust), noAdjust, noAdjust.plan.sequence).map((c) => c.poi.id).sort(), ['咖啡廳', '食堂'].sort(), '沒 adjust（舊快照）照舊');
 });
 
+test('fieldPool 也認同一處（知識庫 samePlace；11-24 傍晚主控裁決乙6）：今天行程裡的站、別天排進去的站、按過「不去了」的站，同一處的另一筆都不拿；哪一邊寫都認、陣列也收；沒有這個欄位照舊', () => {
+  const plain = plannedOf({ stamina: 'normal', nightSlot: 'default', avoidCategories: [], avoidBy: {} });
+  // 知識庫裡某一筆多寫 samePlace（行程裡的站物件不用跟著改：對照表是拿整個知識庫建的）
+  const withTwin = (id, target) => { const s = stateOf(plain); return { ...s, pois: { ...s.pois, [id]: { ...s.pois[id], samePlace: target } } }; };
+  const idsOf = (s) => fieldPool(s, plain, plain.plan.sequence).map((c) => c.poi.id).sort();
+  assert.deepEqual(idsOf(stateOf(plain)), ['咖啡廳', '食堂'].sort(), '對照（沒有 samePlace）');
+  assert.deepEqual(idsOf(withTwin('咖啡廳', '街區A')), ['食堂'], '今天行程裡的站的另一筆不拿');
+  assert.deepEqual(idsOf(withTwin('咖啡廳', '別天的咖啡')), ['食堂'], '別天排進去的站的另一筆不拿');
+  assert.deepEqual(idsOf(withTwin('食堂', '不去了的咖啡')), ['咖啡廳'], '按過「不去了」的站的另一筆不拿');
+  assert.deepEqual(idsOf(withTwin('街區B', '食堂')), ['咖啡廳'], '寫在行程裡那一筆上也算');
+  assert.deepEqual(idsOf(withTwin('咖啡廳', ['不存在的', '街區C'])), ['食堂'], '陣列也收');
+  assert.deepEqual(idsOf(withTwin('咖啡廳', '食堂')), ['咖啡廳', '食堂'].sort(), '池裡兩筆彼此同一處、兩筆都沒排：都還在池裡（哪一筆被拿去坐由改案挑）');
+});
+
 test('硬時限受威脅那組（五種策略）與「累了」那組拿 fieldPool：同行者不去咖啡廳 → 降速／只坐一下插的是食堂不是咖啡廳；整個知識庫當 pool 才會插咖啡廳（10-16 審查的探針）', () => {
   const avoided = plannedOf({ stamina: 'normal', nightSlot: 'default', avoidCategories: ['cafe'], avoidBy: {} });
   const state = stateOf(avoided);

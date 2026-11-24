@@ -59,33 +59,12 @@ export function spotLatestEnd({ poi, startMin, day, settings = {}, country = nul
   return Number.isFinite(latest) ? Math.floor(latest) : latest;   // 日落算出來有小數，時刻取整分
 }
 
-/**
- * 他當場選進來的那一家（換一家、二選一選了 B；candidate.chosen——engine/trip.js 照旅程檔那天的 swapped 紀錄標）在搜尋裡多算的分鐘：settings.chosenPullMin，缺或寫壞用 CHOSEN_PULL_DEFAULT_MIN。
- * 只影響「挑哪幾站、怎麼排」，不進回報的分數（plan.score 照舊是 Σ 價值 − Σ 罰分，跟 engine/sequence.js evaluateSequence 對同一條序列算出來的一樣）。
- * 什麼時候用：engine/trip.js runDay 先照平常排一次（候選不帶 chosen），選的那家沒排進去才帶著 chosen 再排一次——所以平常的日子、選的那家本來就排得進的日子都不受影響。
- * 為什麼要有：沒釘住的日子換了之後整天重新搜尋，同類一天最多 2 家時誰排進去由分數決定——他剛選的那家跟別的勾選站同分量，常常排不進
- * （11-17 畫面審查：試走版 8/17 把 TRUE VINTAGE. 換成當天排不進的古著屋 me，排進去的是 SEGA-RU、me 還在排不進清單，復原列卻寫換好了；三包每筆候選各選一次共 168 次裡 5 次）。
- * 取 60（推導）：想去（90）加上它是 150——高過任何一家沒被他當場選的想去／可去，低於必去（180）；可去（45）加上它是 105，高過想去。主行程、必去、固定時段的站不會被它擠掉。
- * 11-17 比過 0／45／60／90／1000（1000＝只要排得進就一定排；這一組是用「每次都多算」的寫法量的）：
- * - 待套用版三包，每張有「換一家」的站卡每筆候選各選一次再復原（168 次）＋沒釘住的日子每個「或 B」各選一次（11 次）：選的那家沒排進 0 是 5＋1 次，45／60／90／1000 都是 0＋0 次；
- *   當天別的勾選站掉進排不進五種都是 24 次（那是整天重新搜尋換了一組站，復原列會講；ui/app.js swapStop）、必去或主行程掉了都是 0 次——真包上四個正的值分不出來。
- *   改成「沒排進才多算」之後六個包重量（換一家 317 次、「或 B」22 次）：選的那家沒排進 0 次、必去或主行程掉了 0 次。
- * - 合成情境（同類一天最多 2 家、三家同條件的古著店）：45 的話「可去的那一家被選了」還是排不過兩家想去（45＋45＝90 打平、照先後）；1000 的話兩家必去會被他選的想去擠掉一家；
- *   60 與 90 兩種都對，90 時被選的想去跟必去同分（180），取還留著 30 分差距的 60。
- */
-export const CHOSEN_PULL_DEFAULT_MIN = 60;
-export function chosenPullOf(settings = {}) {
-  const v = settings?.chosenPullMin;
-  return Number.isFinite(v) && v >= 0 ? v : CHOSEN_PULL_DEFAULT_MIN;
-}
-
-function orderCandidates(list, pull = 0) {
-  const worth = (c) => candidateValue(c) + (c.chosen ? pull : 0);
+function orderCandidates(list) {
   return [...list].sort((a, b) => {
     const fa = a.fixedWindow ? a.fixedWindow.startMin : Infinity;
     const fb = b.fixedWindow ? b.fixedWindow.startMin : Infinity;
     if (fa !== fb) return fa - fb;
-    return worth(b) - worth(a);
+    return candidateValue(b) - candidateValue(a);
   });
 }
 
@@ -106,12 +85,7 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
   const maxOptional = settings.restInsertMaxPerDay ?? 2;   // 一天最多排幾個 optional（引擎插的恢復站、填站、順路站三種合計；rules.json settings.restInsertMaxPerDay）：價值 0 的站不受上界剪枝，不設上限會把節點吃光
   const explain = Boolean(options.explain);
   const started = Date.now();
-  // pull：他當場選進來的站（c.chosen）在搜尋裡多算的分鐘（chosenPullOf）。分數另外記（score 照舊只算價值與罰分；pulled 是這條分支已經排進去的那幾家合計多算的），
-  // 比哪一條好看的是兩個相加（best.obj）。沒有 chosen 的候選時 pulled 永遠是 0，每一步比的數字跟以前一模一樣。
-  const pull = chosenPullOf(settings);
-  const pullOf = (c) => (c.chosen ? pull : 0);
-  // worth＝價值＋多算的那一份（沒被選的就是價值本身）：上界與貪婪那兩處每個節點都要加一輪，先算好
-  const cands = orderCandidates(candidates.map((c, i) => { const value = candidateValue(c, settings); return { ...c, _i: i, value, worth: value + pullOf(c), dwellMin: c.dwellMin ?? c.poi.dwellMin ?? settings.defaultDwellMin ?? 60 }; }), pull);
+  const cands = orderCandidates(candidates.map((c, i) => ({ ...c, _i: i, value: candidateValue(c, settings), dwellMin: c.dwellMin ?? c.poi.dwellMin ?? settings.defaultDwellMin ?? 60 })));
   const stats = { nodes: 0, truncated: false, ms: 0 };
   const dead = new Map();   // _i → 第一次 never 的人話理由
   const placedEver = new Set();   // 在任何一條分支裡排進去過的候選：落選是分數取捨，不是硬約束擋的（理由不能拿 never 的那句誤導，例如「天黑」）
@@ -119,24 +93,23 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
 
   const dayCtxBase = { day, settings, country, kb };
 
-  function tryEnd(seq, acc, score, path, pulled = 0) {
+  function tryEnd(seq, acc, score, path) {
     const dayEval = evaluateDay({ ...dayCtxBase, sequence: seq, acc }, rules);
     const total = score - dayEval.penaltyMin;
-    const obj = total + pulled;
     const complete = dayEval.verdict === 'ok';
-    if (!best || (complete && !best.complete) || (complete === best.complete && obj > best.obj)) {
-      best = { total, obj, complete, seq: [...seq], path: [...path], dayEval, acc };
+    if (!best || (complete && !best.complete) || (complete === best.complete && total > best.total)) {
+      best = { total, complete, seq: [...seq], path: [...path], dayEval, acc };
     }
   }
 
-  function search(seq, remaining, acc, score, path, pulled = 0) {
+  function search(seq, remaining, acc, score, path) {
     if (stats.nodes++ > maxNodes || Date.now() - started > maxMs) { stats.truncated = true; return; }
-    tryEnd(seq, acc, score, path, pulled);
+    tryEnd(seq, acc, score, path);
     if (!remaining.length) return;
     // 上界：最多再放 (上限 − 已放) 站，取價值最高的那幾個（remaining 已按價值排序）；optional 的站不佔名額（max-stops 只數他勾的），不扣
     const slots = Math.max(0, (settings.maxStopsPerDay ?? 8) - seq.filter((s) => !s.optional).length);
-    const optimistic = score + pulled + remaining.slice(0, slots).reduce((s, c) => s + c.worth, 0);
-    if (best && best.complete && optimistic <= best.obj) return;
+    const optimistic = score + remaining.slice(0, slots).reduce((s, c) => s + c.value, 0);
+    if (best && best.complete && optimistic <= best.total) return;
     const prev = seq.length ? seq[seq.length - 1] : null;
     const prevEnd = prev ? prev.endMin : day.window.startMin;
     const optionalPlaced = seq.reduce((n, s) => n + (s.optional ? 1 : 0), 0);
@@ -163,7 +136,7 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
       if (r.verdict === 'no') continue;
       const nextRemaining = remaining.filter((o) => o._i !== c._i && !nowDead.includes(o._i));
       placedEver.add(c._i);
-      search([...seqNow, stop], nextRemaining, r.acc, score + c.value - r.penaltyMin, [...path, { stop, penaltyMin: r.penaltyMin, breakdown: r.breakdown, warnings: r.warnings, acc: r.acc }], pulled + pullOf(c));
+      search([...seqNow, stop], nextRemaining, r.acc, score + c.value - r.penaltyMin, [...path, { stop, penaltyMin: r.penaltyMin, breakdown: r.breakdown, warnings: r.warnings, acc: r.acc }]);
       if (stats.truncated) return;
     }
   }
@@ -174,7 +147,7 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
   stats.ms = Date.now() - started;
 
   function greedySeed() {
-    let seq = []; let remaining = cands; let acc = emptyAcc(rules.dims); let score = 0; let pulled = 0; const path = [];
+    let seq = []; let remaining = cands; let acc = emptyAcc(rules.dims); let score = 0; const path = [];
     for (;;) {
       const prev = seq.length ? seq[seq.length - 1] : null;
       const prevEnd = prev ? prev.endMin : day.window.startMin;
@@ -190,19 +163,19 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
         const stop = { poi: c.poi, dwellMin: c.dwellMin, ...placed, isAnchor: Boolean(c.isAnchor), designated: Boolean(c.designated), priority: c.priority, fixedWindow: c.fixedWindow ?? null, candidateIndex: c._i, optional: Boolean(c.optional), insertedBy: c.insertedBy ?? null, gap: c.gap ?? null, errand: Boolean(c.errand), deferredFrom: c.deferredFrom ?? null };
         const r = evaluateStop({ ...dayCtxBase, stop, prev: flex.prev, next: null, leg, acc, sequence: seqNow }, rules);
         if (r.verdict !== 'ok') continue;
-        const gain = c.worth - r.penaltyMin;   // 挑下一站看的（含他當場選的那一家多算的）；記進分數的不含（下面 score 只加價值減罰分）
+        const gain = c.value - r.penaltyMin;
         if (!pick || gain > pick.gain || (gain === pick.gain && placed.startMin < pick.stop.startMin)) pick = { c, stop, r, gain, seqNow };
       }
       if (!pick || pick.gain <= 0) break;
       placedEver.add(pick.c._i);
-      seq = [...pick.seqNow, pick.stop]; acc = pick.r.acc; score += pick.c.value - pick.r.penaltyMin; pulled += pullOf(pick.c);
+      seq = [...pick.seqNow, pick.stop]; acc = pick.r.acc; score += pick.gain;
       path.push({ stop: pick.stop, penaltyMin: pick.r.penaltyMin, breakdown: pick.r.breakdown, warnings: pick.r.warnings, acc: pick.r.acc });
       remaining = remaining.filter((o) => o._i !== pick.c._i);
     }
-    tryEnd(seq, acc, score, path, pulled);
+    tryEnd(seq, acc, score, path);
   }
 
-  if (!best) best = { total: 0, obj: 0, complete: false, seq: [], path: [], dayEval: evaluateDay({ ...dayCtxBase, sequence: [], acc: emptyAcc(rules.dims) }, rules), acc: emptyAcc(rules.dims) };
+  if (!best) best = { total: 0, complete: false, seq: [], path: [], dayEval: evaluateDay({ ...dayCtxBase, sequence: [], acc: emptyAcc(rules.dims) }, rules), acc: emptyAcc(rules.dims) };
   const placedIdx = new Set(best.seq.map((s) => s.candidateIndex));
   // optional 的候選（引擎插的恢復站與填站）排不進是常態，不算落選
   // 落選理由：排進去過的（placedEver）是取捨，再分是不是名額或同類上限造成；從沒排進去過的用硬約束記的那句
@@ -236,7 +209,7 @@ export function planDay({ candidates, day, home, legFn, rules, settings, country
   ];
   return {
     sequence: best.seq,
-    score: best.total,   // 不含他當場選的那一家多算的那一份（best.obj 才含）：分數的意思不變
+    score: best.total,
     complete: best.complete,
     penaltyMin: stopPenalty + best.dayEval.penaltyMin,
     warnings: dedupeWarnings(warnings),

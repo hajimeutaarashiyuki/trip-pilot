@@ -54,35 +54,16 @@ test('兩家同類④層都在 picks、只排得進一家：排進的那家出 c
   assert.deepEqual(bare.days[0].plan.choices, [], '沒有 B 可配就是空陣列');
 });
 
-test('他當場選進來的站（旅程檔那天的換站紀錄 swapped[].to；11-17 畫面審查）：照平常排它沒排進去才多算再排一次、排進去；它本來就排得進的日子，帶不帶換站紀錄排出來一模一樣（連搜尋走過的節點數都相同）', () => {
+test('沒釘住的日子照搜尋排，換站紀錄（swapped[].to）不影響搜尋（11-24：11-17 的「他當場選的那一家沒排進去就多算 60 分再排一次」拿掉了——換一家與「或 B」改成原位置換掉並把那天釘住，見 test/engine/swap-in-place.test.js）：帶不帶換站紀錄排出來一模一樣，連搜尋走過的節點數都相同', () => {
   // 甲、乙想去、丙可去，同類一天最多 2 家：照平常排是甲、乙，丙排不進
   const plain = run(mkTrip([threeDay()]), three).days[0].plan;
   assert.deepEqual([ids(plain.sequence).sort(), plain.dropped.map((x) => x.poi.id)], [['乙', '甲'], ['丙']]);
-  // 換站紀錄的 to 是丙（他把別的站換成它、或在二選一選了它）：丙排進去，甲乙留一家
-  const chosen = run(mkTrip([threeDay({ swapped: [{ from: '丁', to: '丙', at: '2026-11-17T00:00:00.000Z' }] })]), three).days[0].plan;
-  assert.ok(ids(chosen.sequence).includes('丙'), `選的那家排進去：${ids(chosen.sequence).join('→')}`);
-  assert.deepEqual([chosen.sequence.length, chosen.dropped.length], [2, 1]);
-  // 換站紀錄指的是本來就排得進的乙：先照平常排、它在裡面就用那一版——跟沒有紀錄時一模一樣
-  const same = run(mkTrip([threeDay({ swapped: [{ from: '丁', to: '乙', at: '2026-11-17T00:00:00.000Z' }] })]), three).days[0].plan;
-  assert.deepEqual([ids(same.sequence), same.score, same.stats.nodes, same.dropped.map((x) => x.poi.id)], [ids(plain.sequence), plain.score, plain.stats.nodes, ['丙']]);
-  // 紀錄指的站已經不在這天的勾選裡（後來又換掉、或按了不去了）：不算
-  const gone = run(mkTrip([threeDay({ swapped: [{ from: '丙', to: '戊', at: '2026-11-17T00:00:00.000Z' }] })]), three).days[0].plan;
-  assert.deepEqual([ids(gone.sequence), gone.score, gone.stats.nodes], [ids(plain.sequence), plain.score, plain.stats.nodes]);
-  // 選的那家今天沒開（怎麼多算都排不進）：用照平常排的那一版，不因為多排一次就換一種排法
-  const shut = { ...C, hours: { mon: [['09:00', '23:00']] } };
-  const base = run(mkTrip([threeDay()]), { ...three, 丙: shut }).days[0].plan;
-  const stuck = run(mkTrip([threeDay({ swapped: [{ from: '丁', to: '丙', at: '2026-11-17T00:00:00.000Z' }] })]), { ...three, 丙: shut }).days[0].plan;
-  assert.deepEqual([ids(stuck.sequence), stuck.score, stuck.dropped.map((x) => x.poi.id)], [ids(base.sequence), base.score, ['丙']]);
-  // 先後也不能因為有換站紀錄就變：兩個條件一樣的街區（誰先誰後同分，照勾選的先後），被選的是排在後面的那一個——它本來就排得進，照平常的先後；
-  // 一律多算的話它會被排到前面。另一筆被選的今天沒開（多算那一版沒有多排進任何一家）也一樣用照平常排的那一版
-  const east = poi('東'); const west = poi('西'); const closed = poi('休', { hours: { mon: [['09:00', '23:00']] } });
-  const two = { 東: east, 西: west, 休: closed };
-  const picks = [{ poiId: '東', priority: 'want' }, { poiId: '西', priority: 'want' }];
-  const order0 = ids(run(mkTrip([day('2026-08-13', { picks })]), two).days[0].plan.sequence);
-  assert.deepEqual(order0, ['東', '西']);
-  assert.deepEqual(ids(run(mkTrip([day('2026-08-13', { picks, swapped: [{ from: '丁', to: '西', at: '2026-11-17T00:00:00.000Z' }] })]), two).days[0].plan.sequence), order0, '被選的西本來就排得進：先後照平常');
-  const withClosed = day('2026-08-13', { picks: [...picks, { poiId: '休', priority: 'want' }], swapped: [{ from: '丁', to: '西', at: '2026-11-17T00:00:00.000Z' }, { from: '戊', to: '休', at: '2026-11-17T00:00:00.000Z' }] });
-  assert.deepEqual(ids(run(mkTrip([withClosed]), two).days[0].plan.sequence), order0, '另一家被選的今天沒開：多算再排也沒有多排進一家，用照平常排的那一版');
+  const view = (p) => [ids(p.sequence), p.score, p.stats.nodes, p.dropped.map((x) => x.poi.id)];
+  // 這種日子現在只有他按了「讓引擎重排這天」之後才有（換過站、又把那天交回引擎）：換進來的那一家跟其他勾選站一樣比分數
+  for (const to of ['丙', '乙', '戊']) {
+    const p = run(mkTrip([threeDay({ swapped: [{ from: '丁', to, at: '2026-11-17T00:00:00.000Z' }] })]), three).days[0].plan;
+    assert.deepEqual(view(p), view(plain), `換站紀錄指到 ${to}`);
+  }
 });
 
 test('配對：一個 B 只配一個 A（繞路最小的那個）、一個 A 一個 B；排不進的勾選站優先於候選池、不套繞路門檻；當天休息的、must 的排不進站不配', () => {

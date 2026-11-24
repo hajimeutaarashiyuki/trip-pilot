@@ -30,6 +30,21 @@ export function samePlace(a, b) {
   return Boolean(a?.id) && Boolean(b?.id) && (a.id === b.id || placeRefs(a).includes(b.id) || placeRefs(b).includes(a.id));
 }
 
+/**
+ * 一批 POI 的「同一處」對照表：placeTwins(pois) → Map<id, [同一處的另外幾筆的 id]>。判法跟 samePlace(a, b) 一樣（哪一邊寫都算、陣列也收、只認直接互指）；
+ * 整批沒有任何一筆寫 samePlace 時是空的 Map——呼叫端看 size 就知道不用多做事（舊打包檔走這條路，行為與耗時都跟以前一樣）。
+ * 引擎自己插站的幾個池與走廊清單用它（engine/trip.js；11-17）：一個一個拿 samePlace 兩兩比的話，每天每個池都要比上萬次。
+ */
+export function placeTwins(pois = []) {
+  const out = new Map();
+  const link = (a, b) => { if (a === b) return; const list = out.get(a); if (!list) out.set(a, [b]); else if (!list.includes(b)) list.push(b); };
+  for (const p of pois ?? []) {
+    if (!p?.id) continue;
+    for (const ref of placeRefs(p)) { link(p.id, ref); link(ref, p.id); }
+  }
+  return out;
+}
+
 /** 活動類的站（祭典、花火、縁日攤位：只有那幾天有的）。分配器 engine/allocate.js 的 EVENT_CATEGORY 是同一個店型鍵。 */
 const EVENT_CATEGORY = 'event';
 

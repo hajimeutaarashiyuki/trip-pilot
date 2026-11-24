@@ -27,6 +27,13 @@ test('designated：每個沒排進的指定站罰 120 分，只警告不擋', ()
   assert.match(warnOf('designated', c), /指定的 2 站今天排不進：utah、banzai/);
 });
 
+test('designated：黃字寫店名、不露出原始 id（day.designatedNames 有就用，沒有才退回 id）', () => {
+  const c = ctx(null, { sequence: [shrine], day: { designated: ['osaki', 'utah', 'banzai'], designatedNames: { utah: 'Utah（古著）', banzai: 'レコード バンザイ' } } });
+  assert.equal(warnOf('designated', c), '指定的 2 站今天排不進：Utah（古著）、レコード バンザイ');
+  const partial = ctx(null, { sequence: [shrine], day: { designated: ['utah', 'banzai'], designatedNames: { utah: 'Utah（古著）' } } });
+  assert.equal(warnOf('designated', partial), '指定的 2 站今天排不進：Utah（古著）、banzai');
+});
+
 test('item-gap：昨天整天古著、今天又整天古著 no；單一站不觸發', () => {
   assert.equal(run('item-gap', ctx(null, { day: { themeCategory: 'vintage', prevThemeCategory: 'vintage' } })), 'no');
   assert.equal(run('item-gap', ctx(null, { day: { themeCategory: null, prevThemeCategory: 'vintage' } })), 'ok');

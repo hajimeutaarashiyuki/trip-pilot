@@ -7,6 +7,7 @@ import { TEXT } from './text.js';
 import { openIntervals } from '../engine/time.js';
 import { replanDay, TIRED_STRATEGIES } from '../strategies/index.js';
 import { resolveHome, engineMayInsert } from '../engine/trip.js';
+import { placeTwins } from '../engine/swap.js';
 import { personAvoids } from '../engine/persons.js';
 import { routeUrl, legMode, tripCityName } from './maps.js';
 import { darkBeforeMinOf } from './daylight.js';
@@ -199,12 +200,16 @@ function tiredToggle({ state, actions, date, planned, seq, idx, nowMin }) {
  * 知識庫裡本來就不主動排的店（挖寶型、2 星、落選兩次、未解鎖、代購研究站）也不拿：跟引擎插的恢復站、填站、順路站同一道門（trip.js engineMayInsert，10-14 T22）。
  * 那天在場的人不想去的店型（planned.day.adjust.avoidCategories，T19）也不拿。
  * 受威脅那組裡拿 pool 的只有降速（slow-down 插恢復站）與換備案（swap-alt 對 poi.alternatives）：備案因此也只在當日區域、不是別天排了的。
+ * 同一處的另一筆一起扣（知識庫 samePlace；engine/swap.js placeTwins，跟引擎插站的池同一張對照表；11-24 傍晚主控裁決乙6）：今天行程裡的站、別天排進去的站（他勾的、引擎排的）、
+ * 按過「不去了」的站，另一筆都不拿——不然「累了」會叫他去坐他今天本來就要去的那個地方的另一筆。知識庫沒有這個欄位時對照表是空的，照舊。
  */
 export function fieldPool(state, planned, seq) {
   const zones = new Set(planned.day.regionZones ?? []);
   const skip = new Set(seq.map((s) => s.poi.id));
   for (const other of Object.values(state.plans)) if (other !== planned) for (const s of other.plan.sequence) skip.add(s.poi.id);
   for (const d of state.trip.days) for (const r of d.removed ?? []) if (r?.poiId) skip.add(r.poiId);
+  const twins = placeTwins(Object.values(state.pois));
+  if (twins.size) for (const id of [...skip]) for (const t of twins.get(id) ?? []) skip.add(t);
   return Object.values(state.pois).filter((p) => engineMayInsert(p) && zones.has(p.zoneId) && !skip.has(p.id) && p.category !== 'onsen' && !personAvoids(planned.day.adjust, p)).map((poi) => ({ poi }));
 }
 

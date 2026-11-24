@@ -201,31 +201,16 @@ test('坐下來的地方（spot，原話 #172）：排在固定時段前面，�
   assert.deepEqual(twice.map((s) => [s.startMin, s.endMin, s.waitMin, s.flexedMin ?? 0]), once.map((s) => [s.startMin, s.endMin, s.waitMin, s.flexedMin ?? 0]));
 });
 
-test('他當場選進來的站（candidate.chosen；換一家、二選一選了 B）搜尋時多算一點：同類只塞得下兩家時它排得進去；分數不含那一份；必去不會被它擠掉；可去被選了就高過想去（11-17 畫面審查）', async () => {
-  const { evaluateSequence } = await import('../../src/engine/sequence.js');
-  const { CHOSEN_PULL_DEFAULT_MIN, chosenPullOf } = await import('../../src/engine/core.js');
+test('搜尋不再替「他當場選進來的站」多算（11-17 的 candidate.chosen／chosenPullMin 在 11-24 拿掉：換一家與「或 B」改成原位置換掉並釘住，不靠搜尋把它排進去）：候選帶不帶 chosen、設定有沒有 chosenPullMin 排出來一模一樣', async () => {
+  const core = await import('../../src/engine/core.js');
+  assert.deepEqual(['CHOSEN_PULL_DEFAULT_MIN' in core, 'chosenPullOf' in core], [false, false], '那一套不留著兩套並存');
   // 三家古著店同座標、同營業時間，不是主題日同類一天最多 2 家：光比分數，排進去的是排在前面的兩家
   const shop = (id) => poi(id, { category: 'vintage', walkFactor: 0 });
-  const cands = (priority = {}, chosen = null) => ['甲', '乙', '丙'].map((id) => ({ poi: shop(id), priority: priority[id] ?? 'want', ...(id === chosen ? { chosen: true } : {}) }));
+  const cands = (chosen = null) => ['甲', '乙', '丙'].map((id) => ({ poi: shop(id), priority: 'want', ...(id === chosen ? { chosen: true } : {}) }));
   const run = (list, s = settings) => planDay({ candidates: list, day: day(), home, legFn: flatLeg, rules, settings: s, country, kb });
-  const idsOf = (r) => r.sequence.map((x) => x.poi.id).sort();
+  const view = (r) => [r.sequence.map((x) => x.poi.id), r.dropped.map((x) => x.poi.id), r.score, r.stats.nodes];
   const plain = run(cands());
-  assert.deepEqual([idsOf(plain), plain.dropped.map((x) => x.poi.id)], [['乙', '甲'], ['丙']], '沒有人被當場選：照分數（同分照先後）');
-  // 丙是他剛選的：排進去，掉的是別家
-  const picked = run(cands({}, '丙'));
-  assert.ok(idsOf(picked).includes('丙') && picked.sequence.length === 2, `選的那家排進去：${idsOf(picked).join('、')}`);
-  assert.equal(picked.dropped.length, 1);
-  // 分數的意思不變：不含多算的那一份——跟拿同一條序列重算（evaluateSequence）一樣，也跟沒人被選時排兩家的分數一樣（三家條件相同）
-  assert.equal(picked.score, evaluateSequence({ sequence: picked.sequence, day: day(), home, legFn: flatLeg, rules, settings, country, kb }).score);
-  assert.equal(picked.score, plain.score);
-  // 必去不會被它擠掉：甲、乙是必去，丙被選了也排不進（想去 90＋60 低於必去 180）
-  const musts = run(cands({ 甲: 'must', 乙: 'must' }, '丙'));
-  assert.deepEqual([idsOf(musts), musts.dropped.map((x) => x.poi.id)], [['乙', '甲'], ['丙']]);
-  // 可去被選了高過想去（45＋60 > 90）：丙是可去、被選了，甲乙都是想去——丙排進去
-  const maybe = run(cands({ 丙: 'maybe' }, '丙'));
-  assert.ok(idsOf(maybe).includes('丙'), `被選的可去排得進：${idsOf(maybe).join('、')}`);
-  assert.deepEqual(idsOf(run(cands({ 丙: 'maybe' }))), ['乙', '甲'], '沒被選的可去照舊排不過想去');
-  // 設定鍵 chosenPullMin：0＝不多算（跟沒標一樣）；缺或寫壞用預設
-  assert.deepEqual(idsOf(run(cands({}, '丙'), { ...settings, chosenPullMin: 0 })), ['乙', '甲']);
-  assert.deepEqual([CHOSEN_PULL_DEFAULT_MIN, chosenPullOf({}), chosenPullOf({ chosenPullMin: 20 }), chosenPullOf({ chosenPullMin: -5 }), chosenPullOf({ chosenPullMin: 'x' })], [60, 60, 20, 60, 60]);
+  assert.deepEqual([[...view(plain)[0]].sort(), view(plain)[1]], [['乙', '甲'], ['丙']], '照分數（同分照先後）');
+  assert.deepEqual(view(run(cands('丙'))), view(plain), '候選帶 chosen：不認');
+  assert.deepEqual(view(run(cands('丙'), { ...settings, chosenPullMin: 1000 })), view(plain), '設定鍵 chosenPullMin：不讀');
 });

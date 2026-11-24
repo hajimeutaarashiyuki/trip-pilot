@@ -8,10 +8,10 @@ import { planTrip } from '../../src/engine/trip.js';
 import { insertTrial, applyInsert, unpinDay, pinnedOf, pinEntriesOf, pinnedEngineIds, repinFromPlan, repinTrip, planPinnedDay, insertDwellMin, dwellFloorMin, isLockedStop, slotOpenOf, corridorPickIds, insertDroppedEngine, INSERT_MAX_ROUNDS, INSERT_POLICY, CORRIDOR_PICK, INSERT_DROP, PINNED_ORDER_HINT } from '../../src/engine/insert.js';
 import { rawWindowDay, evaluateSequence } from '../../src/engine/sequence.js';
 import { applySwap, swapCandidates } from '../../src/engine/swap.js';
-import { defer, pinnedSwapCheck, pinnedChoiceCheck, choicesFor, chooseDay } from '../../src/engine/choices.js';
+import { defer, pinnedSwapCheck, pinnedChoiceCheck, choicesFor, chooseDay, swapInPlace } from '../../src/engine/choices.js';
 import { placeStop } from '../../src/engine/schedule.js';
 import { setBreakfast, clearBreakfast, takeBreakfastOffer, swapBreakfast, breakfastSwapCandidates, breakfastOfPlan, isPlacedBreakfast, tryBreakfastAt, breakfastStop } from '../../src/engine/breakfast.js';
-import { chooseOptionTrip, swapPick } from '../../src/ui/choices.js';
+import { chooseOptionTrip } from '../../src/ui/choices.js';
 import { loadRules } from '../../src/rules/index.js';
 import { BUILTIN } from '../../src/rules/builtin.js';
 import rulesJson from '../../src/rules.json' with { type: 'json' };
@@ -450,7 +450,7 @@ test('釘住之後按「換一家」：applySwap 把順序裡那一筆原位置�
   assert.deepEqual(applySwap({ picks: want(C.id), pinned: pinOf(A.id) }, C.id, D).pinned, pinOf(A.id));
   // 殘留的舊筆（D 之前在順序裡、後來拿掉）先清掉，不會同一家出現兩次
   assert.deepEqual(applySwap({ picks: want(C.id), pinned: pinOf(D.id, A.id, C.id) }, C.id, D).pinned.sequence.map((e) => e.poiId), [A.id, D.id]);
-  // pinned 沒被改寫（二選一選了今天排不進的那家：ui/choices.js swapPick 只動 picks 與 swapped）：照 swapped 紀錄把接手的那家放在原位置
+  // pinned 沒被改寫（11-17 之前存下來的改動：當時二選一選了今天排不進的那家只動 picks 與 swapped）：照 swapped 紀錄把接手的那家放在原位置
   const viaRecord = { ...trip, days: trip.days.map((d) => ({ ...d, picks: d.picks.map((p) => (p.poiId === C.id ? { ...p, poiId: D.id } : p)), swapped: [{ from: C.id, to: D.id, at: AT }] })) };
   assert.deepEqual(ids(run(viaRecord, world).days[0].plan), [A.id, D.id, lunch.id, dinner.id, B.id, bar.id]);
   // 換了兩次（C→D→B2）：一路追到還在 picks 裡的那一家
@@ -500,7 +500,7 @@ test('釘住之後二選一選了 B：B 在 A 的原位置、其餘先後不變�
   assert.equal(repinFromPlan(trip, FRI, { sequence: [] }), trip);
 });
 
-test('釘住的日子上二選一的「或 B」先試算（pinnedChoiceCheck、choicesFor；11-17）：選了會害別的站不見或排不進的不出；放行的選下去就是原位置換掉、其餘不動；沒釘住的日子不試', () => {
+test('釘住的日子上二選一的「或 B」先試算（pinnedChoiceCheck、choicesFor；11-17）：選了會害別的站不見或排不進的不出；放行的選下去就是原位置換掉、其餘不動；沒釘住的日子 11-24 起也試（細的在 swap-in-place.test.js）', () => {
   const ca = cafe('咖啡甲'); const cx = cafe('咖啡戊'); const slow = cafe('坐很久的咖啡', { dwellMin: 300 });
   const world = [A, lunch, dinner, ca, cx, slow];
   const planArgs = { rules, settings, country: COUNTRY, kb, legFn, restPool: [slow] };
@@ -532,14 +532,16 @@ test('釘住的日子上二選一的「或 B」先試算（pinnedChoiceCheck、c
   assert.deepEqual(chosenDay.pinned.sequence.map((e) => e.poiId), [cx.id, lunch.id, A.id, dinner.id]);
   assert.deepEqual(chosenDay.swapped, [{ from: ca.id, to: cx.id, at: AT }]);
   assert.deepEqual(ids(run({ ...trip, days: [chosenDay, ...trip.days.slice(1)] }, world).days[0].plan), [cx.id, lunch.id, A.id, dinner.id]);
-  // 沒釘住的日子：永遠 true（選了本來就整天重排）、choicesFor 原樣回
+  // 沒釘住的日子：11-24 起也試（之前永遠放行、choicesFor 原樣回引擎給的）——選了一律原位置換掉、把那天釘住，所以同一個試排；畫面拿的是試過的那幾個
   const freeTrip = tripOf([{ date: THU, picks: want(...order) }]);
   const fd = planTrip({ trip: freeTrip, pois: poisOf(world), ...planArgs }).days[0];
-  assert.equal(pinnedChoiceCheck({ trip: freeTrip, date: THU, plan: fd.plan, pois: poisOf(world), planArgs })(risky), true);
-  assert.equal(choicesFor({ trip: freeTrip, date: THU, plan: fd.plan, pois: poisOf(world), planArgs }), fd.plan.choices);
+  assert.ok(!fd.plan.pinned);
+  const freeCheck = pinnedChoiceCheck({ trip: freeTrip, date: THU, plan: fd.plan, pois: poisOf(world), planArgs });
+  assert.deepEqual(choicesFor({ trip: freeTrip, date: THU, plan: fd.plan, pois: poisOf(world), planArgs }), fd.plan.choices.filter(freeCheck));
+  assert.equal(choicesFor({ trip: freeTrip, date: THU, plan: { ...fd.plan, choices: [] }, pois: poisOf(world), planArgs }).length, 0);
 });
 
-test('chooseDay（二選一選了 B，那一天怎麼改）：候選池來的 B＝換一家；B 本來就是今天排不進的勾選站＝A 那筆拿掉、B 留著、優先度取高的，釘住的日子把順序裡 A 的那一筆原位置換成 B；跟畫面的 swapPick 改出來的 picks 相同', () => {
+test('chooseDay（換一家、二選一選了 B，那一天怎麼改）：候選池來的 B＝換一家；B 本來就是今天排不進的勾選站＝A 那筆拿掉、B 留著、優先度取高的，釘住的日子把順序裡 A 的那一筆原位置換成 B', () => {
   const ca = cafe('咖啡甲'); const cb = cafe('咖啡乙'); const cd = cafe('咖啡丁'); const cx = cafe('咖啡戊');
   const world = [A, lunch, dinner, ca, cb, cd, cx];
   const planArgs = { rules, settings, country: COUNTRY, kb, legFn, restPool: [] };
@@ -566,16 +568,17 @@ test('chooseDay（二選一選了 B，那一天怎麼改）：候選池來的 B�
   // 順序裡殘留的 B 舊筆先清掉；A 不在順序裡就不動 pinned
   assert.deepEqual(chooseDay({ picks: want(ca.id, cd.id), pinned: pinOf(cd.id, lunch.id, ca.id) }, ca.id, cd, AT).pinned.sequence.map((e) => e.poiId), [lunch.id, cd.id]);
   assert.deepEqual(chooseDay({ picks: want(ca.id, cd.id), pinned: pinOf(lunch.id) }, ca.id, cd, AT).pinned, pinOf(lunch.id));
-  // 候選池來的 B：就是換一家（applySwap）；兩種來源改出來的 picks 都跟畫面現在的 swapPick 一樣
+  // 候選池來的 B：就是換一家（applySwap）——picks 原位置換掉、優先度沿用，釘住的順序裡 A 的那一筆換成 B
   const pool = chooseDay(dayOf(trip, THU), ca.id, cx, AT);
   assert.deepEqual(pool.picks, applySwap(dayOf(trip, THU), ca.id, cx).picks);
+  assert.deepEqual(pool.picks, [...want(lunch.id, cx.id, cb.id, dinner.id), { poiId: cd.id, priority: 'must' }]);
+  assert.deepEqual(pool.swapped, [{ from: ca.id, to: cx.id, at: AT }]);
   assert.deepEqual(pool.pinned.sequence.map((e) => e.poiId), [lunch.id, cx.id, cb.id, dinner.id]);
+  // 11-17 之前存下來的改動（當時畫面自己改 picks 與 swapped、不改釘住的順序）：重排時順著換站紀錄把接手的那家對回原位置（engine/insert.js planPinnedDay 的 heir），排出來跟現在的寫法相同
   for (const to of [cd, cx]) {
-    const ui = swapPick(dayOf(trip, THU), ca.id, to);
     const en = chooseDay(dayOf(trip, THU), ca.id, to, AT);
-    assert.deepEqual(en.picks, ui.picks, `${to.id}：picks 相同`);
-    assert.deepEqual(en.swapped.map(({ from, to: t }) => [from, t]), ui.swapped.map(({ from, to: t }) => [from, t]), `${to.id}：swapped 相同`);
-    assert.deepEqual(ids(run({ ...trip, days: [en, ...trip.days.slice(1)] }, world).days[0].plan), ids(run({ ...trip, days: [ui, ...trip.days.slice(1)] }, world).days[0].plan), `${to.id}：排出來相同`);
+    const legacy = { ...en, pinned: dayOf(trip, THU).pinned };
+    assert.deepEqual(ids(run({ ...trip, days: [legacy, ...trip.days.slice(1)] }, world).days[0].plan), ids(run({ ...trip, days: [en, ...trip.days.slice(1)] }, world).days[0].plan), `${to.id}：排出來相同`);
   }
 });
 
@@ -985,7 +988,7 @@ test('釘住的日子重排完把畫面上那一條記回旅程檔（repinTrip�
   assert.equal(repinTrip(full, undefined), full);
 });
 
-test('釘住的日子按「換一家」先試算（pinnedSwapCheck；11-12 審查）：每一家真的換過去排一次——會害別的站不見或排不進的不列；沒釘住的日子不試', () => {
+test('釘住的日子按「換一家」先試算（pinnedSwapCheck；11-12 審查）：每一家真的換過去排一次——會害別的站不見或排不進的不列；沒釘住的日子 11-24 起也試', () => {
   const D = mk('街區D', { dwellMin: 45 }); const slow = mk('逛很久', { dwellMin: 300 });
   const world = [...W1, D, slow];
   const trip = trip1();   // 釘住：A → C → 午餐 11:30（14:30 關）→ 晚餐 → B → 酒吧
@@ -1011,10 +1014,17 @@ test('釘住的日子按「換一家」先試算（pinnedSwapCheck；11-12 審�
   const check2 = pinnedSwapCheck({ trip: withFill, date: THU, fromPoiId: B.id, plan: d2.plan, pois: poisOf(w2), planArgs: { ...planArgs, restPool: [fill] } });
   assert.equal(check2(longer), false, 'B 換成停 200 分的：引擎那一站被讓掉');
   assert.equal(check2(D), true);
-  // 沒釘住的日子：永遠 true（換了本來就整天重排）
+  // 沒釘住的日子：11-24 起也試（之前永遠 true——換了整天重排）；答案跟真的換下去（engine/choices.js swapInPlace：先照畫面上這一版釘住、原位置換掉）一樣
   const freeTrip = tripOf([{ date: THU, picks: want(...ORDER1) }]);
   const fd = run(freeTrip, world).days[0];
-  assert.equal(pinnedSwapCheck({ trip: freeTrip, date: THU, fromPoiId: C.id, plan: fd.plan, pois: poisOf(world), planArgs })(slow), true);
+  assert.ok(!fd.plan.pinned);
+  const freeCheck = pinnedSwapCheck({ trip: freeTrip, date: THU, fromPoiId: C.id, plan: fd.plan, pois: poisOf(world), planArgs });
+  for (const to of [D, slow]) {
+    const after = run(swapInPlace({ trip: freeTrip, date: THU, fromPoiId: C.id, toPoi: to, plan: fd.plan, pois: poisOf(world), at: AT }), world).days[0].plan;
+    const fine = ids(after).join('|') === ids(fd.plan).map((id) => (id === C.id ? to.id : id)).join('|') && after.dropped.length === fd.plan.dropped.length;
+    assert.equal(freeCheck(to), fine, `${to.id}：試排的答案跟真的換下去一樣（${ids(after).join('→')}）`);
+  }
+  assert.equal(freeCheck(D), true);
 });
 
 test('小修（11-12 審查）：接手的那一家自己在順序裡有一筆就不搬；順延進來的站不看分數那道門；輪數照草稿記的走、不拿調整的個數算', () => {

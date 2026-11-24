@@ -11,6 +11,16 @@ class FakeNode {
   append(...nodes) { for (const n of nodes) { if (n && typeof n === 'object') n.parent = this; this.children.push(n); } }
   replaceChildren(...nodes) { this.children = []; this.append(...nodes); }
   remove() { if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this); this.parent = null; }
+  /** 原位置換成別的節點（「再列 N 站」按了換成那幾個選項）。 */
+  replaceWith(...nodes) {
+    const p = this.parent;
+    if (!p) return;
+    const at = p.children.indexOf(this);
+    for (const n of nodes) if (n && typeof n === 'object') n.parent = p;
+    p.children.splice(at, 1, ...nodes);
+    this.parent = null;
+  }
+  focus() { globalThis.document.activeElement = this; }
   get classList() {
     const node = this;
     const list = () => node.className.split(/\s+/).filter(Boolean);

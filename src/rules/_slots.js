@@ -225,7 +225,7 @@ export function mealAssignments({ sequence, day = null, settings = null, country
   const slots = mealSlotsOf(country, settings);
   const meals = {}; const stops = {}; const notNeeded = {};
   for (const m of slots) if (!only || only.includes(m.slot)) meals[m.slot] = null;
-  const needs = collectNeeds(Array.isArray(sequence) ? sequence : NO_STOPS, day?.windowRaw ?? day?.window ?? null, slots, only, notNeeded, true, breakfastOffOf(day));
+  const needs = collectNeeds(Array.isArray(sequence) ? sequence : NO_STOPS, day?.windowRaw ?? day?.window ?? null, slots, only, notNeeded, true, breakfastOffOf(day), day?.notBreakfast);
   const got = matchMeals(needs);
   for (let i = 0; i < needs.length; i++) if (got[i]) { meals[needs[i].slot] = got[i].poi.id; stops[needs[i].slot] = got[i]; }
   const missing = [];
@@ -238,7 +238,7 @@ export function mealAssignments({ sequence, day = null, settings = null, country
  */
 export function missingMeals({ sequence, day = null, settings = null, country = null } = {}, only = null) {
   const slots = mealSlotsOf(country, settings);
-  const needs = collectNeeds(Array.isArray(sequence) ? sequence : NO_STOPS, day?.windowRaw ?? day?.window ?? null, slots, only, null, false, breakfastOffOf(day));
+  const needs = collectNeeds(Array.isArray(sequence) ? sequence : NO_STOPS, day?.windowRaw ?? day?.window ?? null, slots, only, null, false, breakfastOffOf(day), day?.notBreakfast);
   if (!needs.length) return NO_STOPS;
   const got = matchMeals(needs);
   let out = null;
@@ -261,8 +261,11 @@ export function breakfastOffOf(day) {
  * 收每一餐的候選：回 needs [{ slot, cands }]——這天要的餐才有一筆，午餐晚餐（MAIN_MEALS）在前、其餘的餐在後，各自照時間；不需要的餐把原因寫進 notNeeded（給了才寫）。
  * ordered：候選要不要照「最像這一餐的在前」排（配到哪一站看它；只問缺哪幾餐時不用排，缺不缺跟順序無關）。mealAssignments 與 missingMeals 共用。
  * breakfastOff：他說這天不排早餐的那個 mode（breakfastOffOf；沒有是 null）——早餐那一段直接當不需要。
+ * notBreakfast：這天不當早餐的那幾站的 poi id（day.notBreakfast；engine/trip.js 從旅程檔那天 picks[].breakfast === false 的勾選帶過來，沒有就不帶這個鍵）——
+ * 換一家換進來的店剛好能當早餐時記的（engine/choices.js swapInPlace 第 5 步；11-24 主控裁決甲5，推導）：配早餐時跳過它，那天原本的早餐（引擎排的、他指定的、他勾的）繼續是早餐；
+ * 午餐、晚餐照常算它。平常的日子沒有這個鍵，配法跟以前一模一樣。
  */
-function collectNeeds(seq, win, slots, only, notNeeded, ordered, breakfastOff = null) {
+function collectNeeds(seq, win, slots, only, notNeeded, ordered, breakfastOff = null, notBreakfast = null) {
   const main = []; let rest = null;
   for (const m of slots) {
     if (only && !only.includes(m.slot)) continue;
@@ -273,6 +276,7 @@ function collectNeeds(seq, win, slots, only, notNeeded, ordered, breakfastOff = 
       if (s.fixedWindow && !s.fixedWindow.pinned && coversMealSlot(s.startMin, s.endMin, m.core)) { covered = true; break; }
       // 落進放寬後的時窗（就是 inWindow：重疊超過 0 分；這裡直接算，每個節點每一站都會過一次），而且算得了這一餐
       if (!(Math.min(s.endMin, m.window[1]) - Math.max(s.startMin, m.window[0]) > 0) || !countsForMeal(s, m.slot)) continue;
+      if (notBreakfast && m.slot === 'breakfast' && notBreakfast.includes(s.poi.id)) continue;   // 他換進來、記了「不當早餐」的那一站（day.notBreakfast）：這天原本的早餐繼續是早餐
       if (cands === NO_STOPS) { cands = [s]; if (ordered) weights = [overlapMin(s.startMin, s.endMin, m.core[0], m.core[1])]; continue; }
       if (!ordered) { cands.push(s); continue; }
       const w = overlapMin(s.startMin, s.endMin, m.core[0], m.core[1]);
@@ -344,7 +348,7 @@ const BREAKFAST_ONLY = Object.freeze(['breakfast']);
 export function breakfastMissing({ sequence, day = null, settings = null, country = null } = {}) {
   if (!country?.mealSlots?.breakfast) return false;
   const seq = Array.isArray(sequence) ? sequence : NO_STOPS;
-  const needs = collectNeeds(seq, day?.windowRaw ?? day?.window ?? null, mealSlotsOf(country, settings), BREAKFAST_ONLY, null, false, breakfastOffOf(day));
+  const needs = collectNeeds(seq, day?.windowRaw ?? day?.window ?? null, mealSlotsOf(country, settings), BREAKFAST_ONLY, null, false, breakfastOffOf(day), day?.notBreakfast);
   if (!needs.length) return false;
   if (!needs[0].cands.length) return true;
   return missingMeals({ sequence, day, settings, country }).includes('breakfast');

@@ -160,11 +160,18 @@ export function pinnedEngineIds(trip) {
  */
 export const CORRIDOR_PICK = 'corridor';
 export const INSERT_DROP = 'insert';
+/**
+ * 換一家、二選一選了 B 換進來、而且原本哪一天都沒勾的那家店的記號（picks[].via；engine/choices.js swapInPlace 寫的，11-24）：跟升級進來的勾選同一個道理——
+ * 它也是後來才變成別天不能拿的，別天挑引擎插站的名單時一樣要「挑好才拿掉」，別天的行程才不會因為他換了一家店而跟著變。
+ */
+export const SWAP_PICK = 'swap';
+/** 這個記號是不是「後來才加進來的勾選」（升級進來的、換進來的）：別天挑好名單才拿掉的那一種。 */
+export const isLateVia = (via) => via === CORRIDOR_PICK || via === SWAP_PICK;
 
-/** 整趟帶 via 'corridor' 的店 id（Set）：升級進來的勾選，與之後對它按了「不去了」留在 removed 的那一筆。 */
+/** 整趟「後來才加進來」的店 id（Set）：升級進來的勾選（via 'corridor'）、換進來的勾選（via 'swap'），與之後對它按了「不去了」留在 removed 的那一筆。 */
 export function corridorPickIds(trip) {
   const out = new Set();
-  for (const d of trip?.days ?? []) for (const p of [...(d.picks ?? []), ...(d.removed ?? [])]) if (p?.via === CORRIDOR_PICK && typeof p.poiId === 'string' && p.poiId) out.add(p.poiId);
+  for (const d of trip?.days ?? []) for (const p of [...(d.picks ?? []), ...(d.removed ?? [])]) if (isLateVia(p?.via) && typeof p.poiId === 'string' && p.poiId) out.add(p.poiId);
   return out;
 }
 
@@ -253,6 +260,21 @@ export function repinTrip(trip, days = []) {
   let next = trip;
   for (const x of days ?? []) if (x?.plan?.pinned) next = repinFromPlan(next, x.date, x.plan);
   return next;
+}
+
+/**
+ * 把那天照畫面上這一版釘住（11-24）：pinDayAsPlanned(trip, date, plan, at?) → 新 trip；那天已經釘住、沒有那一天、沒有 plan 就回原 trip（同一個物件）。
+ * plan＝那天現在畫面上的 plan（planTrip 排的，或現場套過改案的那一版）。記的是每一站、先後、停留，引擎排的站照原樣記著（pinEntriesOf）；
+ * 他說這天早餐不排而暫時不在序列裡的那一家也留一筆（keepSkippedBreakfast），勾選不動。
+ * 誰用：換一家、二選一選了 B（engine/choices.js swapInPlace）——沒釘住的日子先釘住再原位置換掉，那天從此照他調過的順序排（原話 #192 的類推；主控 11-24 定）。
+ * 11-24 傍晚再多兩處（主控裁決甲1、甲4；同一個類推）：換一家把別天已經排的店挪過來時，它原本那天先釘住再原位置拿掉那一筆（swapInPlace 的 baseline）；
+ * 早餐那一站是他勾的站自己落在早餐時段時，早餐的換一家也先把那天釘住再原位置換掉（engine/choices.js swapBreakfastTrip）。
+ * 釘住而不換任何站時，重排出來逐站、逐時刻跟釘住之前相同（11-24 六個打包檔每天各釘一次量過），別天也不跟著變（engine/trip.js lateIds）。
+ */
+export function pinDayAsPlanned(trip, date, plan, at = null) {
+  const day = (trip?.days ?? []).find((d) => d.date === date);
+  if (!day || pinnedOf(day) || !Array.isArray(plan?.sequence)) return trip;
+  return withDay(trip, date, (d) => ({ ...d, pinned: { at: stamp(at), sequence: keepSkippedBreakfast(d, pinEntriesOf(plan.sequence, date)) } }));
 }
 
 /** 「讓引擎重排這天」：pinned 拿掉，那天回到搜尋。沒釘住回原 trip（同一個物件）。 */
@@ -622,13 +644,13 @@ export function applyInsert(trip, date, result, at = null) {
   const drops = (Array.isArray(r.adjust) ? r.adjust : []).filter((a) => a?.kind === 'drop' && typeof a.poiId === 'string');
   return withDay(trip, date, (d) => {
     const gone = new Set(drops.map((a) => a.poiId));
-    const upgraded = new Set((d.picks ?? []).filter((p) => p?.via === CORRIDOR_PICK).map((p) => p.poiId));   // 之前升級進來、這次在選項裡被選了不去的：removed 那一筆沿用記號（別天照樣是挑好名單才拿掉）
+    const upgraded = new Map((d.picks ?? []).filter((p) => isLateVia(p?.via)).map((p) => [p.poiId, p.via]));   // 之前升級進來（或換進來）、這次在選項裡被選了不去的：removed 那一筆沿用記號（別天照樣是挑好名單才拿掉）
     let picks = (d.picks ?? []).filter((p) => !gone.has(p?.poiId));
     if (!picks.some((p) => p?.poiId === r.poiId)) picks = [...picks, isObj(r.pick) && r.pick.poiId === r.poiId ? { ...r.pick, via: CORRIDOR_PICK } : { poiId: r.poiId, priority: 'want', via: CORRIDOR_PICK }];
     const removed = [
       ...(d.removed ?? []).filter((x) => x?.poiId !== r.poiId),
       // 引擎插的站在選項裡被選了「不去」：多記 via 'insert'——那天之前的日子挑引擎插站時，它改成挑好名單才拿掉（engine/trip.js planTrip 的 lateIds）
-      ...drops.map((a) => ({ poiId: a.poiId, at: when, ...(a.insertedBy ? { insertedBy: a.insertedBy } : {}), ...(a.priority ? { priority: a.priority } : {}), ...(a.insertedBy === 'engine' ? { via: INSERT_DROP } : upgraded.has(a.poiId) ? { via: CORRIDOR_PICK } : {}) })),
+      ...drops.map((a) => ({ poiId: a.poiId, at: when, ...(a.insertedBy ? { insertedBy: a.insertedBy } : {}), ...(a.priority ? { priority: a.priority } : {}), ...(a.insertedBy === 'engine' ? { via: INSERT_DROP } : upgraded.has(a.poiId) ? { via: upgraded.get(a.poiId) } : {}) })),
     ];
     // 之前就記著、這次不在序列裡的引擎站（先前撞到別站被讓掉的）照舊留一筆 off；這次在選項裡選了不去的不留（它記在 removed）
     const sequence = withParked(d, keepSkippedBreakfast(d, pinEntriesOf(r.sequence, date))).filter((e) => !(e.off && gone.has(e.poiId)));

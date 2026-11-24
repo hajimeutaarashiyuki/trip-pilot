@@ -101,6 +101,17 @@ export function breakfastOfPlan(plan) {
 }
 
 /**
+ * 這天的早餐是他勾的站自己落在早餐時段的那一種嗎（不是引擎排的、也不是他指定的那一筆；七天包 8/18 他勾的仙台朝市）。
+ * 是的話，早餐的「換一家」走原位置換掉、並把那天釘住（11-24 傍晚主控裁決甲4；原話 #192 的類推，推導）：這種早餐是跟別的站一起搜尋排出來的，
+ * 照一般的寫法換掉（那一筆改成指定的早餐、不進搜尋）其餘的站會整天重新搜尋——對抗審查量三包早餐清單畫出來的 37 家各選一次，12 次同一天引擎排的站不見、復原列沒講（都在 8/18）。
+ * 引擎排的、他指定的那兩種本來就不進搜尋，換了其餘各站不受影響，照舊不釘住。誰用：engine/choices.js swapBreakfastTrip／breakfastSwapCheck、下面的 breakfastSwapCandidates。
+ */
+export function breakfastSwapsInPlace(plan) {
+  const cur = breakfastOfPlan(plan);
+  return Boolean(cur) && !isPlacedBreakfast(cur);
+}
+
+/**
  * 這個早餐站是誰排的：'engine' 引擎替他挑的（換了就變成他勾的）、'chosen' 他指定的（按了「或 X」或換過一家；picks[].breakfast）、
  * 'picked' 他勾的站自己落在早餐時段（8/18 他勾的仙台朝市那種）。三種的鍵都一樣（改天去、吃飯店早餐、換一家）；差別只有卡上要不要寫「引擎排的」。
  */
@@ -489,19 +500,27 @@ export function breakfastFitDays({ poi, fromDate, days = [], legFn, rules, setti
  * 回 [{ poi, detourMin, walkMin, shiftMin, open: true, meal: 'breakfast', mealNote }]——跟 engine/swap.js swapCandidates 的候選同一個形狀（多 walkMin、shiftMin），畫面用同一份清單畫。
  * 不用 swapCandidates 的原因：它拿「前一站→候選→後一站」算繞路，早餐是第一站、沒有前一站，算出來只剩「離下一站近」的店（七天包 8/13 只列得出一家）；
  * 早餐要從住宿算——這裡每一家都真的排成第一站試一次（tryBreakfastFirst），列出來的就是換了不會害別的站排不進的。
- * - plan、day、home：那天現在排好的 plan 與 day 上下文、住宿。現在的早餐是他勾的站自己落在早餐時段時，換掉之後其餘的站會重新搜尋（跟一般的「換一家」一樣），這裡拿現在的序列估。
+ * - plan、day、home：那天現在排好的 plan 與 day 上下文、住宿。現在的早餐是他勾的站自己落在早餐時段時（breakfastSwapsInPlace），換了是原位置換掉、把那天釘住（11-24 甲4）：
+ *   照現在早餐的位置試（tryBreakfastAt），不是排成第一站；畫面列之前另外真的排一次（engine/choices.js breakfastSwapCheck）。
  * - 不列：swapGated 的店（不是一個地點、研究判可略過、還沒解鎖、挖寶型）、這天行程裡已經有的站與同一處的另一筆、exclude 給的 id（畫面傳「任何一天勾過的＋任何一天序列裡的」，
  *   就不會列出換了會動到別天的店）、在場的人不想去的店型（跟現在這一站同店型的除外，同 swapCandidates）。
- * - 位置：離住宿走路 ≤ settings.breakfastWalkMaxMin 或比直接去第一站多繞 ≤ settings.onTheWayDetourMin（跟引擎挑早餐同一道門）。
+ * - 位置：離住宿走路 ≤ settings.breakfastSwapWalkMaxMin（預設 SWAP_WALK_MAX_DEFAULT_MIN 25；11-24 主控定）或比直接去第一站多繞 ≤ settings.onTheWayDetourMin。
+ *   比引擎替他挑早餐的門（breakfastWalkMaxMin 12）寬：他自己挑的可以比引擎替他挑的遠，清單上每家都寫多繞幾分；要搭車才到的照舊不列。
+ *   之前兩邊同一道門：原話 #198「可抽菸店家 都是可接受的」收進來的兩家老喫茶（離住宿估 13 分與 21 分）在 App 裡哪裡都看不到，七天包 8/14 的早餐換一家只有兩家可選。
  * - 排序：多繞的分鐘少的在前；一樣的研究首選在前、備案在後；再一樣營業固定的在前、照 pool 的順序。
  */
+const SWAP_WALK_MAX_DEFAULT_MIN = 25;   // 設定裡沒有 breakfastSwapWalkMaxMin 時用的（11-24 之前打的打包檔內嵌的設定沒有這個鍵）
 export function breakfastSwapCandidates({ plan, day, home, pool = [], legFn, rules, settings = {}, country = null, kb = null, exclude = [], giveWay = BREAKFAST_POLICY.giveWay }) {
   const cur = breakfastOfPlan(plan);
   if (!plan?.sequence || !breakfastSlotOf(country, settings)) return [];
-  const rest = cur ? plan.sequence.filter((s) => s !== cur) : plan.sequence;
+  // 原位置換掉的那兩種（釘住的日子；早餐是他勾的站自己落在早餐時段——換了會先把那天釘住，breakfastSwapsInPlace）照現在早餐的位置試。
+  // 後一種那天還沒釘住：填站身上「只能落在那段空檔」的限制先拿掉（釘住之後它就是順序裡的一站；engine/insert.js），這裡只是先估，列之前畫面另外真的排一次（engine/choices.js breakfastSwapCheck）
+  const inPlace = Boolean(plan.pinned) || breakfastSwapsInPlace(plan);
+  const others = cur ? plan.sequence.filter((s) => s !== cur) : plan.sequence;
+  const rest = inPlace && !plan.pinned ? others.map((s) => (s.gap ? { ...s, gap: null } : s)) : others;
   const gone = new Set(exclude ?? []);
   const gonePois = pool.map((c) => c?.poi ?? c).filter((p) => p && gone.has(p.id));   // 同一處的另一筆也不列（他勾了仙台朝市商店街，就不列仙台朝市早餐）
-  const near = { maxWalkMin: settings.breakfastWalkMaxMin ?? 12, maxDetourMin: settings.onTheWayDetourMin ?? 8 };
+  const near = { maxWalkMin: settings.breakfastSwapWalkMaxMin ?? SWAP_WALK_MAX_DEFAULT_MIN, maxDetourMin: settings.onTheWayDetourMin ?? 8 };
   const now = new Map(plan.sequence.map((s) => [s.poi.id, s.startMin]));
   const out = [];
   for (const c of pool) {
@@ -509,8 +528,8 @@ export function breakfastSwapCandidates({ plan, day, home, pool = [], legFn, rul
     if (!poi || !servesBreakfast(poi) || swapGated(poi) || gone.has(poi.id) || gonePois.some((g) => samePlace(g, poi)) || plan.sequence.some((s) => samePlace(s.poi, poi))) continue;
     if (cur && poi.category !== cur.poi.category && personAvoids(day?.adjust, poi)) continue;
     const stop = breakfastStop(poi, settings, { poiId: poi.id, priority: 'want' });
-    // 釘住順序的日子（plan.pinned；engine/insert.js）：換了就是原位置換掉，照那個位置試（沒早餐就試第一站）；其餘的日子排成第一站試
-    const r = plan.pinned
+    // 釘住順序的日子（plan.pinned；engine/insert.js）、早餐是他勾的站自己落在早餐時段的日子：換了就是原位置換掉，照那個位置試（沒早餐就試第一站）；其餘的日子排成第一站試
+    const r = inPlace
       ? tryBreakfastAt({ sequence: rest, index: cur ? plan.sequence.indexOf(cur) : 0, stop, day, home, legFn, rules, settings, country, kb, complete: plan.complete !== false, near })
       : tryBreakfastFirst({ sequence: rest, stop, day, home, legFn, rules, settings, country, kb, complete: plan.complete !== false, giveWay, near });
     if (!r.ok || r.displaced.length) continue;
@@ -612,6 +631,8 @@ function pinnedWithBreakfast(pinned, fromId, toId, alreadyPicked) {
 /**
  * 早餐那一站按「換一家」選了 toPoiId（引擎排的早餐也能換，換了就變成他勾的；主控定的落地 D3）。plan＝那天現在排好的 plan。沒有那一天、沒給店回原 trip。
  * 候選清單用 breakfastSwapCandidates。重排之後 toPoiId 排成那天的第一站；原本的早餐是引擎排的或他指定的，其餘各站先後不變。
+ * 原本的早餐是他勾的站自己落在早餐時段（breakfastSwapsInPlace）：呼叫端先把那天照畫面釘住再叫這裡（engine/choices.js swapBreakfastTrip；11-24 甲4），釘住的日子就是原位置換掉；
+ * 直接叫這裡而那天沒釘住的話，那一筆改成指定的早餐、其餘的站會整天重新搜尋（舊行為）。
  */
 export function swapBreakfast(trip, date, toPoiId, plan, at = null) {
   if (typeof toPoiId !== 'string' || !toPoiId || !(trip?.days ?? []).some((d) => d.date === date)) return trip;

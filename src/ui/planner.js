@@ -12,6 +12,7 @@ import { corridorOfLeg, legSuggestOf, corridorNames, corridorListNode, corridorD
 import { choiceOf, dayChoices } from './choices.js';
 import { askView } from './insert.js';
 import { breakfastCardOf, swapListOf, offersOn, looseOffers, breakfastOffText, hasLaterDay } from './meals.js';
+import { CUMULATIVE_RULES } from './other-days.js';   // 累積型的黃字只在第一次超過的那站寫；復原列數「這天多幾句提醒」用同一份（addedWarnings）
 
 export function renderPlanner({ state, actions }) {
   const nodes = [el('h1', { text: state.trip.name ?? TEXT.appName })];
@@ -86,7 +87,7 @@ function dayBlock(d, planned, state, actions) {
   ]);
   // 累積型警告（今天走路會到 N 分、連跑）每站都會再響一次，只在第一次超過的那站寫
   const seenCumulative = new Set();
-  // 這天可以出的「或 B」：釘住順序的日子先試排過、選了會讓其餘各站少掉或換位置的不出（ui/choices.js dayChoices；每天算一次）
+  // 這天可以出的「或 B」：先試排過、選了會讓其餘各站少掉或換位置的不出（ui/choices.js dayChoices；11-24 起不分釘不釘住；同一份行程只試一次）
   const choices = dayChoices(state, d.date);
   plan.sequence.forEach((s, i) => block.append(stopCard(s, i, plan, d, state, actions, seenCumulative, choices)));
   if (plan.dropped.length) {
@@ -111,8 +112,8 @@ function introLines(poi, note = null, cls = 'muted small intro') {
 }
 
 /**
- * 二選一那行（T16；DESIGN §6.3.2「卡上顯示『或 B』」）：這站在這天可以出的二選一裡（choices＝ui/choices.js dayChoices：引擎給的 plan.choices，釘住順序的日子先試排過）
- * 就在店名下面寫「或 [B]」——B 是一顆小鍵，按了把 A 換成 B、A 順延到別天（app.js chooseOption；釘住的日子 B 就在 A 的原位置）；
+ * 二選一那行（T16；DESIGN §6.3.2「卡上顯示『或 B』」）：這站在這天可以出的二選一裡（choices＝ui/choices.js dayChoices：引擎給的 plan.choices 裡試排過、選了沒事的）
+ * 就在店名下面寫「或 [B]」——B 是一顆小鍵，按了把 A 換成 B、A 順延到別天（app.js chooseOption；B 就在 A 的原位置、那天從此照他調過的順序排）；
  * B 來自今天排不進的同類勾選站就補一句「今天只塞得下一家」，來自候選池就寫順路／多繞幾分。沒按＝照引擎；選完 B 進 picks、這行就不再出現。
  * 下面再一行 B 的簡介（有才畫；跟「換一家」同一個理由，原話 #177「單看店名 我會不清楚選哪間好」，推導）。
  */
@@ -199,9 +200,22 @@ function legBlock({ line, legIndex, plan, d, state, actions }) {
  * 之前每顆鍵是一整行粗體把動作與後果混在一起、下面接整段簡介：390×844 上 28 組的高度中位數 1,122px、17 組超過一個螢幕；量過的幾種排法見 src/index.html .insert-ask 那一段。
  * 選了還排不下就換成下一輪的選項（app.js pickInsertOption），最多三輪。
  * 選項有 ASK_TOP_CANCEL_FROM 個以上時，「算了，不插」在提示那一行的行尾也放一顆（11-12 畫面審查：選項多的時候要捲到底才收得掉）。
+ * 「這站不去」那一組有 ASK_DROP_SHOWN＋ASK_DROP_HIDE_MIN 個以上（6 個以上）時先列前 ASK_DROP_SHOWN 個（照引擎給的先後），其餘收在一顆「再列 N 站」後面
+ * （11-24，主控定；門檻 4 是預設；「至少藏 2 個才收」是同日傍晚的裁決乙5——剛好 5 個全列：收 1 個只換來一顆 44px 的鍵，那一塊只矮 35px）：按了在原位置展開、不再收回
+ * （記在這一輪的 state.insertAsk.showAll：重畫還開著；下一輪是新的一組選項，重新收合）。「少待一點」那一組不收。那顆是真的 <button>，鍵盤也按得到，按了焦點移到第一個新出來的選項。
+ * 為什麼收：選項多的時候那一塊超過一個螢幕（11-17 量試走版 17 組裡 14 組；8/13 每次 7–12 個選項、其中 9 個「這站不去」）。
+ * 11-24 實量（Chrome 157 headless、390×844，三個打包檔每一段走廊清單的每一家各按一次「升級成站」，跳選項的每一組量那一塊的高度；中位數／最高／超過 844px 的組數）：
+ *   試走版 17 組：全列 1205／1352／14 組 → 門檻 3：733／880／3 組｜門檻 4：816／963／6 組｜門檻 5：899／1046／9 組；
+ *   七天包 19 組：全列 746／1312／4 組 → 門檻 3：746／1172／3 組｜門檻 4：746／1255／4 組｜門檻 5 沒有一組會收；
+ *   公務版 20 組：全列 350／1019／3 組 → 門檻 3：350／984／2 組｜門檻 4、5 跟全列一樣。
+ * 七天包與公務版超過一個螢幕的那幾組高在「少待一點」（最多 6 個、不收），「這站不去」最多 5 個——只收 1 個時換來一顆 44px 的鍵，那一塊只矮 35px。
+ * 改成「至少藏 2 個才收」之後同一套重量（11-24 傍晚；畫出來的中位數／最高／超過 844px 的組數）：試走版 816／963／6 組（14 組會收，各藏 3–5 個，跟門檻 4 那一行相同）；
+ *   七天包 746／1312／4 組、公務版 350／1019／3 組——這兩包沒有一組會收（之前各有 3 組、2 組只藏 1 個），等於全列。
  */
 const ASK_TOP_CANCEL_FROM = 3;
 const ASK_ONE_LINE_FROM = 5;
+const ASK_DROP_SHOWN = 4;
+const ASK_DROP_HIDE_MIN = 2;   // 至少藏這麼多個才收（11-24 傍晚主控裁決乙5）：「這站不去」有 6 個以上才列前 4 個＋「再列 N 站」，剛好 5 個全列
 function insertAskNode(poi, date, legIndex, state, actions) {
   const ask = state.insertAsk;
   if (!ask || ask.date !== date || ask.legIndex !== legIndex || ask.poiId !== poi.id) return null;
@@ -218,11 +232,19 @@ function insertAskNode(poi, date, legIndex, state, actions) {
   ]);
   const count = v.fits.length + v.more.length;
   const topCancel = count >= ASK_TOP_CANCEL_FROM;
+  // 一組的選項鍵；「這站不去」至少多出 ASK_DROP_HIDE_MIN 個（6 個以上）而且還沒展開過：前 ASK_DROP_SHOWN 個＋「再列 N 站」
+  const groupNodes = (g) => {
+    if (g.key !== 'drop' || ask.showAll || g.rows.length < ASK_DROP_SHOWN + ASK_DROP_HIDE_MIN) return g.rows.map(optionButton);
+    const rest = g.rows.slice(ASK_DROP_SHOWN);
+    const more = el('button', { class: 'btn quiet ask-more', type: 'button' }, TEXT.insert.more(rest.length));
+    more.addEventListener('click', () => { ask.showAll = true; const nodes = rest.map(optionButton); more.replaceWith(...nodes); nodes[0].focus(); });
+    return [...g.rows.slice(0, ASK_DROP_SHOWN).map(optionButton), more];
+  };
   return el('div', { class: count >= ASK_ONE_LINE_FROM ? 'insert-ask many' : 'insert-ask' }, [
     v.chosen.length ? el('p', { class: 'small', text: TEXT.insert.chosen(v.chosen.join('、')) }) : null,
     el('p', { class: 'warn-line small', text: v.why }),
     el('p', { class: 'muted small ask-head' }, [v.prompt, topCancel ? el('button', { class: 'btn quiet sm', type: 'button', onclick: () => actions.cancelInsert() }, TEXT.insert.cancel) : null]),
-    ...v.groups.flatMap((g) => [el('p', { class: 'small ask-group', text: g.head }), ...g.rows.map(optionButton)]),
+    ...v.groups.flatMap((g) => [el('p', { class: 'small ask-group', text: g.head }), ...groupNodes(g)]),
     el('div', { class: 'actions' }, [el('button', { class: 'btn quiet', type: 'button', onclick: () => actions.cancelInsert() }, TEXT.insert.cancel)]),
   ]);
 }
@@ -244,8 +266,6 @@ function warnList(warns, extra = null) {
 function routeLink({ from, to, leg, state }) {
   return el('a', { href: routeUrl({ from, to, mode: legMode(leg), cityName: tripCityName(state) }), target: '_blank', rel: 'noopener' }, TEXT.routeLink);
 }
-
-const CUMULATIVE_RULES = new Set(['walk-budget', 'walk-run', 'shop-run']);
 
 /**
  * 引擎排進來的站，卡上那一句說明：哪一種看 stop.priority（'breakfast' 早餐、'filler' 填空檔、'onway' 順路、其餘恢復站），不看店型——恢復型的店也可能是填站；坐下來的地方另有一句。
@@ -316,21 +336,25 @@ function stopCard(s, i, plan, d, state, actions, seenCumulative = new Set(), cho
 }
 
 /**
- * 換一家清單（展開收合只動 DOM）：最上面一句講在換哪一餐（「晚餐換一家」「早餐換一家」；不是哪一餐就不寫，原話 #195），最多列六家——
- * 店名、順路或多繞幾分、那一餐的說明（「可以當晚餐：…」，有才有、不分店型）、簡介。要列誰、取哪幾家都在 ui/meals.js swapListOf（回來的就是要畫的那幾家）：
- * 午餐晚餐只列能當那一餐的店，早餐走早餐自己的清單，別天行程裡的店不列。
+ * 換一家清單（展開收合只動 DOM）：最上面一句講在換哪一餐（「晚餐換一家」「早餐換一家」；不是哪一餐就不寫，原話 #195），最多列六家（早餐的清單合格的全列）——
+ * 店名、順路或多繞幾分、那一餐的說明（「可以當晚餐：…」，有才有、不分店型）、簡介。要列誰、取哪幾家都在 ui/meals.js swapListOf（回來的就是要畫的那幾家，每一家都試排過）：
+ * 午餐晚餐只列能當那一餐的店，早餐走早餐自己的清單；別天已經排了的店排在後面、店名後多一個小標「8/15（六）已排」「8/13（四）勾了沒排進」，選了就把它挪過來（11-24）。
+ * 清單裡有帶小標的店時，餐別那一句下面多一行說明（swapListOf 的 hint）。
+ * 「· 多繞 N 分」連分隔點包成不換行的一塊（.nb；前面隔一個可以換行的空白）：之前是一段字，390 寬會斷成「· 多」＋下一行「繞 7 分」、或把「·」留在行尾（11-24 傍晚主控截圖）。
+ * 「· 營業時間沒查到，要先確認」整句太長、不包：分隔點用不斷行空白黏在第一個字前面，字照常換行。
  */
 function toggleSwap(card, s, d, state, actions) {
   const existing = card.querySelector('.swap-list');
   if (existing) { existing.remove(); return; }
-  const { title, cands, breakfast, empty } = swapListOf(state, d.date, s);
+  const { title, cands, breakfast, empty, hint } = swapListOf(state, d.date, s);
   const list = el('div', { class: 'swap-list' });
   if (title) list.append(el('p', { class: 'muted small', text: title }));
+  if (hint) list.append(el('p', { class: 'muted small', text: hint }));
   // 沒有候選時那一句照餐別寫（「附近沒有能當晚餐、順路又開著的店」；不是哪一餐才寫「同類型」）——上面那句是「晚餐換一家」，下面不能寫「沒有同類型的店」
   if (!cands.length) list.append(el('p', { class: 'muted small', text: empty }));
   for (const c of cands) {
     list.append(el('button', { class: 'btn alt', type: 'button', onclick: () => actions.swapStop(d.date, s.poi.id, c.poi, { breakfast }) }, [
-      el('strong', { text: c.poi.name_zh }), ` · ${TEXT.swapNote(c.detourMin)}`, c.open === null ? ` · ${TEXT.openUnknown}` : '',
+      el('strong', { text: c.poi.name_zh }), c.tag ? el('span', { class: 'cat', text: c.tag }) : null, ' ', el('span', { class: 'nb', text: `· ${TEXT.swapNote(c.detourMin)}` }), c.open === null ? ` · ${TEXT.openUnknown}` : '',
       // 每家下面的說明與簡介，整段、不截（原話 #177「換一家 跳出來的選項 也要有簡介 不然單看店名 我會不清楚選哪間好」）；<button> 裡只能放 phrasing content，用 span 配 CSS display:block 換行
       ...introLines(c.poi, c.note, 'intro'),
     ]));

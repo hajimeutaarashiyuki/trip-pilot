@@ -3,8 +3,9 @@
 // 這一站是不是早餐卡、換一家清單最上面那一句與每家的說明、早餐卡上的「或 X」、日期下面那行小字。小世界見 _world.js。
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mealOf, breakfastCardOf, mealNoteText, breakfastExclude, swapListOf, otherDaysStops, SWAP_LIST_MAX, offersOn, looseOffers, breakfastOffText, pickedBreakfast, hasLaterDay, breakfastSkipMark } from '../../src/ui/meals.js';
+import { mealOf, breakfastCardOf, mealNoteText, breakfastExclude, swapListOf, elsewhereOf, SWAP_LIST_MAX, offersOn, looseOffers, breakfastOffText, pickedBreakfast, hasLaterDay, breakfastSkipMark } from '../../src/ui/meals.js';
 import { setBreakfast, takeBreakfastOffer } from '../../src/engine/breakfast.js';
+import { planTrip } from '../../src/engine/trip.js';
 import { stateOf, makeTrip, pois, THU, FRI, SAT, SUN, A, C, Z, D, E, F, G, H, I, late, dinner, dinner2, izakaya, cafe, bar, lunch, noodle, stand, bakery } from './_world.js';
 
 const BREAKFASTS = [noodle.id, stand.id, bakery.id];
@@ -46,24 +47,26 @@ test('換一家清單：晚餐的站最上面寫「晚餐換一家」、只列�
   assert.ok(d.cands.every((c) => typeof c.detourMin === 'number' && 'open' in c));
   const l = swapListOf(state, THU, stopOf(state, THU, lunch.id));
   assert.deepEqual([l.meal, l.title], ['lunch', '午餐換一家']);
-  // 別天行程裡的店不列（11-12 畫面審查先擋引擎排的、11-17 連他勾的也擋）：三家早餐店都能當午餐、也順路，但各是 FRI／SAT／SUN 引擎排的早餐——選了它，那一天的早餐就被搶走
-  assert.deepEqual(otherDaysStops(state.plans, THU).map((p) => p.id).sort(), [...BREAKFASTS, D.id, E.id, F.id, G.id, H.id, I.id].sort(), '別天序列裡的每一站：引擎排的早餐與他勾的街區');
-  const friOthers = otherDaysStops(state.plans, FRI).map((p) => p.id);
-  assert.ok(!friOthers.includes(breakfastId(state, FRI)) && !friOthers.includes(D.id) && !friOthers.includes(E.id), '自己那一天的不算');
-  assert.ok(friOthers.includes(A.id) && friOthers.includes(F.id) && friOthers.includes(breakfastId(state, SAT)));
-  assert.deepEqual(otherDaysStops({}, THU), []);
-  // 別天勾了但排不進的（那天的排不進清單）也算別天行程裡的店；當天自己排不進的不算（清單照列，選了就是這一站換成它）
-  const two = { x: { plan: { sequence: [{ poi: A }], dropped: [{ poi: C }] } }, y: { plan: { sequence: [{ poi: D }], dropped: [{ poi: E }] } } };
-  assert.deepEqual([otherDaysStops(two, 'x').map((p) => p.id), otherDaysStops(two, 'y').map((p) => p.id)], [[D.id, E.id], [A.id, C.id]]);
-  assert.ok(!l.cands.some((c) => BREAKFASTS.includes(c.poi.id)), `午餐清單不列別天的早餐：${l.cands.map((c) => c.poi.id).join('、')}`);
-  // 那一家不再是哪一天引擎排的站（SUN 說了吃飯店早餐，那家空出來）就照列
+  // 這家店現在在別天的哪裡（elsewhereOf；換一家清單拿它標日期）：別天他勾的、引擎排的都找得到；自己那一天的、哪一天都沒排的回 null
+  const where = elsewhereOf(state, THU);
+  assert.deepEqual(where(D), { date: FRI, how: 'placed', poiId: D.id, locked: false });
+  assert.deepEqual(where(pois[breakfastId(state, SAT)]), { date: SAT, how: 'engine', poiId: breakfastId(state, SAT), locked: false });
+  assert.deepEqual([where(Z), where(A), where(null), elsewhereOf(state, FRI)(D), elsewhereOf({}, THU)(D)], [null, null, null, null, null], '沒排的、自己那一天的、沒資料：null');
+  assert.deepEqual(elsewhereOf(state, FRI)(A), { date: THU, how: 'placed', poiId: A.id, locked: false });
+  // 別天勾了但排不進的（那天的排不進清單）也找得到，標成沒排進；同一家在兩天都有時，他勾的先於引擎排的
+  const two = { trip: { days: [{ date: 'x', picks: [{ poiId: A.id }, { poiId: C.id }] }, { date: 'y', picks: [{ poiId: E.id }] }, { date: 'z', picks: [{ poiId: D.id }] }] }, plans: { x: { plan: { sequence: [{ poi: A }, { poi: D, insertedBy: 'engine' }], dropped: [{ poi: C }] } }, y: { plan: { sequence: [], dropped: [{ poi: E }] } }, z: { plan: { sequence: [{ poi: D }], dropped: [] } } } };
+  assert.deepEqual([elsewhereOf(two, 'y')(C), elsewhereOf(two, 'x')(E), elsewhereOf(two, 'y')(D)], [{ date: 'x', how: 'dropped', poiId: C.id, locked: false }, { date: 'y', how: 'dropped', poiId: E.id, locked: false }, { date: 'z', how: 'placed', poiId: D.id, locked: false }]);
+  // 別天已經排了的店照列、排在後面、帶小標（11-24；11-17 那一版整個不列，這份午餐清單是空的）：三家早餐店都能當午餐、也順路，各是 FRI／SAT／SUN 引擎排的早餐
+  assert.deepEqual(l.cands.map((c) => [c.poi.id, c.tag, c.from.how]), [[breakfastId(state, FRI), '8/14（五）已排', 'engine'], [breakfastId(state, SAT), '8/15（六）已排', 'engine'], [breakfastId(state, SUN), '8/16（日）已排', 'engine']]);
+  assert.ok(d.cands.every((c) => c.tag === null && c.from === null), '哪一天都還沒排的店沒有小標');
+  // 那一家不再是哪一天的站（SUN 說了吃飯店早餐，那家空出來）：沒有小標、排到前面
   const sunB = breakfastId(state, SUN);
   const freed = stateOf(setBreakfast(makeTrip(), SUN, 'hotel', sunB));
   const l2 = swapListOf(freed, THU, stopOf(freed, THU, lunch.id));
-  assert.ok(l2.cands.some((c) => c.poi.id === sunB), `空出來的那家列得到：${l2.cands.map((c) => c.poi.id).join('、')}`);
-  assert.ok(!l2.cands.some((c) => c.poi.id === breakfastId(freed, FRI) || c.poi.id === breakfastId(freed, SAT)));
-  // 清單是空的時候那一句照餐別寫，不是哪一餐才寫「同類型」；釘住的日子有候選卻全被試排濾掉的多半句
-  assert.deepEqual([d.empty, l.cands.length, l.empty], ['附近沒有能當晚餐、順路又開著的店', 0, '附近沒有能當午餐、順路又開著的店（別天已經排了的店不列）'], '午餐清單是空的、候選（三家早餐店）都排在別天：多半句（11-17）');
+  assert.deepEqual(l2.cands.map((c) => [c.poi.id, c.tag]), [[sunB, null], [breakfastId(freed, FRI), '8/14（五）已排'], [breakfastId(freed, SAT), '8/15（六）已排']], '先列還沒排的，再列別天已排的');
+  // 清單是空的時候那一句照餐別寫，不是哪一餐才寫「同類型」；「（別天已經排了的店不列）」那半句拿掉了
+  const noLunch = swapListOf({ ...state, pool: state.pool.filter((x) => !BREAKFASTS.includes(x.poi.id)) }, THU, stopOf(state, THU, lunch.id));
+  assert.deepEqual([d.empty, noLunch.cands.length, noLunch.empty], ['附近沒有能當晚餐、順路又開著的店', 0, '附近沒有能當午餐、順路又開著的店']);
   // 不是哪一餐：街區只換街區，沒有那一句
   const c = swapListOf(state, THU, stopOf(state, THU, C.id));
   assert.deepEqual([c.meal, c.title, c.breakfast], [null, null, false]);
@@ -74,58 +77,94 @@ test('換一家清單：晚餐的站最上面寫「晚餐換一家」、只列�
   const b = swapListOf(state, THU, stopOf(state, THU, bar.id));
   assert.equal(b.title, null);
   assert.ok(b.cands.every((x) => x.poi.category === 'bar'));
-  assert.deepEqual(swapListOf(state, '2026-01-01', stopOf(state, THU, bar.id)), { meal: null, title: null, breakfast: false, cands: [], empty: '附近沒有同類型、順路又開著的店' });
+  assert.deepEqual(swapListOf(state, '2026-01-01', stopOf(state, THU, bar.id)), { meal: null, title: null, breakfast: false, cands: [], hint: null, empty: '附近沒有同類型、順路又開著的店' });
   // 釘住的日子（THU）：有候選、卻全被「換了會害別的站排不進」濾掉時，那一句多半句。候選池只留一家要逛 600 分的街區：換掉 09:05 的街區A，午餐店（14:30 關）就排不進
   const longStreet = { ...Z, id: '逛很久的街區', name_zh: '逛很久的街區', dwellMin: 600 };
   const tight = { ...state, pool: [{ poi: longStreet }], pois: { ...state.pois, [longStreet.id]: longStreet } };
   const ta = swapListOf(tight, THU, stopOf(tight, THU, A.id));
   assert.deepEqual([ta.cands, ta.empty], [[], '附近沒有同類型、順路又開著的店（照你調過的順序，換了會害別的站排不進的不列）']);
   assert.equal(swapListOf({ ...tight, pool: [] }, THU, stopOf(tight, THU, A.id)).empty, '附近沒有同類型、順路又開著的店', '本來就沒有候選：不多那半句');
-  // 兩個原因都有（別天排了的店不列、剩下的又被試排濾掉）：併成一個括號，不連接兩個括號（11-17 畫面審查）
-  const both = { ...tight, pool: [...state.pool.filter((x) => x.poi.id !== Z.id), { poi: longStreet }] };
-  assert.equal(swapListOf(both, THU, stopOf(both, THU, A.id)).empty, '附近沒有同類型、順路又開著的店（別天已經排了的店不列；照你調過的順序，換了會害別的站排不進的也不列）');
+  // 沒釘住的日子（11-24 起也試排）：有候選卻全被濾掉時多的是另外那半句（那天還沒有「調過的順序」）。
+  // FRI 兩個街區裡排在前面的那一個，換成「逛到 22:30」的街區（那個時段它自己開著、待得完）：後面那個街區（23:00 關）就排不進
+  assert.ok(!state.plans[FRI].plan.pinned);
+  const firstStreet = state.plans[FRI].plan.sequence.find((s) => [D.id, E.id].includes(s.poi.id));
+  const veryLong = { ...Z, id: '逛到晚上的街區', name_zh: '逛到晚上的街區', dwellMin: 22 * 60 + 30 - firstStreet.startMin };
+  const loose = { ...state, pool: [{ poi: veryLong }], pois: { ...state.pois, [veryLong.id]: veryLong } };
+  const fa = swapListOf(loose, FRI, firstStreet);
+  assert.deepEqual([fa.cands, fa.empty], [[], '附近沒有同類型、順路又開著的店（換了會害別的站排不進的不列）']);
   assert.equal(mealNoteText('dinner', '點餐到 20:30'), '可以當晚餐：點餐到 20:30');
   assert.deepEqual([mealNoteText('dinner', null), mealNoteText(null, 'x'), mealNoteText('lunch', true)], [null, null, null]);
 });
 
-test('換一家清單不列別天行程裡的店（原話 #195 的推導，11-17）：別天他勾的站、同一處的另一筆都不列；在取前幾家之前就濾掉，空出來的位子由後面還沒排的店補上（不是清單變短）；釘住的日子照樣先試排', () => {
+test('換一家清單：別天已經排了的店不藏起來，列在後面、標日期（11-24，主控收回 11-17「別天行程裡的店不列」；原話 #195 要的是推薦對應的店）——先取還沒排的，不滿六家才用別天已排的補；同一處的另一筆也算別天已排；別天的必去、指定、主行程、固定時段不列；每一家都先試排', () => {
   const state = stateOf();
-  // THU 的街區C（不是哪一餐、只列街區）：候選池照順序是 D E F G H I（FRI／SAT／SUN 勾的）再來才是沒勾過的 Z——之前前六家全是別天勾的站，選了同一家就兩天都有
+  const view = (list) => list.cands.map((x) => [x.poi.id, x.tag]);
+  // THU 的街區C（不是哪一餐、只列街區）：候選池照順序是 D E F G H I（FRI／SAT／SUN 勾的）再來才是沒勾過的 Z。11-17 那一版只剩 Z 一家；現在 Z 在最前面，別天勾的排在後面、各帶小標
   const c = swapListOf(state, THU, stopOf(state, THU, C.id));
-  assert.deepEqual(c.cands.map((x) => x.poi.id), [Z.id], '別天勾的六家都不列，只剩沒排過的那一家');
-  // 候選池再多八家沒排過的街區、一家「街區D 的另一筆」（同一處）：畫出來的是沒排過的前六家；同一處的不列
-  const extras = Array.from({ length: 8 }, (_, i) => ({ ...Z, id: `新街區${i + 1}`, name_zh: `新街區${i + 1}` }));
-  const twin = { ...Z, id: '街區D別館', name_zh: '街區D別館', samePlace: D.id };
-  const more = [twin, ...extras];
-  const big = { ...state, pool: [...state.pool, ...more.map((poi) => ({ poi }))], pois: { ...state.pois, ...Object.fromEntries(more.map((p) => [p.id, p])) } };
-  const list = swapListOf(big, THU, stopOf(big, THU, C.id));
   assert.equal(SWAP_LIST_MAX, 6);
-  assert.deepEqual(list.cands.map((x) => x.poi.id), [Z.id, ...extras.slice(0, 5).map((p) => p.id)], '補進來的是排在後面、還沒排的店');
-  const elsewhere = new Set(otherDaysStops(big.plans, THU).map((p) => p.id));
-  assert.ok(list.cands.every((x) => !elsewhere.has(x.poi.id) && x.poi.id !== twin.id));
-  // 同一處的另一筆、店型跟別天那一站不一樣（知識庫常見：同一個地點一筆是街區、一筆是吃的）：別天那一站自己進不了這份清單，靠同一處這一條擋
+  assert.deepEqual(view(c), [[Z.id, null], [D.id, '8/14（五）已排'], [E.id, '8/14（五）已排'], [F.id, '8/15（六）已排'], [G.id, '8/15（六）已排'], [H.id, '8/16（日）已排']], '最多六家：還沒排的先、別天已排的補（街區I 沒排上）');
+  assert.deepEqual(c.cands.map((x) => x.from), [null, ...[D, E].map((p) => ({ date: FRI, how: 'placed', poiId: p.id, locked: false })), ...[F, G].map((p) => ({ date: SAT, how: 'placed', poiId: p.id, locked: false })), { date: SUN, how: 'placed', poiId: H.id, locked: false }]);
+  // 候選池再多八家沒排過的街區：畫出來的六家全是還沒排的——別天已排的只在不滿六家時才補
+  const extras = Array.from({ length: 8 }, (_, i) => ({ ...Z, id: `新街區${i + 1}`, name_zh: `新街區${i + 1}` }));
+  const withMore = (more) => ({ ...state, pool: [...state.pool, ...more.map((poi) => ({ poi }))], pois: { ...state.pois, ...Object.fromEntries(more.map((p) => [p.id, p])) } });
+  const big = withMore(extras);
+  assert.deepEqual(view(swapListOf(big, THU, stopOf(big, THU, C.id))), [Z.id, ...extras.slice(0, 5).map((p) => p.id)].map((id) => [id, null]));
+  // 還沒排的有四家：補兩家別天已排的
+  const four = withMore(extras.slice(0, 3));
+  assert.deepEqual(view(swapListOf(four, THU, stopOf(four, THU, C.id))), [[Z.id, null], ...extras.slice(0, 3).map((p) => [p.id, null]), [D.id, '8/14（五）已排'], [E.id, '8/14（五）已排']]);
+  // 同一處的另一筆（知識庫 samePlace）：街區D 排在 FRI，它的別館算別天已排——排在後面、標那一天，from.poiId 是那天那一站自己的 id
+  const twin = { ...Z, id: '街區D別館', name_zh: '街區D別館', samePlace: D.id };
+  const tw = { ...state, pool: [{ poi: twin }, { poi: Z }, { poi: D }], pois: { ...state.pois, [twin.id]: twin } };
+  const twList = swapListOf(tw, THU, stopOf(tw, THU, C.id));
+  assert.deepEqual(view(twList), [[Z.id, null], [twin.id, '8/14（五）已排']], '還沒排的在最前面；別館帶街區D 那一天的小標（同一處的兩筆只列一筆——排在前面的那一筆）');
+  assert.deepEqual(twList.cands[1].from, { date: FRI, how: 'placed', poiId: D.id, locked: false });
+  // 同一處的另一筆、店型跟別天那一站不一樣（同一個地點一筆是街區、一筆是吃的）：晚餐清單上它也帶小標
   const stall = { ...dinner2, id: '街區D的食堂', name_zh: '街區D的食堂', samePlace: D.id };
-  const withStall = { ...state, pool: [...state.pool, { poi: stall }], pois: { ...state.pois, [stall.id]: stall } };
-  const dinners = swapListOf(withStall, THU, stopOf(withStall, THU, dinner.id)).cands.map((x) => x.poi.id);
-  assert.ok(dinners.includes(dinner2.id) && !dinners.includes(stall.id), `街區D 排在 FRI，它同一處的食堂不列：${dinners.join('、')}`);
-  const lone = { ...stall, samePlace: undefined };
-  assert.ok(swapListOf({ ...withStall, pool: [...state.pool, { poi: lone }] }, THU, stopOf(withStall, THU, dinner.id)).cands.some((x) => x.poi.id === stall.id), '沒有標同一處的照列（對照）');
-  // 別天沒排的那一天自己的清單：FRI 的街區D → 不列 THU／SAT／SUN 的街區，Z 照列
-  const d = swapListOf(state, FRI, stopOf(state, FRI, D.id));
-  assert.deepEqual(d.cands.map((x) => x.poi.id), [Z.id]);
-  // 清單空了、而且有候選是因為排在別天才沒列：那一句多半句——只寫「附近沒有同類型的店」不是實情（附近有，只是別天排了）
-  const noZ = { ...state, pool: state.pool.filter((x) => x.poi.id !== Z.id) };
-  const none = swapListOf(noZ, FRI, stopOf(noZ, FRI, D.id));
-  assert.deepEqual([none.cands, none.empty], [[], '附近沒有同類型、順路又開著的店（別天已經排了的店不列）']);
-  const noneDinner = swapListOf({ ...state, pool: state.pool.filter((x) => ![dinner2.id, izakaya.id].includes(x.poi.id)) }, THU, stopOf(state, THU, dinner.id));
-  assert.equal(noneDinner.cands.length, 0);
-  assert.ok(['附近沒有能當晚餐、順路又開著的店', '附近沒有能當晚餐、順路又開著的店（別天已經排了的店不列）'].includes(noneDinner.empty), noneDinner.empty);
-  assert.equal(swapListOf({ ...state, pool: [] }, FRI, stopOf(state, FRI, D.id)).empty, '附近沒有同類型、順路又開著的店', '本來就沒有候選：不多那半句');
-  // 釘住的日子（THU）：每一家照樣先試排，湊滿六家就停；換了會害別的站排不進的不列、位子給後面的
+  const ws = withMore([stall]);
+  assert.deepEqual(view(swapListOf(ws, THU, stopOf(ws, THU, dinner.id))), [[dinner2.id, null], [izakaya.id, null], [stall.id, '8/14（五）已排']]);
+  // 別天勾了但沒排進的：標「勾了沒排進」。SAT 勾三家咖啡廳（同類一天最多 2 家）有一家排不進；FRI 那家咖啡廳的清單三家都列得到
+  const mkCafe = (id, over = {}) => ({ ...cafe, id, name_zh: id, curated: true, item: '咖啡豆', ...over });
+  const cafes = ['咖啡一', '咖啡二', '咖啡三'].map((id) => mkCafe(id)); const friCafe = mkCafe('咖啡四');
+  const cafeState = (satOver = {}) => {
+    const trip = makeTrip();
+    Object.assign(trip.days.find((x) => x.date === SAT), { picks: [F, G, ...cafes].map((p) => ({ poiId: p.id, priority: 'want' })), ...satOver });
+    trip.days.find((x) => x.date === FRI).picks.push({ poiId: friCafe.id, priority: 'want' });
+    const s = stateOf(trip);
+    return { ...s, pois: { ...s.pois, ...Object.fromEntries([...cafes, friCafe].map((p) => [p.id, p])) }, pool: [...s.pool, ...[...cafes, friCafe].map((poi) => ({ poi }))] };
+  };
+  // stateOf 用小世界自己的知識庫排：把四家咖啡廳加進去再排一次
+  const planWith = (s) => ({ ...s, plans: Object.fromEntries(planTrip({ trip: s.trip, pois: s.pois, rules: s.rules, settings: s.settings, country: s.country, kb: s.kb, legFn: s.legFn, restPool: Object.values(s.pois) }).days.map((x) => [x.date, x])) });
+  const cs = planWith(cafeState());
+  const out = cs.plans[SAT].plan.dropped.map((x) => x.poi.id);
+  assert.equal(out.length, 1, `SAT 排不進的咖啡廳：${out.join('、')}`);
+  const friList = swapListOf(cs, FRI, stopOf(cs, FRI, friCafe.id));
+  assert.deepEqual(Object.fromEntries(view(friList)), Object.fromEntries(cafes.map((p) => [p.id, p.id === out[0] ? '8/15（六）勾了沒排進' : '8/15（六）已排'])));
+  assert.equal(friList.cands.find((x) => x.poi.id === out[0]).from.how, 'dropped');
+  // 別天的必去、主行程、指定站、帶固定時段的：不列（那一天不能少了它；挪不走）
+  const lockedOf = (satOver, pickOver = {}) => {
+    const s0 = cafeState(satOver);
+    const sat = s0.trip.days.find((x) => x.date === SAT);
+    sat.picks = sat.picks.map((p) => (p.poiId === cafes[0].id ? { ...p, ...pickOver } : p));
+    const s = planWith(s0);
+    return swapListOf(s, FRI, stopOf(s, FRI, friCafe.id)).cands.map((x) => x.poi.id);
+  };
+  assert.ok(lockedOf({}).includes(cafes[0].id), '對照：一般的勾選照列');
+  for (const [label, satOver, pickOver] of [['必去', {}, { priority: 'must' }], ['指定', { designated: [cafes[0].id] }, {}], ['主行程', { anchor: { poiId: cafes[0].id } }, {}], ['固定時段', {}, { fixedWindow: { startMin: 900 } }]]) {
+    assert.ok(!lockedOf(satOver, pickOver).includes(cafes[0].id), `${label}：不列`);
+  }
+  // 每一家都先試排（釘住的 THU）：換了會害別的站排不進的不列，位子給後面的——還沒排的與別天已排的都要試
   const long = { ...Z, id: '逛很久的街區', name_zh: '逛很久的街區', dwellMin: 600 };
   const tight = { ...state, pool: [{ poi: long }, ...extras.map((poi) => ({ poi }))], pois: { ...state.pois, [long.id]: long, ...Object.fromEntries(extras.map((p) => [p.id, p])) } };
-  const ta = swapListOf(tight, THU, stopOf(tight, THU, A.id));
-  assert.deepEqual(ta.cands.map((x) => x.poi.id), extras.slice(0, 6).map((p) => p.id), '排在最前面的那家換了會害午餐店排不進：不列，後面六家補滿');
+  assert.deepEqual(swapListOf(tight, THU, stopOf(tight, THU, A.id)).cands.map((x) => x.poi.id), extras.slice(0, 6).map((p) => p.id), '排在最前面的那家換了會害午餐店排不進：不列，後面六家補滿');
+  // 真的沒有店：照既有的句子（「別天已經排了的店不列」那半句拿掉了）
+  assert.equal(swapListOf({ ...state, pool: [] }, FRI, stopOf(state, FRI, D.id)).empty, '附近沒有同類型、順路又開著的店');
+  // 小標的說明（11-24 傍晚主控定；主控截圖看整份清單六家全帶「8/17（一）已排」，看不出選了會怎樣）：清單裡只要有一家帶小標就有這一句，一家都沒有就沒有
+  const HINT = '標了日期的店原本在那一天，選了就挪到這裡';
+  assert.equal(c.hint, HINT, '六家裡五家帶小標');
+  assert.equal(friList.hint, HINT, '勾了沒排進的也是帶小標的');
+  assert.equal(swapListOf(big, THU, stopOf(big, THU, C.id)).hint, null, '畫出來的六家都還沒排：不寫');
+  assert.equal(swapListOf(state, THU, stopOf(state, THU, dinner.id)).hint, null, '晚餐清單沒有帶小標的');
+  assert.equal(swapListOf({ ...state, pool: [] }, FRI, stopOf(state, FRI, D.id)).hint, null, '空清單不寫');
 });
 
 test('hasLaterDay：旅程最後一天後面沒有日子（早餐卡不出「改天去」）；breakfastSkipMark：候選頁上被「吃飯店早餐／改天去」拿掉的勾選站那一句', () => {
@@ -158,6 +197,16 @@ test('早餐換一家：最上面寫「早餐換一家」、走早餐自己的�
   const ex = breakfastExclude(state.trip, state.plans);
   assert.ok(ex.has(D.id) && ex.has(breakfastId(state, FRI)) && ex.has(breakfastId(state, SAT)) && !ex.has(sunB), '任何一天勾過的＋任何一天序列裡的；空出來的那家不在裡面');
   assert.ok(!breakfastExclude({ days: [] }).size);
+  // 早餐的清單不受「最多 6 家」限制，合格的全列（11-24 傍晚主控裁決乙4：候選只有知識庫標了能當早餐的店，本來就少；之前第 7 家以後看不到——七天包 8/18 的 路傍）。
+  // 候選池多八家能當早餐的店：連空出來的那一家共九家都列，先後照早餐清單既有的（多繞少的在前，一樣照候選池的先後）；沒有小標、也就沒有小標的說明
+  const more = Array.from({ length: 8 }, (_, i) => ({ ...noodle, id: `早餐店${i + 1}`, name_zh: `早餐店${i + 1}`, meals: { breakfast: true, lunch: true } }));
+  const wide = { ...state, pool: [...state.pool, ...more.map((poi) => ({ poi }))], pois: { ...state.pois, ...Object.fromEntries(more.map((p) => [p.id, p])) } };
+  const all = swapListOf(wide, FRI, wide.plans[FRI].plan.sequence[0]);
+  assert.ok(all.cands.length > SWAP_LIST_MAX);
+  assert.deepEqual(all.cands.map((x) => x.poi.id), [sunB, ...more.map((p) => p.id)].sort((a, b) => wide.pool.findIndex((x) => x.poi.id === a) - wide.pool.findIndex((x) => x.poi.id === b)));
+  assert.deepEqual([all.hint, all.cands.every((x) => x.tag === null)], [null, true]);
+  // 別的清單照舊最多 6 家（同一批店也能當午餐：THU 的午餐清單只畫六家）
+  assert.equal(swapListOf(wide, THU, stopOf(wide, THU, lunch.id)).cands.length, SWAP_LIST_MAX);
 });
 
 test('早餐卡上的「或 X」：改天去的那家在後面每個合格的日子都掛、吃飯店早餐只掛後面第一天；那天沒有早餐站的掛在日期下面；日期下面那行小字', () => {

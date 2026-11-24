@@ -111,6 +111,13 @@ test('planTrip：留白扣在時窗尾端——day.window 收工 22:30、windowR
   assert.ok(c.plan.sequence.some((s) => s.poi.id === half.id && s.endMin === 23 * 60), '留白 0 的那天 21:30–23:00 排得進');
 });
 
+test('planTrip：指定的站排不進的黃字寫店名，不露出原始 id（11-24；換掉指定站之後才看得到這一句）', () => {
+  const shop = mk('街區'); const late = { ...bar('late-bar', '21:30'), name_zh: '九點半的酒吧' };
+  const r = oneDay({ designated: [late.id], picks: [{ poiId: shop.id, priority: 'must' }, { poiId: late.id, priority: 'must' }] }, [shop, late]);
+  assert.ok(!r.plan.sequence.some((s) => s.poi.id === late.id), '會待過收工的 bar 排不進');
+  assert.deepEqual(r.plan.warnings.filter((w) => w.ruleId === 'designated').map((w) => w.msg), ['指定的 1 站今天排不進：九點半的酒吧']);
+});
+
 test('planTrip 國家層（T20）：離境日在免稅新制生效後收工再扣 bufferMin、day.taxRefundBufferMin 記下來，生效前跟以前一樣；夜間步行風險 mid 時窗尾端 23:00', () => {
   const shop = mk('街區');
   const depTrip = (date) => ({ id: 't', party: 1, homeBases: [{ poi: nightHome }], days: [{ date, type: 'departure', departAirportMin: 16 * 60, picks: [{ poiId: shop.id, priority: 'must' }] }] });

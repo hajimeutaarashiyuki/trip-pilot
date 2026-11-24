@@ -202,7 +202,9 @@ test('samePlace：同一個地點在知識庫寫成兩筆時，其中一筆是�
   const picked = shop('picked', 38.2603, 140.875);
   const pickedTwin = shop('picked-twin', 38.2606, 140.872, { samePlace: 'picked' });
   assert.deepEqual(corridorFor({ plan: seqOf(A), home, pool: [picked, pickedTwin], legFn, settings, day, exclude: new Set(['picked']) }), []);
-  assert.deepEqual(idsOf(corridorFor({ plan: seqOf(A), home, pool: [picked, pickedTwin], legFn, settings, day }), 0), ['picked', 'picked-twin'], '都沒被排除時兩筆照列');
+  // 兩筆都沒被排除、都不是站：只列知識庫裡排前面的那一筆（11-24 起；之前兩筆照列——清單上同一個地點出現兩次。細的情境在 test/engine/same-place.test.js）
+  assert.deepEqual(idsOf(corridorFor({ plan: seqOf(A), home, pool: [picked, pickedTwin], legFn, settings, day }), 0), ['picked']);
+  assert.deepEqual(idsOf(corridorFor({ plan: seqOf(A), home, pool: [pickedTwin, picked], legFn, settings, day }), 0), ['picked-twin']);
   // 沒有 samePlace 欄位的知識庫：結果跟以前一樣
   assert.deepEqual(idsOf(corridorFor({ plan: seqOf(A), home, pool: [shop('近33', 38.2603, 140.875), other], legFn, settings, day }), 0), ['近33', 'other']);
 });

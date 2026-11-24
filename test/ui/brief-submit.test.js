@@ -587,3 +587,15 @@ test('狀態句與原因都是中文、不露鍵值；伺服器回的每個錯�
   assert.equal(L.submitErrors.http(503), '桌機的伺服器回了錯誤 503');
   assert.ok(L.intro.includes('這台裝置') && L.intro.includes('提交') && !L.intro.includes('手機'), '頁上的字：存在這台裝置、填完按提交');
 });
+
+test('住宿那一欄的字補問早餐（11-24；原話 #196「但我也有可能在飯店吃早餐」——他是在這一頁填，模板 docs/brief-template.md §1 加的那一問他看不到）：只改畫面的字，輸出的需求單文字那一列照舊是「住宿」', () => {
+  reset();
+  render();
+  const labels = findAll((n) => n.tag === 'span' && n.textContent.startsWith('住宿')).map((n) => n.textContent);
+  assert.deepEqual(labels, [L.lodging], '頁上住宿那一欄的字');
+  assert.ok(L.lodging.includes('含早餐') && L.lodging.includes('哪幾天'), L.lodging);
+  assert.ok(L.lodging.startsWith('住宿（飯店名＋最近車站；換宿就每晚各寫；在比的也可以寫'), '原本問的三樣都還在');
+  assert.ok([...L.lodging].length <= 50, `字數要短：${[...L.lodging].length} 個字`);
+  assert.ok(expectedText().includes('| 住宿 | 東横INN 仙台東口 |'), '輸出的段落與資料格式不動');
+  assert.equal(L.md.lodging, '住宿');
+});
