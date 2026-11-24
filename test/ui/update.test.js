@@ -126,3 +126,18 @@ test(`打包檔比 App 新（版本 ${PACK_VERSION + 1}；App 認到 ${PACK_VERS
     assert.ok(s && !s.includes('比 App 新') && !s.includes('更新中'), `版本 ${v}：${s}`);
   }
 });
+
+test('改了打包檔網址只存起來：不重排、不重畫——重畫會把「更新」那顆鍵換掉，改完網址直接按「更新」的第一下會落空（11-24 主控在真瀏覽器實測：第一下沒有發出請求、第二下才有）；排程用得到的設定照舊重排', () => {
+  load();
+  const plansBefore = state.plans;
+  const [btnBefore] = dom.buttons(TEXT.update);
+  assert.ok(btnBefore, '設定頁有「更新」這顆鍵');
+  app.saveDevice({ packUrl: 'http://127.0.0.1:1/other.json' });
+  assert.equal(state.device.packUrl, 'http://127.0.0.1:1/other.json');
+  assert.equal(JSON.parse(dom.storage.get('trip-pilot:settings')).packUrl, 'http://127.0.0.1:1/other.json', '有存進這台裝置');
+  assert.equal(state.plans, plansBefore, '沒有重排');
+  assert.equal(dom.buttons(TEXT.update)[0], btnBefore, '「更新」還是同一顆鍵（沒有重畫）');
+  app.saveDevice({ nightSlotOn: false });
+  assert.notEqual(state.plans, plansBefore, '排程用得到的設定改了照舊重排');
+  assert.equal(state.device.packUrl, 'http://127.0.0.1:1/other.json', '網址還在');
+});

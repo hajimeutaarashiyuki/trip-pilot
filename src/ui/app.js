@@ -584,6 +584,9 @@ export async function importFile(file) {
 export function saveDevice(partial) {
   state.device = { ...state.device, ...partial };
   saveJSON(SETTINGS_KEY, state.device);
+  // 打包檔網址不是排程的輸入：只存，不重排也不重畫。以前照樣重排——重畫會把「更新」那顆鍵換掉，改完網址直接按「更新」，
+  // 輸入框失焦觸發的這一次重畫剛好落在按下與放開之間，第一下就落空（11-24 主控在真瀏覽器實測：第一下沒有發出請求、第二下才有）。
+  if (Object.keys(partial ?? {}).every((k) => k === 'packUrl')) return;
   replanAll();
 }
 
