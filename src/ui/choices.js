@@ -79,6 +79,16 @@ export function displacedPicks({ before = {}, after = {}, dates = [] }) {
 }
 
 /**
+ * 整天重新搜尋之後他勾的站掉進排不進清單（displacedPicks 的結果），而且沒有誰擠它——「不去了」「讓引擎重排這天」之後那天交給引擎重排、排不進的：
+ * 接在復原列後面的「；X、Y 排不進了」，沒有回空字串。short＝店名怎麼縮短（app.js 給 corridor.js 的 shortName；不給就用全名）。
+ * 換一家、「或 B」、排到別天那種「選進來的擠掉別站」用的是另一句「擠掉了 8/13（四） 的 X」（deferNotice、app.js squeezedNote）。
+ * 「不去了」11-25 才接上這一句：文件的對抗審查在三包每一張有「不去了」的站卡各按一次，102 次裡 8 次同一天他勾的另一站掉進排不進，復原列之前一個字都沒提。
+ */
+export function fellNote(list = [], short = (name) => name) {
+  return list.length ? `；${TEXT.otherDays.dropped(list.map((x) => short(x.poi.name_zh ?? x.poi.id)).join('、'))}` : '';
+}
+
+/**
  * 候選頁那行尾巴的順延標記：unplaced 的寫「順延中：別天排得進再排」；placed 但順延到的那天重排後排不進（plans[toDate].plan.dropped 有它；整趟警告 deferred-dropped 的情況，App 沒畫整趟警告）也寫這句；
  * placed 又排進去的由序列標「已排 X」照既有，這裡回 null。
  */

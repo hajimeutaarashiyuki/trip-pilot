@@ -22,7 +22,7 @@ import { restoreApplied, withoutApplied } from './applied.js';
 import { snapshotTripEdits, applyTripEdits, overlayTripEdits, diffTripEdits } from './trip-edits.js';
 import { visitedPatch, visitedDates, shortName } from './corridor.js';
 import { trialArgs, startInsert, chooseInsertOption, insertDoneText } from './insert.js';
-import { chooseOptionTrip, deferStopTrip, deferNotice, displacedPicks } from './choices.js';
+import { chooseOptionTrip, deferStopTrip, deferNotice, displacedPicks, fellNote } from './choices.js';
 import { otherDayChanges, otherDaysText, addedWarnings } from './other-days.js';
 import { planArgsOf } from './plan-args.js';
 import { hasLaterDay, elsewhereOf } from './meals.js';
@@ -193,7 +193,7 @@ function moreWarnings(plansBefore, date, fromPoiId, toPoiId, named) {
   return n ? `；${TEXT.moreWarnings(n, named ? dateLabel(date) : null)}` : '';
 }
 
-/** 重排之後掉進排不進清單的勾選站（ui/choices.js displacedPicks 的結果）：接在復原列後面的「；擠掉了 8/13（四） 的 X、…」，沒有回空字串。換一家與「讓引擎重排這天」共用。 */
+/** 重排之後掉進排不進清單的勾選站（ui/choices.js displacedPicks 的結果）：接在復原列後面的「；擠掉了 8/13（四） 的 X、…」，沒有回空字串。換一家用；「不去了」與「讓引擎重排這天」沒有誰擠誰，用 ui/choices.js fellNote 的「；X 排不進了」。 */
 function squeezedNote(list) {
   return list.length ? `；${TEXT.displacedNote(list.map((x) => TEXT.displacedOne(dateLabel(x.date), shortName(x.poi.name_zh ?? x.poi.id))).join('、'))}` : '';
 }
@@ -313,6 +313,8 @@ export function swapStop(date, fromPoiId, toPoi, { breakfast = false } = {}) {
 /**
  * 不去了：他勾的站從 picks 拿掉；引擎插的站（insertedBy 'engine'）不在 picks，記進 removed 就是拒絕，trip.js 看到那天不再插同一種（priority 'rest' 恢復站／'filler' 填站；原話 #126、profile §2.4）。
  * 釘住順序的日子：那一站從順序裡跳過，其餘各站不動（engine/insert.js planPinnedDay 自己認，不用改 pinned）。
+ * 沒釘住的日子：那天整天重新搜尋、引擎可以補站（這一顆鍵 11-24 沒有改成原位置拿掉）——同一天他勾的另一站因此掉進排不進時復原列接「；X 排不進了」，
+ * 別天跟著變了的照舊接在後面；站的先後變了不另外講（那天看得到）。
  */
 export function removeStop(date, poiId, insertedBy = null, priority = null) {
   const day = state.trip.days.find((d) => d.date === date);
@@ -330,7 +332,8 @@ export function removeStop(date, poiId, insertedBy = null, priority = null) {
     day.removed = [...(day.removed ?? []), removedEntry];   // 不算落選（原話 #91）
     state.notice = null;
     commitTrip([date]);
-    state.undo = { kind: 'remove', dates: [date], before, text: `${TEXT.undoRemoved(state.pois[poiId]?.name_zh ?? poiId, dateLabel(date))}${alsoChanged(plansBefore, [date])}` };
+    // 沒釘住的日子那天整天重排，他勾的另一站可能因此掉進排不進：照實接「；X 排不進了」（11-25；之前只講別天跟著變了，同一天的一個字都沒提）
+    state.undo = { kind: 'remove', dates: [date], before, text: `${TEXT.undoRemoved(state.pois[poiId]?.name_zh ?? poiId, dateLabel(date))}${fellNote(displacedPicks({ before: plansBefore, after: state.plans, dates: [date] }), shortName)}${alsoChanged(plansBefore, [date])}` };
   });
 }
 
@@ -421,8 +424,7 @@ export function unpinDay(date) {
     const plansBefore = state.plans;
     state.trip = next;
     commitTrip([date]);
-    const fell = displacedPicks({ before: plansBefore, after: state.plans, dates: [date] }).map((x) => shortName(x.poi.name_zh ?? x.poi.id));
-    state.undo = { kind: 'unpin', dates: [date], before, text: `${TEXT.undoUnpinned(dateLabel(date))}${fell.length ? `；${TEXT.otherDays.dropped(fell.join('、'))}` : ''}${alsoChanged(plansBefore, [date])}` };
+    state.undo = { kind: 'unpin', dates: [date], before, text: `${TEXT.undoUnpinned(dateLabel(date))}${fellNote(displacedPicks({ before: plansBefore, after: state.plans, dates: [date] }), shortName)}${alsoChanged(plansBefore, [date])}` };
     state.notice = null;
   });
 }

@@ -44,6 +44,9 @@ export const CHECKS = [
   // 安插與早餐（11-24；profile §2.4。原話 #192、#194、#196、#197——句子是他的、數字都是預設；30 出自 #52「順路看的點至少會待到半小時」）
   { label: '安插的站至少待', pattern: /安插進來的站至少待 (\d+) 分/, key: 'insertMinDwellMin' },
   { label: '早餐離住宿走路上限', pattern: /離住宿走路 (\d+) 分以內/, key: 'breakfastWalkMaxMin' },
+  // 早餐「換一家」清單的距離門檻（11-24 落地、11-25 加進來；他自己挑的可以比引擎替他挑的遠，預設 25）。句型刻意不帶「走路」：
+  // 上一列抓的是第一個「離住宿走路 N 分以內」，兩句要互不相認（profile.md 只寫一次，在 §2.4 早餐卡那一條）
+  { label: '早餐換一家清單的距離門檻', pattern: /早餐的換一家清單放寬到離住宿 (\d+) 分以內/, key: 'breakfastSwapWalkMaxMin' },
   { label: '早餐預設停留', pattern: /早餐預設待 (\d+) 分/, key: 'breakfastDefaultDwellMin' },
   { label: '早餐不合這天的門檻', pattern: /比當天最好的那家差超過 (\d+) 分/, key: 'breakfastScoreSlackMin' },
   { label: '沒去到的早餐再推薦的順延上限', pattern: /其餘各站最多晚 (\d+) 分/, key: 'breakfastOfferShiftMaxMin' },

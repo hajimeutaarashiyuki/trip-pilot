@@ -46,7 +46,7 @@ function openAtSlot(b, a, date) {
  * proposeChoices({ plan, date, pool, legFn, settings, exclude }) → [{ date, poiId: A, slot, options: [A, B], source: 'dropped' | 'pool', detourMin, altPoi: B 的 POI }]
  * 對序列裡每一站 A（isChoiceStop）找一家同店型的 B，先 (1) 再 (2)：
  * 1. 那天排不進的同類勾選站（plan.dropped 裡同 category、priority 不是 must、**A 的時段它要有開**——跟候選池同一道門，查不到營業時間就當有開）——他兩家都想去、今天只塞得下一家（profile §7 的定義）。
- *    不套繞路門檻：兩家都是他勾的，按了之後整天重排，不是把 B 塞進 A 的位置（10-16 實作時的判斷：仙台包 8/13 火星之庭離 Elbe 27 分、離珈巣多夢 19 分，套了就不會出；待確認）。
+ *    不套繞路門檻：兩家都是他勾的（10-16 實作時按了是整天重排、不是把 B 塞進 A 的位置；11-24 起改成原位置換掉並先試排，排不下的不列——門檻照舊不套。10-16 實作時的判斷：仙台包 8/13 火星之庭離 Elbe 27 分、離珈巣多夢 19 分，套了就不會出；待確認）。
  *    時段那道門是 10-16 審查後加的：B 因營業時間排不進（09:30 關、A 排 09:50）也出「或 B」、畫面寫「今天只塞得下一家」，按了 B 還是排不進、A 又被順延走，這天那一類從一家變零家。
  * 2. 候選池：swapCandidates 的結果（繞路 ≤ settings.swapDetourMaxMin、那個時段有開或查不到；一律照同店型列——傳 meal: null，咖啡廳只配咖啡廳，
  *    這一站剛好是那天的某一餐也不改列「能當那一餐的店」；不是一個地點、研究判可略過、還沒解鎖、挖寶型的 swapCandidates 自己就不列）再過濾同 category、

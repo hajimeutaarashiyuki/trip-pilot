@@ -3,7 +3,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { planTrip } from '../../src/engine/trip.js';
-import { choiceOf, dayChoices, chooseOptionTrip, deferStopTrip, deferNotice, deferredMark, displacedPicks } from '../../src/ui/choices.js';
+import { choiceOf, dayChoices, chooseOptionTrip, deferStopTrip, deferNotice, deferredMark, displacedPicks, fellNote } from '../../src/ui/choices.js';
+import { shortName } from '../../src/ui/corridor.js';
 import { snapshotTripEdits, overlayTripEdits, diffTripEdits } from '../../src/ui/trip-edits.js';
 import { TEXT } from '../../src/ui/text.js';
 import { loadRules } from '../../src/rules/index.js';
@@ -251,4 +252,19 @@ test('displacedPicks：重排前不在排不進清單、重排後在的勾選站
   assert.equal(deferredMark(trip, 'E', { '2026-08-15': plan([]) }), null);
   assert.equal(deferredMark(trip, 'E'), null, '沒給 plans 就當排進去了');
   assert.equal(deferredMark(trip, 'Z', {}), null);
+});
+
+test('fellNote：整天重新搜尋之後他勾的站掉進排不進，復原列接「；X、Y 排不進了」（不去了、讓引擎重排這天共用；沒有誰擠它，不寫「擠掉了」；沒有就空字串）', () => {
+  // 11-25 文件的對抗審查：三包每一張有「不去了」的站卡各按一次，102 次裡 8 次同一天他勾的另一站掉進排不進，復原列一個字都沒提
+  // （例：七天包 8/13 對引擎排的 TRUE VINTAGE. 按不去了，他勾的 喫茶 Elbe 掉進排不進，復原列只有「已把 TRUE VINTAGE. 從 8/13（四） 拿掉」）
+  const p = (id, name_zh = id) => ({ id, name_zh });
+  const plan = (dropped) => ({ plan: { dropped: dropped.map((poi) => ({ poi, priority: 'want', reason: '' })) } });
+  const before = { '2026-08-13': plan([p('火')]) };
+  const after = { '2026-08-13': plan([p('火'), p('elbe', '喫茶 Elbe（エルベ）'), p('珈')]) };
+  const fell = displacedPicks({ before, after, dates: ['2026-08-13'] });
+  assert.equal(fellNote(fell, shortName), '；喫茶 Elbe、珈 排不進了', '店名用短的（括號裡的註記拿掉）；原本就排不進的不算');
+  assert.equal(fellNote(fell), '；喫茶 Elbe（エルベ）、珈 排不進了', '沒給縮短的做法就用全名');
+  assert.equal(fellNote([{ date: '2026-08-13', poi: { id: 'raw-id' } }], shortName), '；raw-id 排不進了', '沒有店名才退回 id');
+  assert.equal(fellNote([], shortName), '');
+  assert.equal(fellNote(), '');
 });

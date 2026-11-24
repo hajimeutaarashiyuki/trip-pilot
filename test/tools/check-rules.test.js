@@ -84,3 +84,17 @@ test('安插與早餐的數字（11-24；原話 #192、#194、#196、#197 的預
   assert.deepEqual(r2.mismatches.map((m) => [m.key, m.profile, m.rules]), [['breakfastWalkMaxMin', 15, 12], ['breakfast-slot.missMin', 20, 10]]);
   assert.deepEqual(checkRules(good, { settings: rules.settings }).mismatches.map((m) => [m.key, m.rules]), [['breakfast-slot.missMin', undefined]], 'rules.json 沒有那條規則也算不一致');
 });
+
+test('早餐換一家清單的距離門檻（11-25；breakfastSwapWalkMaxMin）：句型是「早餐的換一家清單放寬到離住宿 N 分以內」，跟引擎自己挑早餐的「離住宿走路 N 分以內」互不相認', () => {
+  const rules = { settings: { breakfastWalkMaxMin: 12, breakfastSwapWalkMaxMin: 25 } };
+  const good = '引擎替他挑早餐：離住宿走路 12 分以內。早餐的換一家清單放寬到離住宿 25 分以內（引擎自己挑的門檻不變）';
+  const pick = (r) => r.mismatches.filter((m) => /^breakfast(Swap)?WalkMaxMin$/.test(m.key)).map((m) => [m.key, m.profile, m.rules]);
+  const r1 = checkRules(good, rules);
+  assert.deepEqual(pick(r1), []);
+  assert.ok(CHECKS.some((c) => c.label === '早餐換一家清單的距離門檻') && !r1.notFound.includes('早餐換一家清單的距離門檻'));
+  assert.ok(!r1.notFound.includes('早餐離住宿走路上限'));
+  // 新句子寫在前面也不會被 12 那一條先抓到（「離住宿」後面直接接數字，沒有「走路」）
+  const flipped = '早餐的換一家清單放寬到離住宿 25 分以內。引擎替他挑早餐：離住宿走路 12 分以內';
+  assert.deepEqual(pick(checkRules(flipped, rules)), []);
+  assert.deepEqual(pick(checkRules(good.replace('離住宿 25 分', '離住宿 30 分'), rules)), [['breakfastSwapWalkMaxMin', 30, 25]]);
+});

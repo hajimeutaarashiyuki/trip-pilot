@@ -1,7 +1,8 @@
 // 現場套過的改案要活過重畫與 App 重開（原話 #165 出國後手機要自己調整；iOS 常殺背景分頁；2026-10-12 對抗審查）：
 // 套用時把整條序列（走過的前綴＋新的）存成快照進 field.applied[date]（app.js saveJSON 進 localStorage），
 // replanAll 跑完 planTrip 後再把它還原回 plan.sequence、整天重算分數（engine/sequence.js）；
-// 打包時間（packAt）不同＝手機更新了新打包，快照丟掉並在那天警告一行；他在規劃頁改了勾選（不去了、換一家）就清掉那天的快照、回到引擎排。
+// 打包時間（packAt）不同＝手機更新了新打包，快照丟掉並在那天警告一行；他在規劃頁改了勾選（不去了、換一家）就清掉那天的快照：不去了回到引擎排；
+// 換一家（11-24 起原位置換掉）是照畫面上那一版——也就是現場套過的那個順序——把那天釘住，不回到引擎排。
 // 這裡只有純邏輯（可測）；寫回在 app.js、畫面在 now.js／planner.js。
 import { evaluateSequence } from '../engine/sequence.js';
 import { resolveHome, attachCorridor, corridorExclude, visitedBefore } from '../engine/trip.js';
@@ -114,7 +115,7 @@ export function restoreApplied({ plans, applied = {}, packAt = null, pois, trip,
   return { plans: nextPlans, applied: nextApplied, dropped };
 }
 
-/** 他在規劃頁改了那天的勾選（不去了、換一家）：清掉那天的快照、回到引擎排。沒有那天的快照就回原物件（呼叫端比 identity 決定要不要存）。 */
+/** 他在規劃頁改了那天的勾選（不去了、換一家）：清掉那天的快照（之後那天怎麼排見檔首：不去了回到引擎排、換一家照現場那個順序釘住）。沒有那天的快照就回原物件（呼叫端比 identity 決定要不要存）。 */
 export function withoutApplied(applied, date) {
   if (!applied?.[date]) return applied;
   const next = { ...applied }; delete next[date]; return next;

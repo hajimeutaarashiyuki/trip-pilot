@@ -91,7 +91,7 @@ export function swapMealOf({ plan, stopId, day = null, country = null, settings 
  * - adjust（那天的 day.adjust，T19）：在場的人不想去的店型不列——除了跟這一站同 category 的（他勾的那一類照排、換同類也由他；別的店型進來的才擋：
  *   他勾的食堂按「換一家」不列同行者不去的居酒屋、咖啡廳；10-16 審查）
  * - 排序：繞路分鐘少的在前；一樣的研究首選在前、備案在後（researchRank）；再一樣照 pool 的順序。
- * - check（選填）：(poi) → 要不要列。釘住順序的日子（plan.pinned）畫面傳 engine/choices.js pinnedSwapCheck 做的那個函式——每一家真的換過去排一次，
+ * - check（選填）：(poi) → 要不要列。畫面傳 engine/choices.js pinnedSwapCheck 做的那個函式（11-12 起釘住順序的日子、11-24 起每一天都傳）——每一家真的換過去排一次，
  *   其餘各站都還在、先後不變、沒有站多掉進排不進才列（11-12 審查：釘住的日子換一家沒有試算，817 次裡 24 次有站因此不在）。上面幾道門都過了才問它（它比較貴）。
  * 每個候選的 meal＝這次是在換哪一餐（或 null），整份清單同一個值。
  */
