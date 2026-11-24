@@ -11,7 +11,7 @@ export const DEFAULT_PROFILE = path.resolve(here, '../../profile.md');
 export const RULES_PATH = path.resolve(here, '../src/rules.json');
 export const DEFAULT_COUNTRY = path.resolve(here, '../../kb/country/jp.json');
 
-/** 每列：profile 裡的句型（第一個擷取群是數字）→ rules.json 的設定鍵。 */
+/** 每列：profile 裡的句型（第一個擷取群是數字）→ rules.json 的設定鍵（settings[key]）；有 rule 的那幾列是規則參數（rules[rule][key]）。 */
 export const CHECKS = [
   { label: '步行預算', pattern: /步行預算 (\d+) 分／日/, key: 'walkBudgetMin' },
   { label: '走路連跑上限', pattern: /走路連跑上限 (\d+) 分/, key: 'maxWalkRunMin' },
@@ -41,6 +41,16 @@ export const CHECKS = [
   { label: '餐段放寬', pattern: /餐段前後各放寬 (\d+) 分/, key: 'mealGraceMin' },
   // 一日遊回到市區「不算晚」的時刻（profile §2「回到市區不晚於 21:00」，原話 #190 的 9:00）；rules.json 存 "21:00"
   { label: '一日遊回城門檻', pattern: /回到市區不晚於 (\d{1,2}):00/, key: 'dayTripNightReturnByHM', transform: (n) => `${n}:00` },
+  // 安插與早餐（11-24；profile §2.4。原話 #192、#194、#196、#197——句子是他的、數字都是預設；30 出自 #52「順路看的點至少會待到半小時」）
+  { label: '安插的站至少待', pattern: /安插進來的站至少待 (\d+) 分/, key: 'insertMinDwellMin' },
+  { label: '早餐離住宿走路上限', pattern: /離住宿走路 (\d+) 分以內/, key: 'breakfastWalkMaxMin' },
+  { label: '早餐預設停留', pattern: /早餐預設待 (\d+) 分/, key: 'breakfastDefaultDwellMin' },
+  { label: '早餐不合這天的門檻', pattern: /比當天最好的那家差超過 (\d+) 分/, key: 'breakfastScoreSlackMin' },
+  { label: '沒去到的早餐再推薦的順延上限', pattern: /其餘各站最多晚 (\d+) 分/, key: 'breakfastOfferShiftMaxMin' },
+  // 順路的繞路上限（原話 #184「允許繞路 8 分鐘 我覺得是可以的」；早餐「去第一站的路上多繞不超過 8 分」用的是同一個設定）
+  { label: '順路的繞路上限', pattern: /多繞不超過 (\d+) 分/, key: 'onTheWayDetourMin' },
+  // 規則參數（不在 settings，在 rules[規則 id]）：rule 有寫就讀 rulesJson.rules[rule][key]
+  { label: '沒排早餐的罰', pattern: /沒排早餐罰 (\d+) 分/, rule: 'breakfast-slot', key: 'missMin' },
 ];
 
 /**
@@ -110,8 +120,8 @@ export function checkRules(profileText, rulesJson, countryJson = null) {
     const m = profileText.match(c.pattern);
     if (!m) { notFound.push(c.label); continue; }
     const fromProfile = c.transform ? c.transform(Number(m[1])) : Number(m[1]);
-    const fromRules = settings[c.key];
-    if (fromProfile !== fromRules) mismatches.push({ label: c.label, key: c.key, profile: fromProfile, rules: fromRules });
+    const fromRules = c.rule ? rulesJson.rules?.[c.rule]?.[c.key] : settings[c.key];
+    if (fromProfile !== fromRules) mismatches.push({ label: c.label, key: c.rule ? `${c.rule}.${c.key}` : c.key, profile: fromProfile, rules: fromRules });
   }
   let countryCites = 0;
   if (countryJson) {

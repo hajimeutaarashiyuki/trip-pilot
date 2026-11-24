@@ -72,3 +72,15 @@ test('一日遊倍率：profile 的「一日遊／早起日的 0.7 倍留著」�
   const r2 = checkRules('一日遊／早起日的 0.8 倍留著', rules);
   assert.deepEqual(r2.mismatches.map((m) => [m.key, m.profile, m.rules]), [['dayTripWalkFactor', 0.8, 0.7]]);
 });
+
+test('安插與早餐的數字（11-24；原話 #192、#194、#196、#197 的預設與 #184 的繞路 8 分）：設定值照 settings 對，規則參數（沒排早餐罰幾分）照 rules[規則 id] 對', () => {
+  const rules = { settings: { insertMinDwellMin: 30, breakfastWalkMaxMin: 12, breakfastDefaultDwellMin: 40, breakfastScoreSlackMin: 30, breakfastOfferShiftMaxMin: 10, onTheWayDetourMin: 8 }, rules: { 'breakfast-slot': { weight: 1, missMin: 10 } } };
+  const good = '安插進來的站至少待 30 分；離住宿走路 12 分以內；早餐預設待 40 分；比當天最好的那家差超過 30 分；其餘各站最多晚 10 分；多繞不超過 8 分；沒排早餐罰 10 分';
+  const labels = ['安插的站至少待', '早餐離住宿走路上限', '早餐預設停留', '早餐不合這天的門檻', '沒去到的早餐再推薦的順延上限', '順路的繞路上限', '沒排早餐的罰'];
+  const r1 = checkRules(good, rules);
+  assert.deepEqual(r1.mismatches, []);
+  for (const l of labels) assert.ok(CHECKS.some((c) => c.label === l) && !r1.notFound.includes(l), l);
+  const r2 = checkRules(good.replace('沒排早餐罰 10 分', '沒排早餐罰 20 分').replace('走路 12 分以內', '走路 15 分以內'), rules);
+  assert.deepEqual(r2.mismatches.map((m) => [m.key, m.profile, m.rules]), [['breakfastWalkMaxMin', 15, 12], ['breakfast-slot.missMin', 20, 10]]);
+  assert.deepEqual(checkRules(good, { settings: rules.settings }).mismatches.map((m) => [m.key, m.rules]), [['breakfast-slot.missMin', undefined]], 'rules.json 沒有那條規則也算不一致');
+});
